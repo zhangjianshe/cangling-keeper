@@ -8,6 +8,7 @@ mod ssh;
 mod store;
 mod sync;
 mod tunnel;
+mod window_state;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -1159,6 +1160,12 @@ pub fn run() {
             // from an AppImage (or a desktop launcher), which made older
             // builds crash on startup with "Read-only file system".
             let data_dir = resolve_data_dir(app)?;
+
+            // Restore the saved window position/size and remember it on close.
+            if let Some(window) = app.get_webview_window("main") {
+                window_state::restore(&window, &data_dir);
+                window_state::register_close_handler(&window, &data_dir);
+            }
 
             // One-time migration of legacy data directories into the current
             // data dir (the ./config dir used by dev/older builds, and the
