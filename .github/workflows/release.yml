@@ -100,7 +100,7 @@ jobs:
               -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
               -F "token=63cef07f4ee54823b25c652b0268f71d" \
               -F "version=latest" \
-              -F "name="$f" \
+              -F "name=$f" \
               -F "summary=Automatic release for version $TAG" \
               -F "os=${{ matrix.os-name }}" \
               -F "arch=${{ matrix.arch-name }}" \
