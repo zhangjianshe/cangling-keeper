@@ -17,11 +17,9 @@ jobs:
           - platform: ubuntu-22.04
             os-name: linux
             arch-name: amd64
-            file-pattern: "target/release/bundle/nsis/*.exe" # Or appropriate bundle path
           - platform: windows-latest
             os-name: windows
             arch-name: x86_64
-            file-pattern: "target/release/bundle/msi/*.msi"
 
     runs-on: ${{ matrix.platform }}
 
@@ -67,33 +65,39 @@ jobs:
           releaseName: 'cangling-keeper ${{ github.ref_name }}'
           releaseBody: 'See the assets below to download and install this version.'
           releaseDraft: true
-          prerelase: false
+          prerelease: false
 
-      - name: Find and upload package to software center
+      - name: Find and upload every bundle file separately
         shell: bash
         run: |
-          # Automatically find the built installer/binary file in target/release/bundle
-          # Adjust the folder structure (e.g., nsis, msi, deb, appimage) based on your tauri.conf.json bundle targets
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+
           echo "Searching for build artifacts..."
-          find target/release -maxdepth 4
-          
-          # Example: Grab the first matching artifact (e.g. .msi, .exe, .deb, .AppImage)
-          # You can refine this glob pattern to match the exact file you want to push
-          UPLOAD_FILE=$(find target/release/bundle -type f \( -name "*.msi" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" \) | head -n 1)
-          
-          if [ -z "$UPLOAD_FILE" ] || [ ! -f "$UPLOAD_FILE" ]; then
-            echo "Error: Could not find build artifact to upload!"
+          mapfile -d '' FILES < <(find target/release/bundle -type f \
+            \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+             -o -name '*.AppImage.tar.gz' -o -name '*.exe' -o -name '*.msi' \) -print0)
+
+          if [[ ${#FILES[@]} -eq 0 ]]; then
+            echo "::error::No bundle files found to upload"
             exit 1
           fi
-          
-          echo "Found file to upload: $UPLOAD_FILE"
 
-          curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
-            -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
-            -F "token=63cef07f4ee54823b25c652b0268f71d" \
-            -F "version=latest" \
-            -F "name=cangling-keeper" \
-            -F "summary=Automatic release for version ${{ github.ref_name }}" \
-            -F "os=${{ matrix.os-name }}" \
-            -F "arch=${{ matrix.arch-name }}" \
-            -F "file=@$UPLOAD_FILE"
+          echo "Found ${#FILES[@]} bundle file(s):"
+          for f in "${FILES[@]}"; do echo "  - $f"; done
+
+          for f in "${FILES[@]}"; do
+            # Upload each bundle as its own entry, named by its bundle name.
+            name="$(basename "$f")"
+            echo "::group::Uploading $name"
+            curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
+              -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
+              -F "token=63cef07f4ee54823b25c652b0268f71d" \
+              -F "version=latest" \
+              -F "name=$name" \
+              -F "summary=Automatic release for version $TAG" \
+              -F "os=${{ matrix.os-name }}" \
+              -F "arch=${{ matrix.arch-name }}" \
+              -F "file=@$f"
+            echo "::endgroup::"
+          done
