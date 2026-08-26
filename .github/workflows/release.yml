@@ -72,20 +72,16 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ github.ref_name }}"
-
           echo "Searching for build artifacts..."
           mapfile -d '' FILES < <(find target/release/bundle -type f \
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
              -o -name '*.AppImage.tar.gz' -o -name '*.exe' -o -name '*.msi' \) -print0)
-
           if [[ ${#FILES[@]} -eq 0 ]]; then
             echo "::error::No bundle files found to upload"
             exit 1
           fi
-
           echo "Found ${#FILES[@]} bundle file(s):"
           for f in "${FILES[@]}"; do echo "  - $f"; done
-
           for f in "${FILES[@]}"; do
             # Upload each bundle as its own entry, named by its bundle name.
             name="$(basename "$f")"
@@ -103,12 +99,12 @@ jobs:
           done
           echo "${{ github.ref_name }}" > version.txt
          # upload version
-               curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
-               -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
-               -F "token=63cef07f4ee54823b25c652b0268f71d" \
-               -F "version=latest" \
-               -F "name=version.txt" \
-               -F "summary=Automatic release for version $TAG" \
-               -F "os=${{ matrix.os-name }}" \
-               -F "arch=${{ matrix.arch-name }}" \
-               -F "file=@version.txt"
+           curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
+           -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
+           -F "token=63cef07f4ee54823b25c652b0268f71d" \
+           -F "version=latest" \
+           -F "name=version.txt" \
+           -F "summary=Automatic release for version $TAG" \
+           -F "os=${{ matrix.os-name }}" \
+           -F "arch=${{ matrix.arch-name }}" \
+           -F "file=@version.txt"
