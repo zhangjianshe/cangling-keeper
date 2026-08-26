@@ -9,7 +9,7 @@ mod store;
 mod tunnel;
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use auth::Auth;
@@ -29,6 +29,7 @@ struct AppState {
     active_terminals: Mutex<HashMap<String, TerminalHandle>>,
     proxy: Mutex<ProxyRuntime>,
     injected_proxies: Mutex<HashMap<String, InjectedHandle>>,
+    data_dir: PathBuf,
 }
 
 struct InjectedHandle {
@@ -47,23 +48,40 @@ struct TerminalHandle {
     cancel_tx: tokio::sync::oneshot::Sender<()>,
 }
 
-fn resolve_auth(store: &Store, auth: &Auth) -> Result<ResolvedAuth, String> {
+fn resolve_auth(store: &Store, auth: &Auth, data_dir: &Path) -> Result<ResolvedAuth, String> {
     match auth {
         Auth::Password { password } => Ok(ResolvedAuth::Password(password.clone())),
         Auth::Certificate { certificate_id } => {
             let cert = store.get_certificate(certificate_id)?;
-            Ok(ResolvedAuth::Key(cert.private_key_path.clone()))
+            let key_path = resolve_key_path(data_dir, &cert.private_key_path);
+            Ok(ResolvedAuth::Key(key_path.to_string_lossy().into_owned()))
         }
     }
 }
 
-fn create_certificate(name: &str) -> Result<Certificate, String> {
+/// Resolve a stored private-key path against the app data directory.
+///
+/// New keys are stored as absolute paths under `<data_dir>/keys/<id>`. Legacy
+/// databases (from builds before the data dir change) stored relative paths
+/// such as `config/keys/<id>`, so strip any leading `config` component and
+/// join the remainder under the data directory.
+fn resolve_key_path(data_dir: &Path, stored: &str) -> PathBuf {
+    let path = Path::new(stored);
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        let relative = path.strip_prefix("config").unwrap_or(path);
+        data_dir.join(relative)
+    }
+}
+
+fn create_certificate(keys_dir: &Path, name: &str) -> Result<Certificate, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("Certificate name is required".into());
     }
     let id = Uuid::new_v4().to_string();
-    let private_path = PathBuf::from("config").join("keys").join(&id);
+    let private_path = keys_dir.join(&id);
     let public_key = ssh::generate_keypair(&private_path)?;
     Ok(Certificate {
         id,
@@ -75,6 +93,33 @@ fn create_certificate(name: &str) -> Result<Certificate, String> {
 
 fn err_box(e: String) -> Box<dyn std::error::Error> {
     e.into()
+}
+
+/// Resolve the per-user data directory for the app and make sure it exists.
+fn resolve_data_dir(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("cannot resolve app data directory: {e}"))?;
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("cannot create data directory {}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
+/// Recursively copy a directory (used to migrate the legacy ./config dir).
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let target = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
 }
 
 // ---- hosts -----------------------------------------------------------------
@@ -123,10 +168,11 @@ async fn ssh_execute(
     host_id: String,
     command: String,
 ) -> Result<ssh::ExecOutput, String> {
+    let data_dir = state.data_dir.clone();
     let (host, auth) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let host = store.get_host(&host_id)?;
-        let auth = resolve_auth(&store, &host.auth)?;
+        let auth = resolve_auth(&store, &host.auth, &data_dir)?;
         (host, auth)
     };
     ssh::execute(&host, &command, &auth).await
@@ -203,10 +249,11 @@ async fn tunnel_connect(
         }
     }
 
+    let data_dir = state.data_dir.clone();
     let (tunnel, auth) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let tunnel = store.get_tunnel(&tunnel_id)?;
-        let auth = resolve_auth(&store, &tunnel.auth)?;
+        let auth = resolve_auth(&store, &tunnel.auth, &data_dir)?;
         (tunnel, auth)
     };
 
@@ -263,10 +310,11 @@ async fn start_terminal(
     cols: u32,
     rows: u32,
 ) -> Result<String, String> {
+    let data_dir = state.data_dir.clone();
     let (host, auth) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let host = store.get_host(&host_id)?;
-        let auth = resolve_auth(&store, &host.auth)?;
+        let auth = resolve_auth(&store, &host.auth, &data_dir)?;
         (host, auth)
     };
 
@@ -354,7 +402,8 @@ fn list_certificates(state: State<'_, AppState>) -> Result<Vec<Certificate>, Str
 
 #[tauri::command]
 fn add_certificate(state: State<'_, AppState>, name: String) -> Result<Certificate, String> {
-    let cert = create_certificate(&name)?;
+    let keys_dir = state.data_dir.join("keys");
+    let cert = create_certificate(&keys_dir, &name)?;
     let store = state.store.lock().map_err(|e| e.to_string())?;
     store.add_certificate(&cert)?;
     Ok(cert)
@@ -370,8 +419,9 @@ fn delete_certificate(state: State<'_, AppState>, id: String) -> Result<(), Stri
         let store = state.store.lock().map_err(|e| e.to_string())?;
         store.delete_certificate(&id)?;
     }
-    let _ = std::fs::remove_file(&cert.private_key_path);
-    let _ = std::fs::remove_file(format!("{}.pub", cert.private_key_path));
+    let key_path = resolve_key_path(&state.data_dir, &cert.private_key_path);
+    let _ = std::fs::remove_file(&key_path);
+    let _ = std::fs::remove_file(format!("{}.pub", key_path.display()));
     Ok(())
 }
 
@@ -672,10 +722,11 @@ async fn inject_proxy(
     }
 
     let (local_host, local_port, local_endpoint) = ensure_usable_proxy(&app, &state).await?;
+    let data_dir = state.data_dir.clone();
     let (host, auth) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let host = store.get_host(&host_id)?;
-        let auth = resolve_auth(&store, &host.auth)?;
+        let auth = resolve_auth(&store, &host.auth, &data_dir)?;
         (host, auth)
     };
 
@@ -742,10 +793,11 @@ async fn ssh_run(
     host_id: &str,
     command: String,
 ) -> Result<ssh::ExecOutput, String> {
+    let data_dir = state.data_dir.clone();
     let (host, auth) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let host = store.get_host(host_id)?;
-        let auth = resolve_auth(&store, &host.auth)?;
+        let auth = resolve_auth(&store, &host.auth, &data_dir)?;
         (host, auth)
     };
     ssh::execute(&host, &command, &auth).await
@@ -855,14 +907,36 @@ fn uninject_proxy(state: State<'_, AppState>, host_id: String) -> Result<(), Str
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            // User data lives in ./config/data.sql (SQLite), relative to the
-            // directory the app is launched from.
-            let data_file = PathBuf::from("config").join("data.sql");
-            let store = Store::load(data_file)?;
+            // Store user data in the platform data directory instead of the
+            // current working directory. The CWD is read-only when running
+            // from an AppImage (or a desktop launcher), which made older
+            // builds crash on startup with "Read-only file system".
+            let data_dir = resolve_data_dir(app)?;
+
+            // One-time migration of legacy data directories into the current
+            // data dir (the ./config dir used by dev/older builds, and the
+            // data dir of the previous bundle identifier).
+            let mut legacy_dirs = vec![PathBuf::from("config")];
+            if let Ok(base) = app.path().data_dir() {
+                legacy_dirs.push(base.join("com.cangling.keeper"));
+            }
+            for legacy in legacy_dirs {
+                if !legacy.join("data.sql").exists() || data_dir.join("data.sql").exists() {
+                    continue;
+                }
+                if let Err(e) = copy_dir_all(&legacy, &data_dir) {
+                    eprintln!("failed to migrate legacy config {}: {e}", legacy.display());
+                }
+            }
+
+            let keys_dir = data_dir.join("keys");
+            std::fs::create_dir_all(&keys_dir)?;
+
+            let store = Store::load(data_dir.join("data.sql"))?;
 
             // Ensure at least one certificate exists on startup.
             if store.list_certificates().map_err(err_box)?.is_empty() {
-                let cert = create_certificate("Local Certificate").map_err(err_box)?;
+                let cert = create_certificate(&keys_dir, "Local Certificate").map_err(err_box)?;
                 store.add_certificate(&cert).map_err(err_box)?;
             }
 
@@ -876,6 +950,7 @@ pub fn run() {
                     stop_tx: None,
                 }),
                 injected_proxies: Mutex::new(HashMap::new()),
+                data_dir,
             });
             Ok(())
         })

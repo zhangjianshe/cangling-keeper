@@ -12,7 +12,7 @@ commands over SSH with one click.
   to auto-fill the form, or fill the fields manually.
 - Connect/disconnect tunnels; the list shows live connection state.
 - Tunnel auth via password or an ed25519 key pair (generate one in-app).
-- Hosts and tunnels persist to a SQLite database at `./config/data.sql`.
+- Hosts and tunnels persist to a SQLite database in the app data directory.
 
 > **Security note (current state):** passwords are stored in plain text in the
 > local SQLite database, and SSH host keys are not yet verified
@@ -135,7 +135,17 @@ Bundles are written to `target/release/bundle/`:
 
 ### Data location
 
-Hosts and tunnels are stored in a SQLite database at `./config/data.sql`,
-relative to the directory the app is launched from (in development this is the
-project root). Generated SSH keys are written to `./config/keys/`. The
-`config/` directory is created automatically on first launch.
+Hosts and tunnels are stored in a SQLite database at
+`<app_data_dir>/data.sql`, where `<app_data_dir>` is the platform's per-user
+application data directory:
+
+- **Linux:** `~/.local/share/cn.cangling.keeper/`
+- **Windows:** `%APPDATA%\cn.cangling.keeper\`
+- **macOS:** `~/Library/Application Support/cn.cangling.keeper/`
+
+Generated SSH keys are written to `<app_data_dir>/keys/`. The directory is
+created automatically on first launch.
+
+Older builds stored data in `./config/` relative to the working directory.
+That directory is migrated into the data directory automatically on first
+launch, if the data directory does not already contain a database.
