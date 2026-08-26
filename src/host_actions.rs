@@ -169,6 +169,11 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
 }
 
 fn bash_c(script: &str, args: &[&str]) -> String {
+    // The shell scripts are embedded with include_str!(). On Windows checkouts
+    // git may rewrite them to CRLF, which makes the remote Linux shell choke on
+    // `set -u\r` ("set: Illegal option -"). Normalize line endings so the
+    // scripts run identically no matter how they were checked out.
+    let script = script.replace('\r', "");
     let escaped = script.replace('\'', "'\"'\"'");
     let mut cmd = format!("/bin/bash -c '{escaped}' ck");
     for arg in args {
@@ -227,6 +232,15 @@ mod tests {
         let probe = wrap_probe_command();
         assert!(probe.contains("CK_PROBE"));
         assert_eq!(inject_proxy_url(1080), "http://127.0.0.1:1080");
+    }
+
+    #[test]
+    fn strips_carriage_returns_from_embedded_script() {
+        let crlf = "#!/bin/bash\r\nset -eu\r\necho hi\r\n";
+        let cmd = bash_c(crlf, &[]);
+        assert!(!cmd.contains('\r'));
+        assert!(cmd.contains("set -eu"));
+        assert!(cmd.contains("echo hi"));
     }
 
     #[test]

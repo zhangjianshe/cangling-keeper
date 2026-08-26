@@ -1,0 +1,4 @@
+# Shell scripts are embedded into the binary (include_str!) and executed on
+# remote Linux hosts, so they must always use LF line endings even on Windows
+# checkouts (where git would otherwise convert them to CRLF and break `set -u`).
+*.sh text eol=lf
