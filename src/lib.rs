@@ -6,6 +6,7 @@ mod proxy;
 mod self_update;
 mod ssh;
 mod store;
+mod sync;
 mod tunnel;
 
 use std::collections::{HashMap, HashSet};
@@ -65,7 +66,7 @@ fn resolve_auth(store: &Store, auth: &Auth, data_dir: &Path) -> Result<ResolvedA
 /// databases (from builds before the data dir change) stored relative paths
 /// such as `config/keys/<id>`, so strip any leading `config` component and
 /// join the remainder under the data directory.
-fn resolve_key_path(data_dir: &Path, stored: &str) -> PathBuf {
+pub(crate) fn resolve_key_path(data_dir: &Path, stored: &str) -> PathBuf {
     let path = Path::new(stored);
     if path.is_absolute() {
         path.to_path_buf()
@@ -131,25 +132,50 @@ fn list_hosts(state: State<'_, AppState>) -> Result<Vec<Host>, String> {
 }
 
 #[tauri::command]
-fn add_host(state: State<'_, AppState>, mut host: Host) -> Result<Host, String> {
+async fn add_host(state: State<'_, AppState>, mut host: Host) -> Result<Host, String> {
     if host.id.is_empty() {
         host.id = Uuid::new_v4().to_string();
     }
     host.validate()?;
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    store.add_host(&host)?;
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store.add_host(&host)?;
+    }
+    // Best-effort push to the server when logged in.
+    if let Ok(remote_id) = push_host_to_server(&state, &host).await {
+        host.remote_id = remote_id;
+    }
     Ok(host)
 }
 
 #[tauri::command]
-fn update_host(state: State<'_, AppState>, host: Host) -> Result<(), String> {
+async fn update_host(state: State<'_, AppState>, mut host: Host) -> Result<(), String> {
     host.validate()?;
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    store.update_host(&host)
+    // The form does not carry remote_id; preserve it from the stored record
+    // so editing a synced host does not detach it from the server copy.
+    if host.remote_id.is_empty() {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        if let Ok(existing) = store.get_host(&host.id) {
+            host.remote_id = existing.remote_id;
+        }
+    }
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store.update_host(&host)?;
+    }
+    let _ = push_host_to_server(&state, &host).await;
+    Ok(())
 }
 
 #[tauri::command]
-fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let remote_id = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store
+            .get_host(&id)
+            .map(|h| h.remote_id.clone())
+            .unwrap_or_default()
+    };
     if let Some(handle) = state
         .injected_proxies
         .lock()
@@ -158,8 +184,14 @@ fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), String> {
     {
         let _ = handle.stop_tx.send(());
     }
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    store.delete_host(&id)
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store.delete_host(&id)?;
+    }
+    if !remote_id.is_empty() {
+        let _ = delete_remote_host(&state, &remote_id).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -903,6 +935,221 @@ fn uninject_proxy(state: State<'_, AppState>, host_id: String) -> Result<(), Str
     }
 }
 
+// ---- login & host sync -----------------------------------------------------
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LoginStatus {
+    logged_in: bool,
+    server_url: String,
+    username: String,
+    nickname: String,
+}
+
+fn read_login_status(store: &Store) -> LoginStatus {
+    LoginStatus {
+        logged_in: store
+            .get_setting(sync::SETTING_TOKEN)
+            .ok()
+            .flatten()
+            .map(|t| !t.is_empty())
+            .unwrap_or(false),
+        server_url: store
+            .get_setting(sync::SETTING_SERVER_URL)
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+        username: store
+            .get_setting(sync::SETTING_USERNAME)
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+        nickname: store
+            .get_setting(sync::SETTING_NICKNAME)
+            .ok()
+            .flatten()
+            .unwrap_or_default(),
+    }
+}
+
+fn login_credentials(store: &Store) -> Option<(String, String)> {
+    let url = store
+        .get_setting(sync::SETTING_SERVER_URL)
+        .ok()
+        .flatten()?;
+    let token = store.get_setting(sync::SETTING_TOKEN).ok().flatten()?;
+    if url.trim().is_empty() || token.trim().is_empty() {
+        None
+    } else {
+        Some((url, token))
+    }
+}
+
+/// Pull the server host list and merge it into the local store, then push any
+/// local-only hosts. The server is the source of truth for hosts that already
+/// have a `remote_id`.
+async fn sync_now(state: &AppState) -> Result<(), String> {
+    let (url, token) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        login_credentials(&store).ok_or("未登录")?
+    };
+
+    let server_hosts = sync::pull_hosts(&url, &token).await?;
+    let keys_dir = state.data_dir.join("keys");
+    let server_by_id: HashMap<String, sync::SyncHost> = server_hosts
+        .into_iter()
+        .filter(|h| !h.id.is_empty())
+        .map(|h| (h.id.clone(), h))
+        .collect();
+
+    let mut to_push: Vec<Host> = Vec::new();
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let store = &*store;
+        let local_hosts = store.list_hosts()?;
+
+        for local in &local_hosts {
+            if local.remote_id.is_empty() {
+                to_push.push(local.clone());
+            } else if let Some(remote) = server_by_id.get(&local.remote_id) {
+                match sync::sync_to_host(store, &keys_dir, remote) {
+                    Ok(mut updated) => {
+                        updated.id = local.id.clone();
+                        if let Err(e) = store.update_host(&updated) {
+                            eprintln!("更新主机 {} 失败: {e}", local.name);
+                        }
+                    }
+                    Err(e) => eprintln!("同步主机 {} 失败: {e}", local.name),
+                }
+            } else {
+                let _ = store.delete_host(&local.id);
+            }
+        }
+
+        // Insert server hosts that are not present locally.
+        let existing: HashSet<String> = store
+            .list_hosts()?
+            .into_iter()
+            .filter_map(|h| {
+                if h.remote_id.is_empty() {
+                    None
+                } else {
+                    Some(h.remote_id)
+                }
+            })
+            .collect();
+        for (rid, remote) in &server_by_id {
+            if !existing.contains(rid) {
+                match sync::sync_to_host(store, &keys_dir, remote) {
+                    Ok(host) => {
+                        if let Err(e) = store.add_host(&host) {
+                            eprintln!("导入主机 {rid} 失败: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("导入主机 {rid} 失败: {e}"),
+                }
+            }
+        }
+    }
+
+    // Push local-only hosts (best effort).
+    for local in to_push {
+        let sync_host = {
+            let store = state.store.lock().map_err(|e| e.to_string())?;
+            sync::host_to_sync(&store, &state.data_dir, &local)?
+        };
+        match sync::push_host(&url, &token, &sync_host).await {
+            Ok(remote) if !remote.id.is_empty() => {
+                let store = state.store.lock().map_err(|e| e.to_string())?;
+                let mut updated = local.clone();
+                updated.remote_id = remote.id;
+                store.update_host(&updated)?;
+            }
+            Ok(_) => {}
+            Err(e) => eprintln!("推送主机 {} 失败: {e}", local.name),
+        }
+    }
+
+    Ok(())
+}
+
+async fn push_host_to_server(state: &AppState, host: &Host) -> Result<String, String> {
+    let (url, token) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        login_credentials(&store).ok_or("未登录")?
+    };
+    let sync_host = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        sync::host_to_sync(&store, &state.data_dir, host)?
+    };
+    let remote = sync::push_host(&url, &token, &sync_host).await?;
+    if remote.id.is_empty() {
+        return Err("服务器未返回主机ID".into());
+    }
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let mut updated = host.clone();
+        updated.remote_id = remote.id.clone();
+        store.update_host(&updated)?;
+    }
+    Ok(remote.id)
+}
+
+async fn delete_remote_host(state: &AppState, remote_id: &str) -> Result<(), String> {
+    let (url, token) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        login_credentials(&store).ok_or("未登录")?
+    };
+    sync::delete_remote(&url, &token, remote_id).await
+}
+
+#[tauri::command]
+async fn login(
+    state: State<'_, AppState>,
+    server_url: String,
+    username: String,
+    password: String,
+) -> Result<LoginStatus, String> {
+    let url = server_url.trim().to_string();
+    if url.is_empty() {
+        return Err("服务器地址不能为空".into());
+    }
+    let data = sync::login(&url, username.trim(), &password).await?;
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store.set_setting(sync::SETTING_SERVER_URL, &url)?;
+        store.set_setting(sync::SETTING_TOKEN, &data.token)?;
+        store.set_setting(sync::SETTING_USERNAME, &data.user_name)?;
+        store.set_setting(sync::SETTING_NICKNAME, &data.nick_name)?;
+    }
+    // Initial sync is best-effort: a login should still succeed if it fails.
+    if let Err(e) = sync_now(&state).await {
+        eprintln!("登录后首次同步失败: {e}");
+    }
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    Ok(read_login_status(&store))
+}
+
+#[tauri::command]
+async fn logout(state: State<'_, AppState>) -> Result<LoginStatus, String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    store.delete_setting(sync::SETTING_TOKEN)?;
+    store.delete_setting(sync::SETTING_USERNAME)?;
+    store.delete_setting(sync::SETTING_NICKNAME)?;
+    Ok(read_login_status(&store))
+}
+
+#[tauri::command]
+fn get_login_status(state: State<'_, AppState>) -> Result<LoginStatus, String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    Ok(read_login_status(&store))
+}
+
+#[tauri::command]
+async fn sync_hosts(state: State<'_, AppState>) -> Result<(), String> {
+    sync_now(&state).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -985,7 +1232,11 @@ pub fn run() {
             probe_cangling_update,
             run_cangling_update,
             check_app_update,
-            apply_app_update
+            apply_app_update,
+            login,
+            logout,
+            get_login_status,
+            sync_hosts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

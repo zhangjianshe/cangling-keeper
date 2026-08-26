@@ -383,6 +383,7 @@ dependencies = [
  "rusqlite",
  "russh",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tokio",

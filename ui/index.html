@@ -26,6 +26,7 @@
           <span id="proxy-indicator-dot" class="status-dot off"></span>
           <span id="proxy-indicator-text">代理未启用</span>
         </div>
+        <button id="login-btn" class="btn login-btn" type="button" title="登录到维护中心服务器">登录</button>
         <button id="app-update-btn" class="btn app-update-btn hidden" type="button" title="检查应用更新">检查更新</button>
       </header>
 
@@ -233,11 +234,14 @@
         <h2 id="host-modal-title">添加主机</h2>
         <form id="host-form">
           <label>Name <input name="name" type="text" required placeholder="e.g. prod-web-1" /></label>
+          <label>分组 <input name="catalog" type="text" placeholder="e.g. 河南" /></label>
           <label>Hostname / IP <input name="hostname" type="text" required placeholder="e.g. 10.0.0.5" /></label>
           <label>Port <input name="port" type="number" min="1" max="65535" value="22" /></label>
           <label>Username <input name="username" type="text" required placeholder="e.g. root" /></label>
           <label>远端代理端口 <input name="inject_remote_port" type="number" min="1" max="65535" value="7890" /></label>
           <p class="hint">连接时自动检测本地代理，并反向注入到该主机 127.0.0.1 的此端口（缺省 7890）。</p>
+
+          <label class="checkbox"><input name="is_public" type="checkbox" /> 共享为公共主机（拥有公共主机角色的用户可见）</label>
 
           <fieldset class="auth-fieldset">
             <legend>Authentication</legend>
@@ -323,6 +327,25 @@
           <div class="modal-actions">
             <button id="cancel-cert-btn" class="btn" type="button">Cancel</button>
             <button class="btn primary" type="submit">Generate</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Login modal -->
+    <div id="login-modal" class="modal hidden">
+      <div class="modal-box">
+        <h2>登录维护中心</h2>
+        <form id="login-form">
+          <label>服务器地址 <input name="server_url" type="text" required placeholder="https://soft.cangling.cn:22002" /></label>
+          <label>用户名 <input name="username" type="text" required autocomplete="username" /></label>
+          <label>密码 <input name="password" type="password" required autocomplete="current-password" /></label>
+          <p id="login-status" class="hint hidden"></p>
+          <div class="modal-actions">
+            <button id="cancel-login-btn" class="btn" type="button">取消</button>
+            <button id="sync-btn" class="btn hidden" type="button">立即同步</button>
+            <button id="logout-btn" class="btn danger hidden" type="button">退出登录</button>
+            <button class="btn primary" type="submit">登录</button>
           </div>
         </form>
       </div>

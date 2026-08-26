@@ -20,6 +20,7 @@ const state = {
   updateBusy: false,
   appUpdate: null,
   appUpdateBusy: false,
+  login: null, // { loggedIn, serverUrl, username, nickname }
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -45,6 +46,12 @@ const injectBtnEl = $("#inject-proxy-btn");
 const injectStatusEl = $("#inject-status");
 const updateBtnEl = $("#btn-cangling-update");
 const appUpdateBtnEl = $("#app-update-btn");
+const loginBtnEl = $("#login-btn");
+const loginModalEl = $("#login-modal");
+const loginFormEl = $("#login-form");
+const loginStatusEl = $("#login-status");
+const syncBtnEl = $("#sync-btn");
+const logoutBtnEl = $("#logout-btn");
 const terminalEl = $("#terminal");
 
 const tunnelNameEl = $("#tunnel-name");
@@ -501,6 +508,107 @@ async function onAppUpdateClick() {
   }
 }
 
+// ---- login & host sync -----------------------------------------------------
+
+function renderLoginStatus() {
+  const s = state.login || { loggedIn: false };
+  if (s.loggedIn) {
+    loginBtnEl.textContent = s.nickname || s.username || "已登录";
+    loginBtnEl.title = `已登录 ${s.username} · ${s.serverUrl}`;
+    loginBtnEl.classList.add("logged-in");
+  } else {
+    loginBtnEl.textContent = "登录";
+    loginBtnEl.title = "登录到维护中心服务器";
+    loginBtnEl.classList.remove("logged-in");
+  }
+}
+
+function openLoginModal() {
+  const s = state.login || {};
+  const f = loginFormEl.elements;
+  f.server_url.value = s.serverUrl || "https://soft.cangling.cn:22002";
+  f.username.value = s.username || "";
+  f.password.value = "";
+  loginStatusEl.textContent = "";
+  loginStatusEl.classList.add("hidden");
+  syncBtnEl.classList.toggle("hidden", !s.loggedIn);
+  logoutBtnEl.classList.toggle("hidden", !s.loggedIn);
+  loginModalEl.classList.remove("hidden");
+  (s.loggedIn ? syncBtnEl : f.username).focus();
+}
+
+function closeLoginModal() {
+  loginModalEl.classList.add("hidden");
+}
+
+async function loadLoginStatus() {
+  try {
+    state.login = await invoke("get_login_status");
+  } catch (_) {
+    state.login = { loggedIn: false, serverUrl: "", username: "", nickname: "" };
+  }
+  renderLoginStatus();
+}
+
+async function onSyncClick() {
+  syncBtnEl.disabled = true;
+  syncBtnEl.textContent = "同步中…";
+  loginStatusEl.textContent = "正在同步…";
+  loginStatusEl.classList.remove("hidden");
+  try {
+    await invoke("sync_hosts");
+    loginStatusEl.textContent = "同步完成";
+    await loadHosts();
+    await loadCertificates();
+    updateMainView();
+  } catch (err) {
+    loginStatusEl.textContent = `同步失败: ${err}`;
+  } finally {
+    syncBtnEl.disabled = false;
+    syncBtnEl.textContent = "立即同步";
+  }
+}
+
+async function onLogoutClick() {
+  try {
+    state.login = await invoke("logout");
+    renderLoginStatus();
+    closeLoginModal();
+  } catch (err) {
+    alert(`退出失败: ${err}`);
+  }
+}
+
+loginBtnEl.addEventListener("click", openLoginModal);
+$("#cancel-login-btn").addEventListener("click", closeLoginModal);
+syncBtnEl.addEventListener("click", onSyncClick);
+logoutBtnEl.addEventListener("click", onLogoutClick);
+loginModalEl.addEventListener("click", (e) => {
+  if (e.target === loginModalEl) closeLoginModal();
+});
+
+loginFormEl.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = loginFormEl.elements;
+  const serverUrl = f.server_url.value.trim();
+  const username = f.username.value.trim();
+  const password = f.password.value;
+  loginStatusEl.textContent = "登录中…";
+  loginStatusEl.classList.remove("hidden");
+  try {
+    state.login = await invoke("login", { serverUrl, username, password });
+    renderLoginStatus();
+    syncBtnEl.classList.remove("hidden");
+    logoutBtnEl.classList.remove("hidden");
+    loginStatusEl.textContent = "登录成功";
+    await loadHosts();
+    await loadCertificates();
+    updateMainView();
+  } catch (err) {
+    loginStatusEl.textContent = `登录失败: ${err}`;
+  }
+});
+
 // ---- helpers ----------------------------------------------------------------
 
 function hostById(id) {
@@ -702,16 +810,31 @@ function renderHostList() {
     hostListEl.appendChild(makeEmptyItem("暂无主机"));
     return;
   }
+  const groups = new Map();
   for (const host of state.hosts) {
-    hostListEl.appendChild(
-      makeItem({
-        selected: host.id === state.selectedHostId,
-        name: host.name,
-        sub: `${host.username}@${host.hostname}:${host.port}`,
-        active: !!state.termId && host.id === state.connectedHostId,
-        onClick: () => selectHost(host.id),
-      })
-    );
+    const cat = (host.catalog || "").trim() || "未分组";
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(host);
+  }
+  const sorted = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh"));
+  for (const [cat, hosts] of sorted) {
+    const header = document.createElement("li");
+    header.className = "list-group";
+    header.textContent = cat;
+    hostListEl.appendChild(header);
+
+    hosts.sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh"));
+    for (const host of hosts) {
+      hostListEl.appendChild(
+        makeItem({
+          selected: host.id === state.selectedHostId,
+          name: host.name,
+          sub: `${host.username}@${host.hostname}:${host.port}${host.is_public ? " · 公共" : ""}`,
+          active: !!state.termId && host.id === state.connectedHostId,
+          onClick: () => selectHost(host.id),
+        })
+      );
+    }
   }
 }
 
@@ -896,10 +1019,12 @@ function openHostModal(host) {
 
   const f = hostFormEl.elements;
   f.name.value = host ? host.name : "";
+  f.catalog.value = host ? host.catalog || "" : "";
   f.hostname.value = host ? host.hostname : "";
   f.port.value = host ? host.port : 22;
   f.username.value = host ? host.username : "";
   f.inject_remote_port.value = host ? hostInjectRemotePort(host) : 7890;
+  f.is_public.checked = host ? !!host.is_public : false;
 
   if (host && host.auth && host.auth.method === "certificate") {
     f.auth_method.value = "certificate";
@@ -1128,6 +1253,8 @@ hostFormEl.addEventListener("submit", async (e) => {
     port: parseInt(f.port.value, 10) || 22,
     username: f.username.value.trim(),
     inject_remote_port: parseInt(f.inject_remote_port.value, 10) || 7890,
+    catalog: f.catalog.value.trim(),
+    is_public: f.is_public.checked,
     auth:
       method === "certificate"
         ? { method: "certificate", certificateId: f.certificate_id.value }
@@ -1341,6 +1468,7 @@ document.addEventListener("dblclick", (event) => {
   initTerminal();
   updateTerminalUI();
   checkAppUpdate();
+  loadLoginStatus();
   try {
     await Promise.all([
       loadHosts(),

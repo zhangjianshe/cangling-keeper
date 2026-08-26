@@ -203,6 +203,14 @@ body {
   padding: 24px 8px;
 }
 
+.list-group {
+  padding: 8px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--fg-muted);
+}
+
 .item .item-btn {
   display: flex;
   align-items: center;
@@ -697,6 +705,12 @@ body {
   width: 100%;
 }
 
+.login-btn.logged-in {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+}
+
 /* ---- Modal ----------------------------------------------------------------- */
 
 .modal {
@@ -745,6 +759,14 @@ body {
   font-size: 13px;
   font-weight: 500;
   color: var(--fg);
+}
+
+.modal-box form label.checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-weight: 400;
+  cursor: pointer;
 }
 
 .modal-box form input,

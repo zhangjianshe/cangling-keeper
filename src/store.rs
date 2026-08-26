@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS hosts (
     auth_method         TEXT NOT NULL DEFAULT 'password',
     password            TEXT NOT NULL DEFAULT '',
     certificate_id      TEXT NOT NULL DEFAULT '',
-    inject_remote_port  INTEGER NOT NULL DEFAULT 7890
+    inject_remote_port  INTEGER NOT NULL DEFAULT 7890,
+    catalog             TEXT NOT NULL DEFAULT '',
+    remote_id           TEXT NOT NULL DEFAULT '',
+    is_public           INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS tunnels (
@@ -53,6 +56,11 @@ CREATE TABLE IF NOT EXISTS proxy_settings (
     last_message    TEXT NOT NULL DEFAULT '',
     last_checked_at INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT ''
+);
 ";
 
 /// Single SQLite connection managing hosts, tunnels and certificates.
@@ -79,7 +87,7 @@ impl Store {
             .conn
             .prepare(
                 "SELECT id, name, hostname, port, username, auth_method, password, certificate_id,
-                        inject_remote_port
+                        inject_remote_port, catalog, remote_id, is_public
                  FROM hosts ORDER BY name COLLATE NOCASE",
             )
             .map_err(|e| e.to_string())?;
@@ -97,7 +105,7 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id, name, hostname, port, username, auth_method, password, certificate_id,
-                        inject_remote_port
+                        inject_remote_port, catalog, remote_id, is_public
                  FROM hosts WHERE id = ?1",
                 params![id],
                 host_from_row,
@@ -113,8 +121,8 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO hosts (id, name, hostname, port, username, auth_method, password, certificate_id,
-                                    inject_remote_port)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                    inject_remote_port, catalog, remote_id, is_public)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     host.id,
                     host.name,
@@ -124,7 +132,10 @@ impl Store {
                     method,
                     password,
                     certificate_id,
-                    host.inject_remote_port_or_default() as i64
+                    host.inject_remote_port_or_default() as i64,
+                    host.catalog,
+                    host.remote_id,
+                    host.is_public as i64
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -138,8 +149,8 @@ impl Store {
             .execute(
                 "UPDATE hosts SET name=?1, hostname=?2, port=?3, username=?4,
                         auth_method=?5, password=?6, certificate_id=?7,
-                        inject_remote_port=?8
-                 WHERE id=?9",
+                        inject_remote_port=?8, catalog=?9, remote_id=?10, is_public=?11
+                 WHERE id=?12",
                 params![
                     host.name,
                     host.hostname,
@@ -149,6 +160,9 @@ impl Store {
                     password,
                     certificate_id,
                     host.inject_remote_port_or_default() as i64,
+                    host.catalog,
+                    host.remote_id,
+                    host.is_public as i64,
                     host.id
                 ],
             )
@@ -397,6 +411,38 @@ impl Store {
             .map_err(|e| e.to_string())?;
         Ok(())
     }
+
+    // ---- settings (key/value) ----------------------------------------------
+
+    pub fn get_setting(&self, key: &str) -> Result<Option<String>, String> {
+        match self.conn.query_row(
+            "SELECT value FROM settings WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(value) => Ok(Some(value)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    pub fn set_setting(&self, key: &str, value: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value) VALUES (?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                params![key, value],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn delete_setting(&self, key: &str) -> Result<(), String> {
+        self.conn
+            .execute("DELETE FROM settings WHERE key = ?1", params![key])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
 }
 
 /// Add columns introduced after the initial schema to existing databases.
@@ -430,6 +476,24 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
         "hosts",
         "inject_remote_port",
         "ALTER TABLE hosts ADD COLUMN inject_remote_port INTEGER NOT NULL DEFAULT 7890",
+    )?;
+    ensure_column(
+        conn,
+        "hosts",
+        "catalog",
+        "ALTER TABLE hosts ADD COLUMN catalog TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
+        "hosts",
+        "remote_id",
+        "ALTER TABLE hosts ADD COLUMN remote_id TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
+        "hosts",
+        "is_public",
+        "ALTER TABLE hosts ADD COLUMN is_public INTEGER NOT NULL DEFAULT 0",
     )?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS proxy_settings (
@@ -478,6 +542,9 @@ fn host_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Host> {
     };
 
     let inject_remote_port: i64 = row.get(8)?;
+    let catalog: String = row.get(9)?;
+    let remote_id: String = row.get(10)?;
+    let is_public: i64 = row.get(11)?;
     Ok(Host {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -486,6 +553,9 @@ fn host_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Host> {
         username: row.get(4)?,
         inject_remote_port: inject_remote_port.clamp(0, 65535) as u16,
         auth,
+        catalog,
+        remote_id,
+        is_public: is_public != 0,
     })
 }
 

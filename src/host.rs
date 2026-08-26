@@ -17,6 +17,15 @@ pub struct Host {
     pub inject_remote_port: u16,
     #[serde(default)]
     pub auth: Auth,
+    /// Free-text grouping label, e.g. "河南".
+    #[serde(default)]
+    pub catalog: String,
+    /// Server-side host id once synced. Empty means local-only (never synced).
+    #[serde(default)]
+    pub remote_id: String,
+    /// Whether this host is shared with users having the public-host role.
+    #[serde(default)]
+    pub is_public: bool,
 }
 
 fn default_port() -> u16 {
