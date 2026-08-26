@@ -6,13 +6,14 @@
 # Tauri app for Windows + Linux and drafts a GitHub release.
 #
 # Usage:
-#   ./release.sh              # bump patch  (0.1.0 -> 0.1.1)
-#   ./release.sh minor        # bump minor  (0.1.0 -> 0.2.0)
-#   ./release.sh major        # bump major  (0.1.0 -> 1.0.0)
-#   ./release.sh 1.2.3        # set an exact version
+#   ./release.sh                # bump patch  (0.1.0 -> 0.1.1) [default]
+#   ./release.sh patch          # bump patch  (0.1.0 -> 0.1.1)
+#   ./release.sh minor          # bump minor  (0.1.0 -> 0.2.0)
+#   ./release.sh major          # bump major  (0.1.0 -> 1.0.0)
+#   ./release.sh 1.2.3          # set an exact version
 #
 # Environment:
-#   REMOTE   git remote to push to (default: origin)
+#   REMOTE    git remote to push to (default: origin)
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -51,11 +52,14 @@ CURRENT="$(current_version)"
 [[ -n "$CURRENT" ]] || die "could not read version from $CARGO_TOML"
 is_semver "$CURRENT" || die "unexpected current version: '$CURRENT'"
 
-case "${1:-patch}" in
-  patch|minor|major) NEW="$(bump "$CURRENT" "$1")" ;;
+# Default to 'patch' if no argument is supplied
+ACTION="${1:-patch}"
+
+case "$ACTION" in
+  patch|minor|major) NEW="$(bump "$CURRENT" "$ACTION")" ;;
   *)
-    NEW="$1"
-    is_semver "$NEW" || die "usage: $0 [patch|minor|major|X.Y.Z]  (got '$1')"
+    NEW="$ACTION"
+    is_semver "$NEW" || die "usage: $0 [patch|minor|major|X.Y.Z]  (got '$ACTION')"
     ;;
 esac
 
