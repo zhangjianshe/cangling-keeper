@@ -1,0 +1,32 @@
+[package]
+name = "cangling-keeper"
+version = "0.1.0"
+description = "A Tauri desktop application for local file/keeper functions"
+authors = ["satway"]
+edition = "2024"
+
+# The library target is used by the Tauri entry point (src/main.rs) and
+# enables mobile support later if needed.
+[lib]
+name = "cangling_keeper_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "time", "rt", "io-std"] }
+rand = "0.10"
+tun = { version = "0.8.14", features = ["async"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

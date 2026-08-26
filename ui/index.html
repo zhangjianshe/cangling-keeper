@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>维护中心</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="vendor/xterm.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="topbar-brand">
+          <svg class="logo-icon" xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+          </svg>
+          <span class="brand-name">维护中心</span>
+        </div>
+        <nav class="topnav">
+          <button id="nav-hosts" class="navlink active" type="button">主机</button>
+          <button id="nav-tunnels" class="navlink" type="button">本地隧道</button>
+          <button id="nav-certificates" class="navlink" type="button">本地证书</button>
+          <button id="nav-proxy" class="navlink" type="button">代理</button>
+        </nav>
+        <div id="proxy-indicator" class="proxy-indicator" title="Current proxy (shared across panels)">
+          <span id="proxy-indicator-dot" class="status-dot off"></span>
+          <span id="proxy-indicator-text">代理未启用</span>
+        </div>
+      </header>
+
+      <div class="app-body">
+        <aside class="sidebar">
+          <button id="add-btn" class="btn primary full" type="button">+ 添加主机</button>
+
+          <ul id="host-list" class="list"></ul>
+          <ul id="tunnel-list" class="list hidden"></ul>
+          <ul id="cert-list" class="list hidden"></ul>
+          <div id="proxy-sidebar" class="proxy-sidebar hidden">
+            <div class="proxy-side-card">
+              <span class="info-label">当前代理</span>
+              <span id="proxy-side-endpoint" class="info-value mono">未启用</span>
+              <span id="proxy-side-proto" class="item-sub">其它面板可读取此状态</span>
+            </div>
+          </div>
+
+          <div class="sidebar-footer">Rust + Tauri · SSH</div>
+        </aside>
+
+        <main class="content">
+          <div id="empty-state" class="empty-state">
+            <svg class="empty-logo" xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+            </svg>
+            <h2 id="empty-title">未选择主机</h2>
+            <p id="empty-sub">在左侧选择一台主机，或添加一台新主机。</p>
+          </div>
+
+          <!-- Host view -->
+          <div id="host-view" class="host-view hidden">
+            <div class="detail-header">
+              <div class="detail-meta">
+                <h2 id="host-name"></h2>
+                <span id="host-conn" class="conn"></span>
+                <span id="host-proxy-hint" class="conn hidden"></span>
+              </div>
+              <div class="header-actions">
+                <div class="actions">
+                  <span id="inject-status" class="status off">未注入</span>
+                  <button id="inject-proxy-btn" class="btn" type="button" title="连接时自动检测本地代理并注入">注入代理</button>
+                  <span id="term-status" class="status off">Disconnected</span>
+                  <button id="term-toggle-btn" class="btn primary" type="button">Connect</button>
+                  <button id="edit-host-btn" class="icon-btn" type="button" title="编辑">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                  </button>
+                  <button id="delete-host-btn" class="icon-btn danger" type="button" title="删除">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                  </button>
+                </div>
+                <button id="btn-cangling-update" class="btn update-btn hidden" type="button" disabled>更新程序</button>
+              </div>
+            </div>
+            <div class="terminal-wrap">
+              <div class="terminal-frame">
+                <div id="terminal"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tunnel view -->
+          <div id="tunnel-view" class="tunnel-view hidden">
+            <div class="detail-header">
+              <div class="detail-meta">
+                <h2 id="tunnel-name"></h2>
+                <span id="tunnel-proxy-hint" class="conn hidden"></span>
+                <span id="tunnel-status" class="status off">Disconnected</span>
+              </div>
+              <div class="actions">
+                <button id="edit-tunnel-btn" class="btn" type="button">Edit</button>
+                <button id="delete-tunnel-btn" class="btn danger" type="button">Delete</button>
+              </div>
+            </div>
+            <div class="detail-body">
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="info-label">Local</span>
+                  <span id="t-local" class="info-value mono"></span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Remote</span>
+                  <span id="t-remote" class="info-value mono"></span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">SSH server</span>
+                  <span id="t-ssh" class="info-value mono"></span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Auth</span>
+                  <span id="t-auth" class="info-value"></span>
+                </div>
+              </div>
+              <button id="toggle-tunnel-btn" class="btn primary full" type="button">Connect</button>
+            </div>
+          </div>
+
+          <!-- Certificate view -->
+          <div id="cert-view" class="cert-view hidden">
+            <div class="detail-header">
+              <div class="detail-meta">
+                <h2 id="cert-name"></h2>
+                <span class="status off">ed25519</span>
+              </div>
+              <div class="actions">
+                <button id="delete-cert-btn" class="btn danger" type="button">Delete</button>
+              </div>
+            </div>
+            <div class="detail-body">
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="info-label">Private key</span>
+                  <span id="c-keypath" class="info-value mono"></span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">Type</span>
+                  <span class="info-value">ed25519</span>
+                </div>
+              </div>
+              <div class="pubkey-block">
+                <div class="info-label">Public key — add to the server's ~/.ssh/authorized_keys</div>
+                <pre id="c-pubkey" class="pubkey"></pre>
+              </div>
+            </div>
+          </div>
+
+          <!-- Proxy view -->
+          <div id="proxy-view" class="proxy-view hidden">
+            <div class="detail-header">
+              <div class="detail-meta">
+                <h2>代理</h2>
+                <span id="proxy-endpoint-label" class="conn">未启用</span>
+              </div>
+              <div class="actions">
+                <span id="proxy-status" class="status off">未启用</span>
+                <button id="proxy-check-btn" class="btn" type="button">检测</button>
+                <button id="proxy-stop-btn" class="btn danger" type="button">停止</button>
+              </div>
+            </div>
+            <div class="detail-body proxy-body">
+              <p class="hint">两种方式选其一。启用后会检测并记住状态，主机 / 本地隧道 等面板都可以使用当前代理。</p>
+
+              <div class="option-card" id="proxy-option-local">
+                <div class="option-head">
+                  <input type="radio" name="proxy_mode" value="local" checked />
+                  <div>
+                    <div class="option-title">本机代理</div>
+                    <div class="option-sub">在本机启动 HTTP + SOCKS5 混合代理，监听 0.0.0.0（host network）</div>
+                  </div>
+                </div>
+                <div class="option-fields">
+                  <label>本地端口
+                    <input id="proxy-local-port" type="number" min="1" max="65535" value="7890" placeholder="7890" />
+                  </label>
+                  <button id="proxy-start-btn" class="btn primary" type="button">启动</button>
+                </div>
+              </div>
+
+              <div class="option-card" id="proxy-option-existing">
+                <div class="option-head">
+                  <input type="radio" name="proxy_mode" value="existing" />
+                  <div>
+                    <div class="option-title">已有代理</div>
+                    <div class="option-sub">使用已经在运行的代理（例如 clash 的 mixed-port）</div>
+                  </div>
+                </div>
+                <div class="option-fields">
+                  <label>地址
+                    <input id="proxy-exist-host" type="text" value="127.0.0.1" placeholder="127.0.0.1" />
+                  </label>
+                  <label>端口
+                    <input id="proxy-exist-port" type="number" min="1" max="65535" value="7890" placeholder="7890" />
+                  </label>
+                  <button id="proxy-use-btn" class="btn primary" type="button">使用</button>
+                </div>
+              </div>
+
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="info-label">Endpoint</span>
+                  <span id="proxy-info-endpoint" class="info-value mono">—</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">协议</span>
+                  <span id="proxy-info-proto" class="info-value">—</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">最近检测</span>
+                  <span id="proxy-info-checked" class="info-value">—</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">说明</span>
+                  <span id="proxy-info-message" class="info-value">—</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Host modal -->
+    <div id="host-modal" class="modal hidden">
+      <div class="modal-box">
+        <h2 id="host-modal-title">添加主机</h2>
+        <form id="host-form">
+          <label>Name <input name="name" type="text" required placeholder="e.g. prod-web-1" /></label>
+          <label>Hostname / IP <input name="hostname" type="text" required placeholder="e.g. 10.0.0.5" /></label>
+          <label>Port <input name="port" type="number" min="1" max="65535" value="22" /></label>
+          <label>Username <input name="username" type="text" required placeholder="e.g. root" /></label>
+          <label>远端代理端口 <input name="inject_remote_port" type="number" min="1" max="65535" value="7890" /></label>
+          <p class="hint">连接时自动检测本地代理，并反向注入到该主机 127.0.0.1 的此端口（缺省 7890）。</p>
+
+          <fieldset class="auth-fieldset">
+            <legend>Authentication</legend>
+            <div class="radio-row">
+              <label class="radio"><input type="radio" name="auth_method" value="password" checked /> Password</label>
+              <label class="radio"><input type="radio" name="auth_method" value="certificate" /> Certificate</label>
+            </div>
+            <div id="host-auth-password">
+              <label>Password <input name="password" type="password" placeholder="password (stored locally)" /></label>
+            </div>
+            <div id="host-auth-cert" class="hidden">
+              <label>Certificate <select name="certificate_id"></select></label>
+            </div>
+          </fieldset>
+
+          <div class="modal-actions">
+            <button id="cancel-host-btn" class="btn" type="button">Cancel</button>
+            <button class="btn primary" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Tunnel modal -->
+    <div id="tunnel-modal" class="modal hidden">
+      <div class="modal-box wide">
+        <h2 id="tunnel-modal-title">添加本地隧道</h2>
+        <form id="tunnel-form">
+          <label>Name <input name="name" type="text" required placeholder="e.g. db-tunnel" /></label>
+
+          <div class="parse-box">
+            <label>Paste an SSH command to auto-fill</label>
+            <div class="row">
+              <input
+                id="ssh-cmd-input"
+                type="text"
+                placeholder="ssh -N -L 12345:10.1.1.1:22 root@123.12.3.1"
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <button id="parse-btn" class="btn" type="button">Parse</button>
+            </div>
+          </div>
+
+          <div class="grid-2">
+            <label>Local port <input name="local_port" type="number" min="1" max="65535" required /></label>
+            <label>Remote host <input name="remote_host" type="text" required placeholder="10.1.1.1" /></label>
+            <label>Remote port <input name="remote_port" type="number" min="1" max="65535" required /></label>
+            <label>SSH host <input name="ssh_host" type="text" required placeholder="123.12.3.1" /></label>
+            <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" /></label>
+            <label>Username <input name="username" type="text" required placeholder="root" /></label>
+          </div>
+
+          <fieldset class="auth-fieldset">
+            <legend>Authentication</legend>
+            <div class="radio-row">
+              <label class="radio"><input type="radio" name="auth_method" value="password" checked /> Password</label>
+              <label class="radio"><input type="radio" name="auth_method" value="certificate" /> Certificate</label>
+            </div>
+            <div id="tunnel-auth-password">
+              <label>Password <input name="password" type="password" placeholder="password (stored locally)" /></label>
+            </div>
+            <div id="tunnel-auth-cert" class="hidden">
+              <label>Certificate <select name="certificate_id"></select></label>
+            </div>
+          </fieldset>
+
+          <div class="modal-actions">
+            <button id="cancel-tunnel-btn" class="btn" type="button">Cancel</button>
+            <button class="btn primary" type="submit">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Certificate modal -->
+    <div id="cert-modal" class="modal hidden">
+      <div class="modal-box">
+        <h2>新建本地证书</h2>
+        <form id="cert-form">
+          <label>Name <input name="name" type="text" required placeholder="e.g. My Laptop" /></label>
+          <p class="hint">Generates a new ed25519 key pair.</p>
+          <div class="modal-actions">
+            <button id="cancel-cert-btn" class="btn" type="button">Cancel</button>
+            <button class="btn primary" type="submit">Generate</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <script src="vendor/xterm.js"></script>
+    <script src="vendor/xterm-addon-fit.js"></script>
+    <script src="main.js"></script>
+  </body>
+</html>
