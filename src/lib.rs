@@ -3,6 +3,7 @@ mod certificate;
 mod host;
 mod host_actions;
 mod proxy;
+mod self_update;
 mod ssh;
 mod store;
 mod tunnel;
@@ -15,6 +16,7 @@ use auth::Auth;
 use certificate::Certificate;
 use host::Host;
 use proxy::{ProxySettings, ProxyStatus};
+use self_update::{apply_app_update, check_app_update};
 use ssh::{ResolvedAuth, TerminalMsg};
 use store::Store;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -906,7 +908,9 @@ pub fn run() {
             inject_proxy,
             uninject_proxy,
             probe_cangling_update,
-            run_cangling_update
+            run_cangling_update,
+            check_app_update,
+            apply_app_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

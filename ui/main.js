@@ -18,6 +18,8 @@ const state = {
   injections: {}, // hostId -> { active, remotePort, localEndpoint }
   updateProbe: null,
   updateBusy: false,
+  appUpdate: null,
+  appUpdateBusy: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -42,6 +44,7 @@ const termStatusEl = $("#term-status");
 const injectBtnEl = $("#inject-proxy-btn");
 const injectStatusEl = $("#inject-status");
 const updateBtnEl = $("#btn-cangling-update");
+const appUpdateBtnEl = $("#app-update-btn");
 const terminalEl = $("#terminal");
 
 const tunnelNameEl = $("#tunnel-name");
@@ -426,6 +429,76 @@ async function onCanglingUpdateClick() {
     busy: "更新中…",
     status: `正在下载并更新到 ${p.latest}…`,
   });
+}
+
+// ---- app self-update -------------------------------------------------------
+
+function renderAppUpdate() {
+  const s = state.appUpdate;
+  if (!s) {
+    appUpdateBtnEl.textContent = "检查更新";
+    appUpdateBtnEl.className = "btn app-update-btn";
+    appUpdateBtnEl.disabled = false;
+    appUpdateBtnEl.title = "检查应用更新";
+    appUpdateBtnEl.classList.remove("hidden");
+    return;
+  }
+  if (s.error) {
+    appUpdateBtnEl.textContent = "更新检查失败";
+    appUpdateBtnEl.className = "btn app-update-btn error";
+    appUpdateBtnEl.disabled = false;
+    appUpdateBtnEl.title = `${s.error}（当前 ${s.current}）· 点击重试`;
+  } else if (s.updateAvailable) {
+    appUpdateBtnEl.textContent = `更新到 ${s.latest}`;
+    appUpdateBtnEl.className = "btn app-update-btn primary";
+    appUpdateBtnEl.disabled = false;
+    appUpdateBtnEl.title = `当前 ${s.current} · 服务器最新 ${s.latest} · 点击更新`;
+  } else {
+    appUpdateBtnEl.textContent = "已是最新";
+    appUpdateBtnEl.className = "btn app-update-btn up-to-date";
+    appUpdateBtnEl.disabled = true;
+    appUpdateBtnEl.title = `当前 ${s.current} 已是最新版本`;
+  }
+  appUpdateBtnEl.classList.remove("hidden");
+}
+
+async function checkAppUpdate() {
+  appUpdateBtnEl.disabled = true;
+  appUpdateBtnEl.textContent = "检查中…";
+  appUpdateBtnEl.classList.remove("hidden");
+  try {
+    state.appUpdate = await invoke("check_app_update");
+  } catch (err) {
+    state.appUpdate = {
+      current: "",
+      latest: "",
+      updateAvailable: false,
+      error: String(err),
+    };
+  }
+  renderAppUpdate();
+}
+
+async function onAppUpdateClick() {
+  if (state.appUpdateBusy) return;
+  const s = state.appUpdate;
+  if (!s || !s.updateAvailable) {
+    await checkAppUpdate();
+    return;
+  }
+  if (!confirm(`发现新版本 ${s.latest}（当前 ${s.current}），现在下载并更新？`)) {
+    return;
+  }
+  state.appUpdateBusy = true;
+  appUpdateBtnEl.disabled = true;
+  appUpdateBtnEl.textContent = "下载更新中…";
+  try {
+    await invoke("apply_app_update");
+  } catch (err) {
+    state.appUpdateBusy = false;
+    alert(`更新失败: ${err}`);
+    renderAppUpdate();
+  }
 }
 
 // ---- helpers ----------------------------------------------------------------
@@ -1036,6 +1109,7 @@ $("#delete-host-btn").addEventListener("click", () => {
   if (host) deleteHost(host);
 });
 updateBtnEl.addEventListener("click", onCanglingUpdateClick);
+appUpdateBtnEl.addEventListener("click", onAppUpdateClick);
 
 hostFormEl.querySelectorAll('input[name="auth_method"]').forEach((r) => {
   r.addEventListener("change", updateHostAuthFields);
@@ -1266,6 +1340,7 @@ document.addEventListener("dblclick", (event) => {
 (async () => {
   initTerminal();
   updateTerminalUI();
+  checkAppUpdate();
   try {
     await Promise.all([
       loadHosts(),

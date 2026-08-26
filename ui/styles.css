@@ -138,6 +138,25 @@ body {
   height: 8px;
 }
 
+.app-update-btn {
+  flex-shrink: 0;
+  margin-left: -12px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+.app-update-btn.up-to-date {
+  background: var(--success-subtle);
+  border-color: transparent;
+  color: var(--success-hover);
+}
+
+.app-update-btn.error {
+  background: var(--danger-subtle);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 #proxy-indicator-text {
   overflow: hidden;
   text-overflow: ellipsis;

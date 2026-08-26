@@ -67,49 +67,61 @@ jobs:
           releaseDraft: true
           prerelease: false
 
-      - name: Find and upload every bundle file separately
+      - name: Upload bundles to software center
         shell: bash
         run: |
           set -euo pipefail
           TAG="${{ github.ref_name }}"
-          echo "Searching for build artifacts..."
-          
+
+          # Stage each bundle under a stable filename the app can request
+          # (e.g. cangling-keeper-setup.exe, cangling-keeper.AppImage).
+          STAGE="$(mktemp -d)"
           mapfile -d '' FILES < <(find target/release/bundle -type f \
             \( -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
-             -o -name '*.AppImage.tar.gz' -o -name '*.exe' -o -name '*.msi' \) -print0)
-          
+             -o -name '*.exe' -o -name '*.msi' \) -print0)
+
           if [[ ${#FILES[@]} -eq 0 ]]; then
             echo "::error::No bundle files found to upload"
             exit 1
           fi
-          
-          echo "Found ${#FILES[@]} bundle file(s):"
-          for f in "${FILES[@]}"; do echo "  - $f"; done
-          
+
           for f in "${FILES[@]}"; do
-            name="$(basename "$f")"
-            echo "::group::Uploading $name"
+            case "$f" in
+              *.deb) stable="cangling-keeper.deb" ;;
+              *.rpm) stable="cangling-keeper.rpm" ;;
+              *.AppImage) stable="cangling-keeper.AppImage" ;;
+              *.exe) stable="cangling-keeper-setup.exe" ;;
+              *.msi) stable="cangling-keeper.msi" ;;
+              *) continue ;;
+            esac
+            cp "$f" "$STAGE/$stable"
+            echo "::group::Uploading $stable ($f)"
             curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
               -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
               -F "token=63cef07f4ee54823b25c652b0268f71d" \
               -F "version=latest" \
-              -F "name=$name" \
+              -F "name=cangling-keeper" \
               -F "summary=Automatic release for version $TAG" \
               -F "os=${{ matrix.os-name }}" \
               -F "arch=${{ matrix.arch-name }}" \
-              -F "file=@$f"
+              -F "file=@$STAGE/$stable"
             echo "::endgroup::"
           done
-          
+
+      - name: Upload version file
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
           echo "${{ github.ref_name }}" > version.txt
-          
-          # Upload version file
+          # `name` must end with `-version` so the server stores the file as
+          # version.txt (otherwise it gets renamed to v.txt).
           curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
             -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
             -F "token=63cef07f4ee54823b25c652b0268f71d" \
             -F "version=latest" \
-            -F "name=version.txt" \
-            -F "summary=Automatic release for version $TAG" \
-            -F "os=${{ matrix.os-name }}" \
-            -F "arch=${{ matrix.arch-name }}" \
+            -F "name=cangling-keeper-version" \
+            -F "summary=${{ github.ref_name }}" \
+            -F "os=app" \
+            -F "arch=all" \
             -F "file=@version.txt"
