@@ -96,15 +96,21 @@ jobs:
             esac
             cp "$f" "$STAGE/$stable"
             echo "::group::Uploading $stable ($f)"
-            curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
+            RESP="$(curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
               -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
               -F "token=63cef07f4ee54823b25c652b0268f71d" \
               -F "version=latest" \
-              -F "name=${f##*/}" \
+              -F "name=$stable" \
               -F "summary=Automatic release for version $TAG" \
               -F "os=${{ matrix.os-name }}" \
               -F "arch=${{ matrix.arch-name }}" \
-              -F "file=@$STAGE/$stable"
+              -F "file=@$STAGE/$stable")"
+            echo "$RESP"
+            # The server answers HTTP 200 even for failures, so check the body.
+            if ! grep -q '"success":true' <<<"$RESP"; then
+              echo "::error::Upload failed for $stable: $RESP"
+              exit 1
+            fi
             echo "::endgroup::"
           done
 
@@ -116,7 +122,7 @@ jobs:
           echo "${{ github.ref_name }}" > version.txt
           # `name` must end with `-version` so the server stores the file as
           # version.txt (otherwise it gets renamed to v.txt).
-          curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
+          RESP="$(curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
             -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
             -F "token=63cef07f4ee54823b25c652b0268f71d" \
             -F "version=latest" \
@@ -124,4 +130,9 @@ jobs:
             -F "summary=${{ github.ref_name }}" \
             -F "os=app" \
             -F "arch=all" \
-            -F "file=@version.txt"
+            -F "file=@version.txt")"
+          echo "$RESP"
+          if ! grep -q '"success":true' <<<"$RESP"; then
+            echo "::error::Upload failed for version.txt: $RESP"
+            exit 1
+          fi
