@@ -26,6 +26,7 @@ const state = {
 const $ = (sel) => document.querySelector(sel);
 
 const addBtnEl = $("#add-btn");
+const sidebarAddRowEl = $("#sidebar-add-row");
 const hostListEl = $("#host-list");
 const tunnelListEl = $("#tunnel-list");
 const certListEl = $("#cert-list");
@@ -521,6 +522,12 @@ function renderLoginStatus() {
     loginBtnEl.title = "登录到维护中心服务器";
     loginBtnEl.classList.remove("logged-in");
   }
+  updateSyncBtn();
+}
+
+function updateSyncBtn() {
+  const s = state.login || { loggedIn: false };
+  syncBtnEl.classList.toggle("hidden", state.section !== "hosts" || !s.loggedIn);
 }
 
 function openLoginModal() {
@@ -531,10 +538,9 @@ function openLoginModal() {
   f.password.value = "";
   loginStatusEl.textContent = "";
   loginStatusEl.classList.add("hidden");
-  syncBtnEl.classList.toggle("hidden", !s.loggedIn);
   logoutBtnEl.classList.toggle("hidden", !s.loggedIn);
   loginModalEl.classList.remove("hidden");
-  (s.loggedIn ? syncBtnEl : f.username).focus();
+  (s.loggedIn ? logoutBtnEl : f.username).focus();
 }
 
 function closeLoginModal() {
@@ -551,21 +557,33 @@ async function loadLoginStatus() {
 }
 
 async function onSyncClick() {
+  const s = state.login || {};
+  if (!s.loggedIn) {
+    openLoginModal();
+    return;
+  }
   syncBtnEl.disabled = true;
   syncBtnEl.textContent = "同步中…";
-  loginStatusEl.textContent = "正在同步…";
-  loginStatusEl.classList.remove("hidden");
+  syncBtnEl.title = "正在同步主机…";
   try {
     await invoke("sync_hosts");
-    loginStatusEl.textContent = "同步完成";
     await loadHosts();
     await loadCertificates();
     updateMainView();
+    syncBtnEl.textContent = "已同步";
+    syncBtnEl.title = `已同步 · ${new Date().toLocaleTimeString()}`;
   } catch (err) {
-    loginStatusEl.textContent = `同步失败: ${err}`;
+    syncBtnEl.textContent = "同步失败";
+    syncBtnEl.title = String(err);
+    alert(`同步失败: ${err}`);
   } finally {
     syncBtnEl.disabled = false;
-    syncBtnEl.textContent = "立即同步";
+    setTimeout(() => {
+      if (!syncBtnEl.disabled) {
+        syncBtnEl.textContent = "同步";
+        syncBtnEl.title = "立即同步主机";
+      }
+    }, 2000);
   }
 }
 
@@ -598,7 +616,6 @@ loginFormEl.addEventListener("submit", async (e) => {
   try {
     state.login = await invoke("login", { serverUrl, username, password });
     renderLoginStatus();
-    syncBtnEl.classList.remove("hidden");
     logoutBtnEl.classList.remove("hidden");
     loginStatusEl.textContent = "登录成功";
     await loadHosts();
@@ -980,13 +997,14 @@ function switchSection(section) {
   tunnelListEl.classList.toggle("hidden", section !== "tunnels");
   certListEl.classList.toggle("hidden", section !== "certificates");
   proxySidebarEl.classList.toggle("hidden", section !== "proxy");
-  addBtnEl.classList.toggle("hidden", section === "proxy");
+  sidebarAddRowEl.classList.toggle("hidden", section === "proxy");
   addBtnEl.textContent =
     section === "hosts"
       ? "+ 添加主机"
       : section === "tunnels"
         ? "+ 添加本地隧道"
         : "+ 添加本地证书";
+  updateSyncBtn();
   updateMainView();
 }
 
