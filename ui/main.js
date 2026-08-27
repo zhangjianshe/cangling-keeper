@@ -5,6 +5,7 @@ const { listen } = window.__TAURI__.event;
 const state = {
   section: "hosts", // "hosts" | "tunnels" | "certificates" | "proxy"
   hosts: [],
+  collapsedGroups: {}, // host catalog group name -> true when collapsed
   tunnels: [], // [{...tunnel, active}]
   certificates: [],
   selectedHostId: null,
@@ -821,6 +822,11 @@ function makeItem({ selected, name, sub, active, onClick, actions }) {
   return li;
 }
 
+function toggleGroup(cat) {
+  state.collapsedGroups[cat] = !state.collapsedGroups[cat];
+  renderHostList();
+}
+
 function renderHostList() {
   hostListEl.textContent = "";
   if (state.hosts.length === 0) {
@@ -835,10 +841,35 @@ function renderHostList() {
   }
   const sorted = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh"));
   for (const [cat, hosts] of sorted) {
+    const collapsed = !!state.collapsedGroups[cat];
+
     const header = document.createElement("li");
-    header.className = "list-group";
-    header.textContent = cat;
+    header.className = "list-group-item";
+
+    const btn = document.createElement("button");
+    btn.className = "list-group" + (collapsed ? " collapsed" : "");
+    btn.type = "button";
+    btn.title = collapsed ? "展开分组" : "收缩分组";
+
+    const caret = document.createElement("span");
+    caret.className = "group-caret";
+    caret.innerHTML =
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+
+    const label = document.createElement("span");
+    label.className = "group-label";
+    label.textContent = cat;
+
+    const count = document.createElement("span");
+    count.className = "group-count";
+    count.textContent = hosts.length;
+
+    btn.append(caret, label, count);
+    btn.addEventListener("click", () => toggleGroup(cat));
+    header.appendChild(btn);
     hostListEl.appendChild(header);
+
+    if (collapsed) continue;
 
     hosts.sort((a, b) => (a.name || "").localeCompare(b.name || "", "zh"));
     for (const host of hosts) {

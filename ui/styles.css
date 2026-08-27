@@ -218,12 +218,62 @@ body {
   padding: 24px 8px;
 }
 
+.list-group-item {
+  display: flex;
+}
+
 .list-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
   padding: 8px 12px 4px;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.03em;
   color: var(--fg-muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  user-select: none;
+}
+
+.list-group:hover {
+  color: var(--fg);
+}
+
+.list-group .group-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  transition: transform 0.12s ease;
+}
+
+.list-group .group-caret svg {
+  width: 12px;
+  height: 12px;
+}
+
+.list-group.collapsed .group-caret {
+  transform: rotate(-90deg);
+}
+
+.list-group .group-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.list-group .group-count {
+  margin-left: auto;
+  font-weight: 500;
+  font-family: var(--mono);
+  opacity: 0.7;
 }
 
 .item .item-btn {
