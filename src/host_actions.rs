@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 const PROBE_SCRIPT: &str = include_str!("scripts/probe-cangling-update.sh");
 const APPLY_SCRIPT: &str = include_str!("scripts/apply-cangling-update.sh");
 const CHECK_SCRIPT: &str = include_str!("scripts/check-cangling-version.sh");
+const CHECK_SSH_ENV_SCRIPT: &str = include_str!("scripts/check-ssh-env.sh");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -27,8 +28,21 @@ pub struct UpdateApplyResult {
     pub exit_status: i32,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SshEnvCheck {
+    pub status: String,
+    pub changed: bool,
+    pub allow_tcp_forwarding: String,
+    pub message: String,
+}
+
 pub fn wrap_probe_command() -> String {
     bash_c(PROBE_SCRIPT, &[])
+}
+
+pub fn wrap_check_ssh_env_command() -> String {
+    bash_c(CHECK_SSH_ENV_SCRIPT, &[])
 }
 
 pub fn wrap_apply_command(action: &str, arch: &str, proxy: &str) -> String {
@@ -165,6 +179,47 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
         latest: String::new(),
         update_available: false,
         version_error: String::new(),
+    })
+}
+
+pub fn parse_check_ssh_env(stdout: &str) -> Result<SshEnvCheck, String> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("CK_SSH_ENV|"))
+        .ok_or_else(|| {
+            let tail = stdout.trim();
+            let tail = if tail.len() > 400 {
+                &tail[tail.len() - 400..]
+            } else {
+                tail
+            };
+            format!("环境检查未返回 CK_SSH_ENV 行: {tail}")
+        })?;
+
+    let mut status = String::new();
+    let mut changed = false;
+    let mut allow_tcp_forwarding = String::new();
+    let mut message = String::new();
+
+    for part in line.split('|').skip(1) {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        match k {
+            "status" => status = v.to_string(),
+            "changed" => changed = v == "1" || v.eq_ignore_ascii_case("true"),
+            "allow_tcp_forwarding" => allow_tcp_forwarding = v.to_string(),
+            "message" => message = v.to_string(),
+            _ => {}
+        }
+    }
+
+    Ok(SshEnvCheck {
+        status,
+        changed,
+        allow_tcp_forwarding,
+        message,
     })
 }
 

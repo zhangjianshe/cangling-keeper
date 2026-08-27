@@ -47,6 +47,7 @@ const hostNameEl = $("#host-name");
 const hostConnEl = $("#host-conn");
 const termToggleBtnEl = $("#term-toggle-btn");
 const termStatusEl = $("#term-status");
+const checkEnvBtnEl = $("#check-env-btn");
 const injectBtnEl = $("#inject-proxy-btn");
 const injectStatusEl = $("#inject-status");
 const updateBtnEl = $("#btn-cangling-update");
@@ -1308,8 +1309,34 @@ certModalEl.addEventListener("click", (e) => {
   if (e.target === certModalEl) closeCertModal();
 });
 
+async function onCheckEnvClick() {
+  const host = hostById(state.selectedHostId);
+  if (!host) return;
+  const btn = checkEnvBtnEl;
+  btn.disabled = true;
+  btn.textContent = "检查中…";
+  try {
+    const result = await invoke("check_host_env", { hostId: host.id });
+    btn.textContent = result.changed ? "已开启转发" : "环境正常";
+    btn.title = result.message || `AllowTcpForwarding: ${result.allowTcpForwarding}`;
+  } catch (err) {
+    btn.textContent = "检查失败";
+    btn.title = String(err);
+    alert(`检查环境失败: ${err}`);
+  } finally {
+    btn.disabled = false;
+    setTimeout(() => {
+      if (!btn.disabled) {
+        btn.textContent = "检查环境";
+        btn.title = "检查并修改 sshd 允许 TCP Forward";
+      }
+    }, 3000);
+  }
+}
+
 toggleTunnelBtnEl.addEventListener("click", toggleTunnel);
 termToggleBtnEl.addEventListener("click", toggleTerminal);
+checkEnvBtnEl.addEventListener("click", onCheckEnvClick);
 injectBtnEl.addEventListener("click", toggleInject);
 $("#edit-host-btn").addEventListener("click", () => {
   const host = hostById(state.selectedHostId);

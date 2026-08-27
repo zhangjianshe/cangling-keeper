@@ -217,6 +217,25 @@ async fn ssh_execute(
     ssh::execute(&host, &command, &auth).await
 }
 
+#[tauri::command]
+async fn check_host_env(
+    state: State<'_, AppState>,
+    host_id: String,
+) -> Result<host_actions::SshEnvCheck, String> {
+    let out = ssh_run(&state, &host_id, host_actions::wrap_check_ssh_env_command()).await?;
+    // The script restarts sshd in the background, so the channel may be
+    // dropped before an exit status is reported; rely on the marker line.
+    let check = host_actions::parse_check_ssh_env(&out.stdout)?;
+    if check.status != "ok" {
+        return Err(if check.message.is_empty() {
+            "环境检查失败".to_string()
+        } else {
+            check.message.clone()
+        });
+    }
+    Ok(check)
+}
+
 // ---- tunnels ---------------------------------------------------------------
 
 #[tauri::command]
@@ -1244,6 +1263,7 @@ pub fn run() {
             update_host,
             delete_host,
             ssh_execute,
+            check_host_env,
             list_tunnels,
             add_tunnel,
             update_tunnel,
