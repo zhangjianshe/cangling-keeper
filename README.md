@@ -19,6 +19,271 @@ commands over SSH with one click.
 > (trust-on-first-use is a planned improvement). Treat this as a local tool on a
 > trusted machine for now.
 
+## Data model
+
+### SQLite schema
+
+Stored in `<app_data_dir>/data.sql`. Authentication is denormalized per row
+(`auth_method` + `password` + `certificate_id`); `certificate_id` is only set
+when `auth_method = 'certificate'` and references `certificates.id` (a logical
+foreign key, not enforced by SQLite). `hosts.remote_id` is the server-side host
+id used for sync.
+
+```mermaid
+erDiagram
+    HOSTS {
+        TEXT id PK
+        TEXT name
+        TEXT hostname
+        INTEGER port
+        TEXT username
+        TEXT auth_method
+        TEXT password
+        TEXT certificate_id
+        INTEGER inject_remote_port
+        TEXT catalog
+        TEXT remote_id
+        INTEGER is_public
+    }
+    TUNNELS {
+        TEXT id PK
+        TEXT name
+        INTEGER local_port
+        TEXT remote_host
+        INTEGER remote_port
+        TEXT ssh_host
+        INTEGER ssh_port
+        TEXT username
+        TEXT auth_method
+        TEXT password
+        TEXT certificate_id
+    }
+    CERTIFICATES {
+        TEXT id PK
+        TEXT name
+        TEXT private_key_path
+        TEXT public_key
+    }
+    PROXY_SETTINGS {
+        INTEGER id PK
+        TEXT mode
+        TEXT host
+        INTEGER port
+        INTEGER enabled
+        INTEGER last_reachable
+        INTEGER last_http
+        INTEGER last_socks5
+        TEXT last_message
+        INTEGER last_checked_at
+    }
+    SETTINGS {
+        TEXT key PK
+        TEXT value
+    }
+
+    HOSTS }o--o| CERTIFICATES : "certificate_id"
+    TUNNELS }o--o| CERTIFICATES : "certificate_id"
+```
+
+- `proxy_settings` is a singleton row (`id = 1`).
+- `settings` is a generic key/value store (server URL, login token, username,
+  nickname).
+
+### Rust structs
+
+Core domain and DTO structs (see `src/host.rs`, `src/auth.rs`,
+`src/certificate.rs`, `src/tunnel.rs`, `src/proxy.rs`, `src/sync.rs`,
+`src/host_actions.rs`, `src/ssh.rs`).
+
+```mermaid
+classDiagram
+    class Host {
+        +String id
+        +String name
+        +String hostname
+        +u16 port
+        +String username
+        +u16 inject_remote_port
+        +Auth auth
+        +String catalog
+        +String remote_id
+        +bool is_public
+    }
+    class Auth {
+        <<enumeration>>
+        Password
+        Certificate
+    }
+    class Certificate {
+        +String id
+        +String name
+        +String private_key_path
+        +String public_key
+    }
+    class Tunnel {
+        +String id
+        +String name
+        +u16 local_port
+        +String remote_host
+        +u16 remote_port
+        +String ssh_host
+        +u16 ssh_port
+        +String username
+        +Auth auth
+    }
+    class TunnelInfo {
+        +Tunnel tunnel
+        +bool active
+    }
+    class ProxySettings {
+        +String mode
+        +String host
+        +u16 port
+        +bool enabled
+        +bool last_reachable
+        +bool last_http
+        +bool last_socks5
+        +String last_message
+        +i64 last_checked_at
+    }
+    class ProxyStatus {
+        +String mode
+        +String host
+        +u16 port
+        +String endpoint
+        +String bind
+        +bool enabled
+        +bool running
+        +bool reachable
+        +bool http
+        +bool socks5
+        +String message
+        +i64 last_checked_at
+    }
+    class ProbeResult {
+        +bool reachable
+        +bool http
+        +bool socks5
+        +String message
+    }
+    class SyncHost {
+        +String id
+        +String name
+        +String hostname
+        +u16 port
+        +String username
+        +String auth_method
+        +String password
+        +String private_key
+        +String public_key
+        +u16 inject_remote_port
+        +String catalog
+        +u8 is_public
+    }
+    class LoginData {
+        +String token
+        +String user_name
+        +String nick_name
+    }
+    class LoginStatus {
+        +bool logged_in
+        +String server_url
+        +String username
+        +String nickname
+    }
+    class UpdateProbe {
+        +bool installed
+        +String arch
+        +bool supported
+        +bool active
+        +String binary
+        +String version
+        +String latest
+        +bool update_available
+        +String version_error
+    }
+    class UpdateApplyResult {
+        +String action
+        +String stdout
+        +String stderr
+        +i32 exit_status
+    }
+    class SshEnvCheck {
+        +String status
+        +bool changed
+        +String allow_tcp_forwarding
+        +String message
+    }
+    class ExecOutput {
+        +String stdout
+        +String stderr
+        +i32 exit_status
+    }
+    class ResolvedAuth {
+        <<enumeration>>
+        Password
+        Key
+    }
+
+    Host *-- Auth : auth
+    Tunnel *-- Auth : auth
+    TunnelInfo *-- Tunnel : tunnel
+    Auth ..> Certificate : certificate_id
+    ProxyStatus ..> ProxySettings : from_settings()
+    SyncHost ..> Host : "host_to_sync() / sync_to_host()"
+```
+
+Enum variants carry data:
+
+- `Auth::Password { password }`, `Auth::Certificate { certificate_id }`
+- `ResolvedAuth::Password(String)`, `ResolvedAuth::Key(String)`
+
+### Runtime state (managed by Tauri)
+
+```mermaid
+classDiagram
+    class AppState {
+        +Store store
+        +active_tunnels
+        +active_terminals
+        +ProxyRuntime proxy
+        +injected_proxies
+        +data_dir
+    }
+    class Store {
+        +Connection conn
+    }
+    class ProxyRuntime {
+        +ProxySettings settings
+        +stop_tx
+    }
+    class InjectedHandle {
+        +stop_tx
+        +u16 remote_port
+        +String local_endpoint
+    }
+    class TerminalHandle {
+        +input_tx
+        +cancel_tx
+    }
+    class ProxyInjection {
+        +String host_id
+        +bool active
+        +u16 remote_port
+        +String local_endpoint
+    }
+
+    AppState *-- Store : "Mutex"
+    AppState *-- ProxyRuntime : "Mutex"
+    AppState *-- InjectedHandle : "Mutex HashMap"
+    AppState *-- TerminalHandle : "Mutex HashMap"
+    ProxyRuntime *-- ProxySettings : settings
+```
+
+- `AppState` is the shared Tauri managed state; the maps and handles are guarded
+  by `Mutex` and hold tokio `oneshot`/`mpsc` senders used to cancel active
+  tunnels, terminals and proxy injections.
+
 ## Project structure
 
 ```

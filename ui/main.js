@@ -48,6 +48,7 @@ const hostConnEl = $("#host-conn");
 const termToggleBtnEl = $("#term-toggle-btn");
 const termStatusEl = $("#term-status");
 const checkEnvBtnEl = $("#check-env-btn");
+const resourceMgrBtnEl = $("#resource-mgr-btn");
 const injectBtnEl = $("#inject-proxy-btn");
 const injectStatusEl = $("#inject-status");
 const updateBtnEl = $("#btn-cangling-update");
@@ -1334,9 +1335,25 @@ async function onCheckEnvClick() {
   }
 }
 
+async function onResourceMgrClick() {
+  const host = hostById(state.selectedHostId);
+  if (!host) return;
+  const url = `http://${host.hostname}`;
+  const btn = resourceMgrBtnEl;
+  btn.disabled = true;
+  try {
+    await invoke("open_url", { url });
+  } catch (err) {
+    alert(`打开资源管理失败: ${err}`);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 toggleTunnelBtnEl.addEventListener("click", toggleTunnel);
 termToggleBtnEl.addEventListener("click", toggleTerminal);
 checkEnvBtnEl.addEventListener("click", onCheckEnvClick);
+resourceMgrBtnEl.addEventListener("click", onResourceMgrClick);
 injectBtnEl.addEventListener("click", toggleInject);
 $("#edit-host-btn").addEventListener("click", () => {
   const host = hostById(state.selectedHostId);

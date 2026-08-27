@@ -236,6 +236,45 @@ async fn check_host_env(
     Ok(check)
 }
 
+// ---- external links -------------------------------------------------------
+
+/// Open an http/https link in the system default browser.
+#[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("仅支持 http/https 链接".into());
+    }
+    let status = open_with_command(&url)?;
+    if !status.success() {
+        return Err("浏览器未能打开链接".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_with_command(url: &str) -> Result<std::process::ExitStatus, String> {
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .status()
+        .map_err(|e| format!("无法打开浏览器: {e}"))
+}
+
+#[cfg(target_os = "macos")]
+fn open_with_command(url: &str) -> Result<std::process::ExitStatus, String> {
+    std::process::Command::new("open")
+        .arg(url)
+        .status()
+        .map_err(|e| format!("无法打开浏览器: {e}"))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_with_command(url: &str) -> Result<std::process::ExitStatus, String> {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .status()
+        .map_err(|e| format!("无法打开浏览器: {e}"))
+}
+
 // ---- tunnels ---------------------------------------------------------------
 
 #[tauri::command]
@@ -1264,6 +1303,7 @@ pub fn run() {
             delete_host,
             ssh_execute,
             check_host_env,
+            open_url,
             list_tunnels,
             add_tunnel,
             update_tunnel,
