@@ -18,6 +18,18 @@ fn state_path(data_dir: &Path) -> PathBuf {
     data_dir.join(FILE_NAME)
 }
 
+/// Whether the app is running in a Wayland session.
+///
+/// Wayland has no global coordinate system: clients cannot set or query their
+/// own window position (`gtk_window_move` is a no-op and `outer_position()`
+/// always reports `(0, 0)`), so position save/restore must be skipped there.
+fn is_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var("XDG_SESSION_TYPE")
+            .map(|v| v == "wayland")
+            .unwrap_or(false)
+}
+
 fn load(data_dir: &Path) -> Option<WindowState> {
     let text = std::fs::read_to_string(state_path(data_dir)).ok()?;
     serde_json::from_str(&text).ok()
@@ -52,7 +64,7 @@ pub fn restore(window: &WebviewWindow, data_dir: &Path) {
         })
         .unwrap_or(true);
 
-    if position_visible {
+    if position_visible && !is_wayland() {
         let _ = window.set_position(PhysicalPosition::new(state.x, state.y));
     }
     let _ = window.set_size(PhysicalSize::new(state.width, state.height));
@@ -66,11 +78,17 @@ pub fn save(window: &WebviewWindow, data_dir: &Path) {
     let mut state = load(data_dir).unwrap_or_default();
     state.maximized = maximized;
     if !maximized {
-        if let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) {
-            state.x = pos.x;
-            state.y = pos.y;
+        if let Ok(size) = window.outer_size() {
             state.width = size.width;
             state.height = size.height;
+        }
+        // On Wayland the position is meaningless (always (0, 0)); keep the
+        // last known position instead of overwriting it with (0, 0).
+        if !is_wayland() {
+            if let Ok(pos) = window.outer_position() {
+                state.x = pos.x;
+                state.y = pos.y;
+            }
         }
     }
 

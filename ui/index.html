@@ -32,11 +32,9 @@
 
       <div class="app-body">
         <aside class="sidebar">
-          <div id="sidebar-add-row" class="sidebar-top-actions">
-            <button id="add-btn" class="btn primary full" type="button">+ 添加主机</button>
-            <button id="sync-btn" class="btn sync-btn hidden" type="button" title="立即同步主机">同步</button>
+          <div id="host-search-box" class="sidebar-search">
+            <input id="host-search-input" type="text" placeholder="搜索主机…" autocomplete="off" spellcheck="false" />
           </div>
-
           <ul id="host-list" class="list"></ul>
           <ul id="tunnel-list" class="list hidden"></ul>
           <ul id="cert-list" class="list hidden"></ul>
@@ -48,7 +46,10 @@
             </div>
           </div>
 
-          <div class="sidebar-footer">Rust + Tauri · SSH</div>
+          <div id="sidebar-add-row" class="sidebar-bottom-actions">
+            <button id="add-btn" class="btn primary full" type="button">+ 添加主机</button>
+            <button id="sync-btn" class="btn sync-btn hidden" type="button" title="立即同步主机">同步</button>
+          </div>
         </aside>
 
         <main class="content">
@@ -245,6 +246,7 @@
           <p class="hint">连接时自动检测本地代理，并反向注入到该主机 127.0.0.1 的此端口（缺省 7890）。</p>
 
           <label class="checkbox"><input name="is_public" type="checkbox" /> 共享为公共主机（拥有公共主机角色的用户可见）</label>
+          <p id="public-host-hint" class="hint hidden">公共主机类型不可更改。</p>
 
           <fieldset class="auth-fieldset">
             <legend>Authentication</legend>

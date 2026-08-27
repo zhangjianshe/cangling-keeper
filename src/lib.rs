@@ -154,10 +154,16 @@ async fn update_host(state: State<'_, AppState>, mut host: Host) -> Result<(), S
     host.validate()?;
     // The form does not carry remote_id; preserve it from the stored record
     // so editing a synced host does not detach it from the server copy.
-    if host.remote_id.is_empty() {
+    // Public hosts are locked: their public/private type cannot be changed.
+    {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         if let Ok(existing) = store.get_host(&host.id) {
-            host.remote_id = existing.remote_id;
+            if host.remote_id.is_empty() {
+                host.remote_id = existing.remote_id;
+            }
+            if existing.is_public {
+                host.is_public = true;
+            }
         }
     }
     {
@@ -986,16 +992,11 @@ fn login_credentials(store: &Store) -> Option<(String, String)> {
     }
 }
 
-/// Pull the server host list and merge it into the local store, then push any
-/// local-only hosts. The server is the source of truth for hosts that already
-/// have a `remote_id`.
-async fn sync_now(state: &AppState) -> Result<(), String> {
-    let (url, token) = {
-        let store = state.store.lock().map_err(|e| e.to_string())?;
-        login_credentials(&store).ok_or("未登录")?
-    };
-
-    let server_hosts = sync::pull_hosts(&url, &token).await?;
+/// Pull the server host list and reconcile it with the local store: update
+/// hosts that still exist on the server, insert new ones, and delete local
+/// copies (including synced public hosts) that are no longer returned.
+async fn pull_sync(state: &AppState, url: &str, token: &str) -> Result<(), String> {
+    let server_hosts = sync::pull_hosts(url, token).await?;
     let keys_dir = state.data_dir.join("keys");
     let server_by_id: HashMap<String, sync::SyncHost> = server_hosts
         .into_iter()
@@ -1003,7 +1004,6 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
         .map(|h| (h.id.clone(), h))
         .collect();
 
-    let mut to_push: Vec<Host> = Vec::new();
     {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let store = &*store;
@@ -1011,8 +1011,9 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
 
         for local in &local_hosts {
             if local.remote_id.is_empty() {
-                to_push.push(local.clone());
-            } else if let Some(remote) = server_by_id.get(&local.remote_id) {
+                continue;
+            }
+            if let Some(remote) = server_by_id.get(&local.remote_id) {
                 match sync::sync_to_host(store, &keys_dir, remote) {
                     Ok(mut updated) => {
                         updated.id = local.id.clone();
@@ -1053,7 +1054,27 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
         }
     }
 
+    Ok(())
+}
+
+/// Full sync: pull + reconcile, then push any local-only hosts to the server.
+async fn sync_now(state: &AppState) -> Result<(), String> {
+    let (url, token) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        login_credentials(&store).ok_or("未登录")?
+    };
+
+    pull_sync(state, &url, &token).await?;
+
     // Push local-only hosts (best effort).
+    let to_push: Vec<Host> = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store
+            .list_hosts()?
+            .into_iter()
+            .filter(|h| h.remote_id.is_empty())
+            .collect()
+    };
     for local in to_push {
         let sync_host = {
             let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -1151,6 +1172,15 @@ async fn sync_hosts(state: State<'_, AppState>) -> Result<(), String> {
     sync_now(&state).await
 }
 
+#[tauri::command]
+async fn sync_public_hosts(state: State<'_, AppState>) -> Result<(), String> {
+    let (url, token) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        login_credentials(&store).ok_or("未登录")?
+    };
+    pull_sync(&state, &url, &token).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1243,7 +1273,8 @@ pub fn run() {
             login,
             logout,
             get_login_status,
-            sync_hosts
+            sync_hosts,
+            sync_public_hosts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

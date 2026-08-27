@@ -5,6 +5,7 @@ const { listen } = window.__TAURI__.event;
 const state = {
   section: "hosts", // "hosts" | "tunnels" | "certificates" | "proxy"
   hosts: [],
+  searchHosts: "",
   collapsedGroups: {}, // host catalog group name -> true when collapsed
   tunnels: [], // [{...tunnel, active}]
   certificates: [],
@@ -28,6 +29,8 @@ const $ = (sel) => document.querySelector(sel);
 
 const addBtnEl = $("#add-btn");
 const sidebarAddRowEl = $("#sidebar-add-row");
+const hostSearchBoxEl = $("#host-search-box");
+const hostSearchInputEl = $("#host-search-input");
 const hostListEl = $("#host-list");
 const tunnelListEl = $("#tunnel-list");
 const certListEl = $("#cert-list");
@@ -73,6 +76,7 @@ const hostFormEl = $("#host-form");
 const hostModalTitleEl = $("#host-modal-title");
 const hostAuthPasswordEl = $("#host-auth-password");
 const hostAuthCertEl = $("#host-auth-cert");
+const publicHostHintEl = $("#public-host-hint");
 
 const tunnelModalEl = $("#tunnel-modal");
 const tunnelFormEl = $("#tunnel-form");
@@ -557,6 +561,19 @@ async function loadLoginStatus() {
   renderLoginStatus();
 }
 
+async function autoSyncIfLoggedIn() {
+  const s = state.login || {};
+  if (!s.loggedIn) return;
+  try {
+    await invoke("sync_public_hosts");
+    await loadHosts();
+    await loadCertificates();
+    updateMainView();
+  } catch (_) {
+    // Background sync is best-effort; the user can still sync manually.
+  }
+}
+
 async function onSyncClick() {
   const s = state.login || {};
   if (!s.loggedIn) {
@@ -833,8 +850,20 @@ function renderHostList() {
     hostListEl.appendChild(makeEmptyItem("暂无主机"));
     return;
   }
+  const q = (state.searchHosts || "").trim().toLowerCase();
+  const hosts = q
+    ? state.hosts.filter((h) =>
+        [h.name, h.hostname, h.username, h.catalog]
+          .filter(Boolean)
+          .some((v) => String(v).toLowerCase().includes(q))
+      )
+    : state.hosts;
+  if (hosts.length === 0) {
+    hostListEl.appendChild(makeEmptyItem("无匹配主机"));
+    return;
+  }
   const groups = new Map();
-  for (const host of state.hosts) {
+  for (const host of hosts) {
     const cat = (host.catalog || "").trim() || "未分组";
     if (!groups.has(cat)) groups.set(cat, []);
     groups.get(cat).push(host);
@@ -1024,6 +1053,7 @@ function switchSection(section) {
   $("#nav-tunnels").classList.toggle("active", section === "tunnels");
   $("#nav-certificates").classList.toggle("active", section === "certificates");
   $("#nav-proxy").classList.toggle("active", section === "proxy");
+  hostSearchBoxEl.classList.toggle("hidden", section !== "hosts");
   hostListEl.classList.toggle("hidden", section !== "hosts");
   tunnelListEl.classList.toggle("hidden", section !== "tunnels");
   certListEl.classList.toggle("hidden", section !== "certificates");
@@ -1074,6 +1104,9 @@ function openHostModal(host) {
   f.username.value = host ? host.username : "";
   f.inject_remote_port.value = host ? hostInjectRemotePort(host) : 7890;
   f.is_public.checked = host ? !!host.is_public : false;
+  const isPublicLocked = !!(host && host.is_public);
+  f.is_public.disabled = isPublicLocked;
+  publicHostHintEl.classList.toggle("hidden", !isPublicLocked);
 
   if (host && host.auth && host.auth.method === "certificate") {
     f.auth_method.value = "certificate";
@@ -1238,6 +1271,10 @@ async function parseSshCommand() {
 // ---- events -----------------------------------------------------------------
 
 $("#nav-hosts").addEventListener("click", () => switchSection("hosts"));
+hostSearchInputEl.addEventListener("input", () => {
+  state.searchHosts = hostSearchInputEl.value;
+  renderHostList();
+});
 $("#nav-tunnels").addEventListener("click", () => switchSection("tunnels"));
 $("#nav-certificates").addEventListener("click", () => switchSection("certificates"));
 $("#nav-proxy").addEventListener("click", () => switchSection("proxy"));
@@ -1517,7 +1554,7 @@ document.addEventListener("dblclick", (event) => {
   initTerminal();
   updateTerminalUI();
   checkAppUpdate();
-  loadLoginStatus();
+  await loadLoginStatus();
   try {
     await Promise.all([
       loadHosts(),
@@ -1541,4 +1578,8 @@ document.addEventListener("dblclick", (event) => {
   } catch (err) {
     alert(`Failed to load data: ${err}`);
   }
+
+  // If the user is already logged in, sync the public host list in the
+  // background so shared hosts and deletions are reflected automatically.
+  autoSyncIfLoggedIn();
 })();
