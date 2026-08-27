@@ -126,11 +126,54 @@ fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
+
+    // When running as an AppImage, replace the running AppImage file in place
+    // instead of launching the freshly downloaded copy from /tmp. This keeps
+    // the existing launcher / app-center entry pointing at the same file, so
+    // every update no longer creates a brand-new desktop entry.
+    if let Ok(appimage) = std::env::var("APPIMAGE") {
+        let target = std::path::PathBuf::from(&appimage);
+        if target.is_file() {
+            match replace_appimage(dest, &target) {
+                Ok(()) => {
+                    std::process::Command::new(&target)
+                        .spawn()
+                        .map_err(|e| format!("启动更新失败: {e}"))?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    eprintln!("原地更新 AppImage 失败 ({e})，改为从临时目录启动");
+                }
+            }
+        }
+    }
+
+    // Fallback: run the downloaded AppImage from the temp directory.
     std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("设置可执行权限失败: {e}"))?;
     std::process::Command::new(dest)
         .spawn()
         .map_err(|e| format!("启动更新失败: {e}"))?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn replace_appimage(src: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = target.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "AppImage 路径没有父目录")
+    })?;
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("cangling-keeper");
+    // Write the new file next to the target so the final rename is atomic on
+    // the same filesystem, then swap it over the currently running AppImage.
+    let tmp = dir.join(format!(".{name}.update"));
+    std::fs::copy(src, &tmp)?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+    std::fs::rename(&tmp, target)?;
     Ok(())
 }
 
