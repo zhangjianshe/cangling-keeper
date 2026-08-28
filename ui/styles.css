@@ -1,3 +1,33 @@
+/* Iosevka Term — terminal font (bundled locally) */
+@font-face {
+  font-family: "Iosevka Term Web";
+  src: url("fonts/IosevkaTerm-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Iosevka Term Web";
+  src: url("fonts/IosevkaTerm-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Iosevka Term Web";
+  src: url("fonts/IosevkaTerm-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Iosevka Term Web";
+  src: url("fonts/IosevkaTerm-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light;
   --canvas: #f6f8fa;
@@ -679,7 +709,7 @@ body {
   display: flex;
   border: 1px solid var(--border);
   border-radius: 6px;
-  background: #0d1117;
+  background: #ffffff;
   overflow: hidden;
   padding: 8px;
 }
@@ -1059,6 +1089,28 @@ body {
   white-space: nowrap;
   font-size: 12px;
   color: var(--fg-muted);
+}
+
+.repo-local-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 460px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--btn-default-bg);
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+
+.repo-local-label {
+  flex: none;
+  font-weight: 600;
+}
+
+.repo-local-path .repo-path {
+  max-width: 320px;
 }
 
 .repo-tree-list {

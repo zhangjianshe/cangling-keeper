@@ -112,17 +112,47 @@ const ctxDeleteHostBtnEl = $("#ctx-delete-host");
 let term = null;
 let fitAddon = null;
 
+async function ensureTerminalFont() {
+  try {
+    await Promise.all([
+      document.fonts.load('16px "Iosevka Term Web"'),
+      document.fonts.load('italic 16px "Iosevka Term Web"'),
+      document.fonts.load('700 16px "Iosevka Term Web"'),
+      document.fonts.load('italic 700 16px "Iosevka Term Web"'),
+    ]);
+  } catch (_) {
+    // Fall back to the CSS monospace stack if the bundled font fails to load.
+  }
+}
+
 function initTerminal() {
   term = new Terminal({
     cursorBlink: true,
-    fontSize: 13,
-    fontFamily: '"Cascadia Mono", "SF Mono", Menlo, Consolas, monospace',
+    fontSize: 16,
+    fontFamily: '"Iosevka Term Web", "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace',
     scrollback: 10000,
     theme: {
-      background: "#0d1117",
-      foreground: "#e6edf3",
-      cursor: "#2dd4bf",
-      selectionBackground: "#264f78",
+      background: "#ffffff",
+      foreground: "#1f2328",
+      cursor: "#0969da",
+      cursorAccent: "#ffffff",
+      selectionBackground: "#ddf4ff",
+      black: "#24292e",
+      red: "#cf222e",
+      green: "#116329",
+      yellow: "#4d2d00",
+      blue: "#0969da",
+      magenta: "#8250df",
+      cyan: "#1b7c83",
+      white: "#6e7781",
+      brightBlack: "#57606a",
+      brightRed: "#a40e26",
+      brightGreen: "#1a7f37",
+      brightYellow: "#633c01",
+      brightBlue: "#218bff",
+      brightMagenta: "#a475f9",
+      brightCyan: "#3192aa",
+      brightWhite: "#8c959f",
     },
   });
 
@@ -1124,16 +1154,14 @@ function renderRepoStatus() {
   const s = state.repoStatus || { cloned: false, localPath: "", branch: "", commit: "", error: "" };
   repoCloneUpdateBtnEl.textContent = s.cloned ? "更新仓库" : "下载仓库";
   repoCloneUpdateBtnEl.className = "btn " + (s.cloned ? "" : "primary");
+  repoPathEl.textContent = s.localPath || "下载后自动填充";
+  repoPathEl.title = s.localPath || "";
   if (s.cloned) {
     repoStatusLineEl.textContent = `已下载 · ${s.branch || "?"} · ${s.commit || "?"}`;
     repoStatusLineEl.className = "conn";
-    repoPathEl.textContent = s.localPath;
-    repoPathEl.className = "status off";
   } else {
     repoStatusLineEl.textContent = "未下载";
     repoStatusLineEl.className = "conn";
-    repoPathEl.textContent = "";
-    repoPathEl.className = "status off";
   }
   repoUpBtnEl.disabled = !s.cloned || !state.repoPath;
 }
@@ -1857,6 +1885,7 @@ document.addEventListener("dblclick", (event) => {
 // ---- init -------------------------------------------------------------------
 
 (async () => {
+  await ensureTerminalFont();
   initTerminal();
   updateTerminalUI();
   checkAppUpdate();
