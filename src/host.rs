@@ -26,6 +26,11 @@ pub struct Host {
     /// Whether this host is shared with users having the public-host role.
     #[serde(default)]
     pub is_public: bool,
+    /// Whether this host was defined locally by the current user (as opposed
+    /// to being synced from the server). Only owned hosts can be edited or
+    /// deleted.
+    #[serde(default)]
+    pub owned: bool,
 }
 
 fn default_port() -> u16 {

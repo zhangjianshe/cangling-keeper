@@ -54,6 +54,9 @@ pub struct SyncHost {
     pub catalog: Option<String>,
     #[serde(default)]
     pub is_public: u8,
+    /// Whether this host belongs to the currently logged-in user.
+    #[serde(default)]
+    pub mine: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -207,6 +210,7 @@ pub fn host_to_sync(store: &Store, data_dir: &Path, host: &Host) -> Result<SyncH
             Some(host.catalog.clone())
         },
         is_public: if host.is_public { 1 } else { 0 },
+        mine: false,
     })
 }
 
@@ -244,6 +248,7 @@ pub fn sync_to_host(store: &Store, keys_dir: &Path, s: &SyncHost) -> Result<Host
         catalog: s.catalog.clone().unwrap_or_default(),
         remote_id: s.id.clone(),
         is_public: s.is_public != 0,
+        owned: s.mine,
     })
 }
 

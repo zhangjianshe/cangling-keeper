@@ -137,6 +137,8 @@ async fn add_host(state: State<'_, AppState>, mut host: Host) -> Result<Host, St
     if host.id.is_empty() {
         host.id = Uuid::new_v4().to_string();
     }
+    // Hosts created from the UI are always owned by the current user.
+    host.owned = true;
     host.validate()?;
     {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -152,19 +154,17 @@ async fn add_host(state: State<'_, AppState>, mut host: Host) -> Result<Host, St
 #[tauri::command]
 async fn update_host(state: State<'_, AppState>, mut host: Host) -> Result<(), String> {
     host.validate()?;
-    // The form does not carry remote_id; preserve it from the stored record
-    // so editing a synced host does not detach it from the server copy.
-    // Public hosts are locked: their public/private type cannot be changed.
+    // Only locally-defined hosts can be edited. The form does not carry
+    // remote_id or owned; preserve them from the stored record so editing a
+    // synced host does not detach it from the server copy.
     {
         let store = state.store.lock().map_err(|e| e.to_string())?;
-        if let Ok(existing) = store.get_host(&host.id) {
-            if host.remote_id.is_empty() {
-                host.remote_id = existing.remote_id;
-            }
-            if existing.is_public {
-                host.is_public = true;
-            }
+        let existing = store.get_host(&host.id)?;
+        if !existing.owned {
+            return Err("该主机不是自己创建的，无法编辑".into());
         }
+        host.remote_id = existing.remote_id;
+        host.owned = existing.owned;
     }
     {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -176,13 +176,14 @@ async fn update_host(state: State<'_, AppState>, mut host: Host) -> Result<(), S
 
 #[tauri::command]
 async fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), String> {
-    let remote_id = {
+    let host = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
-        store
-            .get_host(&id)
-            .map(|h| h.remote_id.clone())
-            .unwrap_or_default()
+        store.get_host(&id)?
     };
+    if !host.owned {
+        return Err("只能删除自己创建的主机".into());
+    }
+    let remote_id = host.remote_id.clone();
     if let Some(handle) = state
         .injected_proxies
         .lock()

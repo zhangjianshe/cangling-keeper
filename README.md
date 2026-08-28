@@ -44,6 +44,7 @@ erDiagram
         TEXT catalog
         TEXT remote_id
         INTEGER is_public
+        INTEGER owned
     }
     TUNNELS {
         TEXT id PK
@@ -108,6 +109,7 @@ classDiagram
         +String catalog
         +String remote_id
         +bool is_public
+        +bool owned
     }
     class Auth {
         <<enumeration>>
@@ -179,6 +181,7 @@ classDiagram
         +u16 inject_remote_port
         +String catalog
         +u8 is_public
+        +bool mine
     }
     class LoginData {
         +String token

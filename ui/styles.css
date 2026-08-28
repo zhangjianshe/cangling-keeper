@@ -1003,3 +1003,11 @@ body {
 .ctx-item:hover {
   background: var(--btn-hover-bg);
 }
+
+.ctx-item.danger {
+  color: var(--danger);
+}
+
+.ctx-item.danger:hover {
+  background: var(--danger-subtle);
+}

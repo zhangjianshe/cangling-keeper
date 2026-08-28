@@ -79,7 +79,6 @@ const hostFormEl = $("#host-form");
 const hostModalTitleEl = $("#host-modal-title");
 const hostAuthPasswordEl = $("#host-auth-password");
 const hostAuthCertEl = $("#host-auth-cert");
-const publicHostHintEl = $("#public-host-hint");
 
 const tunnelModalEl = $("#tunnel-modal");
 const tunnelFormEl = $("#tunnel-form");
@@ -92,7 +91,9 @@ const certModalEl = $("#cert-modal");
 const certFormEl = $("#cert-form");
 
 const ctxMenuEl = $("#ctx-menu");
+const ctxEditHostBtnEl = $("#ctx-edit-host");
 const ctxCopyHostBtnEl = $("#ctx-copy-host");
+const ctxDeleteHostBtnEl = $("#ctx-delete-host");
 
 // ---- xterm.js terminal ------------------------------------------------------
 
@@ -1116,9 +1117,7 @@ function openHostModal(host) {
   f.username.value = host ? host.username : "";
   f.inject_remote_port.value = host ? hostInjectRemotePort(host) : 7890;
   f.is_public.checked = host ? !!host.is_public : false;
-  const isPublicLocked = !!(host && host.is_public);
-  f.is_public.disabled = isPublicLocked;
-  publicHostHintEl.classList.toggle("hidden", !isPublicLocked);
+  f.is_public.disabled = false;
 
   if (host && host.auth && host.auth.method === "certificate") {
     f.auth_method.value = "certificate";
@@ -1150,7 +1149,6 @@ function openCopyHostModal(host) {
   f.inject_remote_port.value = hostInjectRemotePort(host);
   f.is_public.checked = false;
   f.is_public.disabled = false;
-  publicHostHintEl.classList.add("hidden");
 
   if (host.auth && host.auth.method === "certificate") {
     f.auth_method.value = "certificate";
@@ -1368,7 +1366,13 @@ function hideContextMenu() {
 }
 
 function openHostContextMenu(e, hostId) {
+  const host = hostById(hostId);
   state.contextHostId = hostId;
+
+  const canManage = !!(host && host.owned);
+  ctxEditHostBtnEl.classList.toggle("hidden", !canManage);
+  ctxDeleteHostBtnEl.classList.toggle("hidden", !canManage);
+
   ctxMenuEl.classList.remove("hidden");
 
   const menuW = ctxMenuEl.offsetWidth || 160;
@@ -1380,10 +1384,22 @@ function openHostContextMenu(e, hostId) {
   ctxMenuEl.style.top = `${Math.max(pad, y)}px`;
 }
 
+ctxEditHostBtnEl.addEventListener("click", () => {
+  const host = hostById(state.contextHostId);
+  hideContextMenu();
+  if (host && host.owned) openHostModal(host);
+});
+
 ctxCopyHostBtnEl.addEventListener("click", () => {
   const host = hostById(state.contextHostId);
   hideContextMenu();
   if (host) openCopyHostModal(host);
+});
+
+ctxDeleteHostBtnEl.addEventListener("click", () => {
+  const host = hostById(state.contextHostId);
+  hideContextMenu();
+  if (host && host.owned) deleteHost(host);
 });
 
 document.addEventListener("click", hideContextMenu);
@@ -1439,14 +1455,6 @@ termToggleBtnEl.addEventListener("click", toggleTerminal);
 checkEnvBtnEl.addEventListener("click", onCheckEnvClick);
 resourceMgrBtnEl.addEventListener("click", onResourceMgrClick);
 injectBtnEl.addEventListener("click", toggleInject);
-$("#edit-host-btn").addEventListener("click", () => {
-  const host = hostById(state.selectedHostId);
-  if (host) openHostModal(host);
-});
-$("#delete-host-btn").addEventListener("click", () => {
-  const host = hostById(state.selectedHostId);
-  if (host) deleteHost(host);
-});
 updateBtnEl.addEventListener("click", onCanglingUpdateClick);
 appUpdateBtnEl.addEventListener("click", onAppUpdateClick);
 
