@@ -121,6 +121,9 @@ body {
 }
 
 .navlink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 0 12px;
   border: none;
   border-bottom: 2px solid transparent;
@@ -130,6 +133,18 @@ body {
   font-weight: 500;
   cursor: pointer;
   transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.nav-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.nav-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .navlink:hover {
@@ -277,6 +292,11 @@ body {
 
 .list-group-item {
   display: flex;
+  margin-top: 10px;
+}
+
+.list-group-item:first-child {
+  margin-top: 0;
 }
 
 .list-group {
@@ -285,13 +305,14 @@ body {
   gap: 6px;
   flex: 1;
   min-width: 0;
-  padding: 8px 12px 4px;
-  font-size: 11px;
+  padding: 6px 10px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.03em;
+  letter-spacing: 0.02em;
   color: var(--fg-muted);
-  background: transparent;
-  border: none;
+  background: var(--btn-default-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
   cursor: pointer;
   text-align: left;
   user-select: none;
@@ -299,6 +320,7 @@ body {
 
 .list-group:hover {
   color: var(--fg);
+  background: var(--btn-hover-bg);
 }
 
 .list-group .group-caret {
@@ -1184,4 +1206,100 @@ body {
   white-space: pre;
   background: #0d1117;
   color: #e6edf3;
+}
+
+/* ---- Custom dialog (alert / confirm / prompt) ------------------------------- */
+
+.dialog {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 35, 40, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+}
+
+.dialog-box {
+  width: 100%;
+  max-width: 380px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.15);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 10px 16px;
+  background: var(--btn-default-bg);
+  border-bottom: 1px solid var(--border);
+}
+
+.dialog-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.dialog-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.dialog-close:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+
+.dialog-message {
+  font-size: 14px;
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.dialog-input {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+
+.dialog-input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 16px 16px;
 }

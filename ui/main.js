@@ -233,7 +233,7 @@ async function toggleTerminal() {
     updateTerminalUI();
     term.focus();
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
     updateTerminalUI();
   } finally {
     termToggleBtnEl.disabled = false;
@@ -316,7 +316,7 @@ async function toggleInject() {
       state.injections[host.id] = info;
     }
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   } finally {
     updateInjectUI();
     if (state.termId) probeCanglingUpdate();
@@ -443,7 +443,7 @@ async function applyCanglingUpdate({ busy, status }) {
     );
   } catch (err) {
     writeActionLog("更新程序失败", String(err));
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   } finally {
     state.updateBusy = false;
     await probeCanglingUpdate();
@@ -455,7 +455,7 @@ async function onCanglingUpdateClick() {
   if (!hostId || !state.termId) return;
   if (state.updateBusy) return;
   if (!hostInjected(hostId)) {
-    alert("请先注入代理");
+    uiAlert("请先注入代理");
     return;
   }
 
@@ -465,7 +465,7 @@ async function onCanglingUpdateClick() {
   if (!p) return;
 
   if (!p.supported) {
-    alert(`不支持的架构：${p.arch}`);
+    uiAlert(`不支持的架构：${p.arch}`);
     return;
   }
 
@@ -479,7 +479,7 @@ async function onCanglingUpdateClick() {
 
   // Service already installed: compare with the server's latest version.
   if (p.versionError) {
-    alert(`获取最新版本失败：${p.versionError}`);
+    uiAlert(`获取最新版本失败：${p.versionError}`);
     return;
   }
   if (!p.updateAvailable) {
@@ -548,7 +548,7 @@ async function onAppUpdateClick() {
     await checkAppUpdate();
     return;
   }
-  if (!confirm(`发现新版本 ${s.latest}（当前 ${s.current}），现在下载并更新？`)) {
+  if (!(await uiConfirm(`发现新版本 ${s.latest}（当前 ${s.current}），现在下载并更新？`))) {
     return;
   }
   state.appUpdateBusy = true;
@@ -558,7 +558,7 @@ async function onAppUpdateClick() {
     await invoke("apply_app_update");
   } catch (err) {
     state.appUpdateBusy = false;
-    alert(`更新失败: ${err}`);
+    uiAlert(`更新失败: ${err}`);
     renderAppUpdate();
   }
 }
@@ -642,7 +642,7 @@ async function onSyncClick() {
   } catch (err) {
     syncBtnEl.textContent = "同步失败";
     syncBtnEl.title = String(err);
-    alert(`同步失败: ${err}`);
+    uiAlert(`同步失败: ${err}`);
   } finally {
     syncBtnEl.disabled = false;
     setTimeout(() => {
@@ -660,7 +660,7 @@ async function onLogoutClick() {
     renderLoginStatus();
     closeLoginModal();
   } catch (err) {
-    alert(`退出失败: ${err}`);
+    uiAlert(`退出失败: ${err}`);
   }
 }
 
@@ -713,6 +713,16 @@ function certNameById(id) {
 
 async function loadHosts() {
   state.hosts = await invoke("list_hosts");
+  // Groups are collapsed by default; keep user's explicit expand/collapse state.
+  const seen = new Set();
+  for (const host of state.hosts) {
+    const cat = (host.catalog || "").trim() || "未分组";
+    if (seen.has(cat)) continue;
+    seen.add(cat);
+    if (!(cat in state.collapsedGroups)) {
+      state.collapsedGroups[cat] = true;
+    }
+  }
   renderHostList();
 }
 
@@ -1268,7 +1278,7 @@ async function onRepoCloneUpdateClick() {
       await loadRepoDir();
     }
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
     await loadRepoStatus();
     renderRepoStatus();
   } finally {
@@ -1424,7 +1434,7 @@ function updateTunnelAuthFields() {
 // ---- actions ----------------------------------------------------------------
 
 async function deleteHost(host) {
-  if (!confirm(`Delete host "${host.name}"?`)) return;
+  if (!(await uiConfirm(`Delete host "${host.name}"?`))) return;
   try {
     if (state.selectedHostId === host.id && state.termId) {
       await disconnectTerminal();
@@ -1435,35 +1445,35 @@ async function deleteHost(host) {
     await loadHosts();
     updateMainView();
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   }
 }
 
 async function deleteSelectedTunnel() {
   const t = tunnelById(state.selectedTunnelId);
   if (!t) return;
-  if (!confirm(`Delete tunnel "${t.name}"?`)) return;
+  if (!(await uiConfirm(`Delete tunnel "${t.name}"?`))) return;
   try {
     await invoke("delete_tunnel", { id: t.id });
     state.selectedTunnelId = null;
     await loadTunnels();
     updateMainView();
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   }
 }
 
 async function deleteSelectedCert() {
   const cert = certById(state.selectedCertId);
   if (!cert) return;
-  if (!confirm(`Delete certificate "${cert.name}"?`)) return;
+  if (!(await uiConfirm(`Delete certificate "${cert.name}"?`))) return;
   try {
     await invoke("delete_certificate", { id: cert.id });
     state.selectedCertId = null;
     await loadCertificates();
     updateMainView();
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   }
 }
 
@@ -1481,7 +1491,7 @@ async function toggleTunnel() {
     await loadTunnels();
     renderTunnelDetail();
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
     await loadTunnels();
     renderTunnelDetail();
   } finally {
@@ -1502,7 +1512,7 @@ async function parseSshCommand() {
     f.ssh_port.value = t.sshPort;
     f.username.value = t.username;
   } catch (err) {
-    alert(`Parse failed: ${err}`);
+    uiAlert(`Parse failed: ${err}`);
   }
 }
 
@@ -1621,7 +1631,7 @@ async function onCheckEnvClick() {
   } catch (err) {
     btn.textContent = "检查失败";
     btn.title = String(err);
-    alert(`检查环境失败: ${err}`);
+    uiAlert(`检查环境失败: ${err}`);
   } finally {
     btn.disabled = false;
     setTimeout(() => {
@@ -1642,7 +1652,7 @@ async function onResourceMgrClick() {
   try {
     await invoke("open_url", { url });
   } catch (err) {
-    alert(`打开资源管理失败: ${err}`);
+    uiAlert(`打开资源管理失败: ${err}`);
   } finally {
     btn.disabled = false;
   }
@@ -1693,7 +1703,7 @@ hostFormEl.addEventListener("submit", async (e) => {
     await loadHosts();
     selectHost(editingId || state.selectedHostId);
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   }
 });
 
@@ -1727,7 +1737,7 @@ tunnelFormEl.addEventListener("submit", async (e) => {
     await loadTunnels();
     selectTunnel(editingId || state.selectedTunnelId);
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   }
 });
 
@@ -1741,7 +1751,7 @@ certFormEl.addEventListener("submit", async (e) => {
     await loadCertificates();
     selectCert(cert.id);
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   }
 });
 
@@ -1797,10 +1807,10 @@ async function startLocalProxy() {
     const status = await invoke("start_local_proxy", { port });
     applyProxyStatus(status);
     if (!proxyIsUsable(status)) {
-      alert(status.message || "Proxy started but probe failed");
+      uiAlert(status.message || "Proxy started but probe failed");
     }
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   } finally {
     btn.disabled = false;
     btn.textContent = "启动";
@@ -1817,10 +1827,10 @@ async function useExistingProxy() {
     const status = await invoke("use_existing_proxy", { host, port });
     applyProxyStatus(status);
     if (!proxyIsUsable(status)) {
-      alert(status.message || "Existing proxy is not usable");
+      uiAlert(status.message || "Existing proxy is not usable");
     }
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   } finally {
     btn.disabled = false;
     btn.textContent = "使用";
@@ -1834,7 +1844,7 @@ async function checkProxy() {
     const status = await invoke("check_proxy");
     applyProxyStatus(status);
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   } finally {
     btn.disabled = false;
   }
@@ -1845,7 +1855,7 @@ async function stopProxy() {
     const status = await invoke("stop_proxy");
     applyProxyStatus(status);
   } catch (err) {
-    alert(`Error: ${err}`);
+    uiAlert(`Error: ${err}`);
   }
 }
 
@@ -1882,6 +1892,105 @@ document.addEventListener("dblclick", (event) => {
   }
 });
 
+// ---- custom dialog (alert / confirm / prompt) --------------------------------
+
+const uiDialogEl = $("#ui-dialog");
+const uiDialogTitleEl = $("#ui-dialog-title");
+const uiDialogMessageEl = $("#ui-dialog-message");
+const uiDialogInputEl = $("#ui-dialog-input");
+const uiDialogCancelBtnEl = $("#ui-dialog-cancel");
+const uiDialogOkBtnEl = $("#ui-dialog-ok");
+const uiDialogCloseBtnEl = $("#ui-dialog-close");
+
+let uiDialogResolver = null;
+let uiDialogMode = "alert"; // "alert" | "confirm" | "prompt"
+
+function uiDialogOpen({ title, message, mode, defaultValue }) {
+  uiDialogMode = mode;
+  uiDialogTitleEl.textContent = title;
+  uiDialogMessageEl.textContent = message;
+  uiDialogInputEl.classList.toggle("hidden", mode !== "prompt");
+  uiDialogCancelBtnEl.classList.toggle("hidden", mode === "alert");
+  uiDialogCloseBtnEl.classList.toggle("hidden", mode === "alert");
+  uiDialogInputEl.value = defaultValue == null ? "" : String(defaultValue);
+  uiDialogEl.classList.remove("hidden");
+  if (mode === "prompt") {
+    uiDialogInputEl.focus();
+    uiDialogInputEl.select();
+  } else {
+    uiDialogOkBtnEl.focus();
+  }
+}
+
+function uiDialogClose(value) {
+  uiDialogEl.classList.add("hidden");
+  const resolve = uiDialogResolver;
+  uiDialogResolver = null;
+  if (resolve) resolve(value);
+}
+
+function uiDialogOk() {
+  if (uiDialogMode === "confirm") uiDialogClose(true);
+  else if (uiDialogMode === "prompt") uiDialogClose(uiDialogInputEl.value);
+  else uiDialogClose(undefined);
+}
+
+function uiDialogCancel() {
+  if (uiDialogMode === "prompt") uiDialogClose(null);
+  else if (uiDialogMode === "confirm") uiDialogClose(false);
+  else uiDialogClose(undefined);
+}
+
+function showDialog(options) {
+  // Defensively settle a dialog that is somehow already open.
+  if (uiDialogResolver) {
+    const prev = uiDialogResolver;
+    uiDialogResolver = null;
+    prev(null);
+  }
+  return new Promise((resolve) => {
+    uiDialogResolver = resolve;
+    uiDialogOpen(options);
+  });
+}
+
+async function uiAlert(message, title = "提示") {
+  await showDialog({ title, message: String(message ?? ""), mode: "alert" });
+}
+
+async function uiConfirm(message, title = "确认") {
+  return await showDialog({ title, message: String(message ?? ""), mode: "confirm" });
+}
+
+async function uiPrompt(message, defaultValue = "", title = "输入") {
+  return await showDialog({
+    title,
+    message: String(message ?? ""),
+    mode: "prompt",
+    defaultValue,
+  });
+}
+
+uiDialogOkBtnEl.addEventListener("click", uiDialogOk);
+uiDialogCancelBtnEl.addEventListener("click", uiDialogCancel);
+uiDialogCloseBtnEl.addEventListener("click", uiDialogCancel);
+uiDialogInputEl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    uiDialogOk();
+  }
+});
+uiDialogEl.addEventListener("mousedown", (e) => {
+  if (e.target === uiDialogEl) uiDialogCancel();
+});
+document.addEventListener("keydown", (e) => {
+  if (uiDialogEl.classList.contains("hidden")) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    uiDialogCancel();
+  }
+});
+
 // ---- init -------------------------------------------------------------------
 
 (async () => {
@@ -1911,7 +2020,7 @@ document.addEventListener("dblclick", (event) => {
       } catch (_) {}
     }
   } catch (err) {
-    alert(`Failed to load data: ${err}`);
+    uiAlert(`Failed to load data: ${err}`);
   }
 
   // If the user is already logged in, sync the public host list in the
