@@ -238,6 +238,7 @@
     <div id="host-modal" class="modal hidden">
       <div class="modal-box">
         <h2 id="host-modal-title">添加主机</h2>
+        <button class="modal-close" data-close="host-modal" type="button" aria-label="关闭">×</button>
         <form id="host-form">
           <label>Name <input name="name" type="text" required placeholder="e.g. prod-web-1" /></label>
           <label>分组 <input name="catalog" type="text" placeholder="e.g. 河南" /></label>
@@ -276,6 +277,7 @@
     <div id="tunnel-modal" class="modal hidden">
       <div class="modal-box wide">
         <h2 id="tunnel-modal-title">添加本地隧道</h2>
+        <button class="modal-close" data-close="tunnel-modal" type="button" aria-label="关闭">×</button>
         <form id="tunnel-form">
           <label>Name <input name="name" type="text" required placeholder="e.g. db-tunnel" /></label>
 
@@ -328,6 +330,7 @@
     <div id="cert-modal" class="modal hidden">
       <div class="modal-box">
         <h2>新建本地证书</h2>
+        <button class="modal-close" data-close="cert-modal" type="button" aria-label="关闭">×</button>
         <form id="cert-form">
           <label>Name <input name="name" type="text" required placeholder="e.g. My Laptop" /></label>
           <p class="hint">Generates a new ed25519 key pair.</p>
@@ -343,6 +346,7 @@
     <div id="login-modal" class="modal hidden">
       <div class="modal-box">
         <h2>登录维护中心</h2>
+        <button class="modal-close" data-close="login-modal" type="button" aria-label="关闭">×</button>
         <form id="login-form">
           <label>服务器地址 <input name="server_url" type="text" required placeholder="https://soft.cangling.cn:22002" /></label>
           <label>用户名 <input name="username" type="text" required autocomplete="username" /></label>
@@ -355,6 +359,11 @@
           </div>
         </form>
       </div>
+    </div>
+
+    <!-- Context menu -->
+    <div id="ctx-menu" class="ctx-menu hidden">
+      <button id="ctx-copy-host" class="ctx-item" type="button">复制主机</button>
     </div>
 
     <script src="vendor/xterm.js"></script>

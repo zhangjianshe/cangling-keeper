@@ -14,6 +14,7 @@ const state = {
   selectedCertId: null,
   editingHostId: null,
   editingTunnelId: null,
+  contextHostId: null,
   termId: null,
   connectedHostId: null,
   proxy: null, // shared ProxyStatus for every panel
@@ -89,6 +90,9 @@ const tunnelAuthCertEl = $("#tunnel-auth-cert");
 
 const certModalEl = $("#cert-modal");
 const certFormEl = $("#cert-form");
+
+const ctxMenuEl = $("#ctx-menu");
+const ctxCopyHostBtnEl = $("#ctx-copy-host");
 
 // ---- xterm.js terminal ------------------------------------------------------
 
@@ -621,9 +625,6 @@ loginBtnEl.addEventListener("click", openLoginModal);
 $("#cancel-login-btn").addEventListener("click", closeLoginModal);
 syncBtnEl.addEventListener("click", onSyncClick);
 logoutBtnEl.addEventListener("click", onLogoutClick);
-loginModalEl.addEventListener("click", (e) => {
-  if (e.target === loginModalEl) closeLoginModal();
-});
 
 loginFormEl.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -785,9 +786,17 @@ function makeEmptyItem(text) {
   return li;
 }
 
-function makeItem({ selected, name, sub, active, onClick, actions }) {
+function makeItem({ selected, name, sub, active, onClick, actions, onContextMenu }) {
   const li = document.createElement("li");
   li.className = "item" + (selected ? " selected" : "");
+
+  if (onContextMenu) {
+    li.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onContextMenu(e);
+    });
+  }
 
   const wrap = document.createElement("div");
   wrap.className = "item-wrap";
@@ -911,6 +920,7 @@ function renderHostList() {
           sub: `${host.username}@${host.hostname}:${host.port}${host.is_public ? " · 公共" : ""}`,
           active: !!state.termId && host.id === state.connectedHostId,
           onClick: () => selectHost(host.id),
+          onContextMenu: (e) => openHostContextMenu(e, host.id),
         })
       );
     }
@@ -1125,6 +1135,39 @@ function openHostModal(host) {
   f.name.focus();
 }
 
+function openCopyHostModal(host) {
+  if (!host) return;
+  state.editingHostId = null;
+  hostModalTitleEl.textContent = "复制主机";
+  fillCertSelects();
+
+  const f = hostFormEl.elements;
+  f.name.value = `${host.name} 副本`;
+  f.catalog.value = host.catalog || "";
+  f.hostname.value = host.hostname;
+  f.port.value = host.port;
+  f.username.value = host.username;
+  f.inject_remote_port.value = hostInjectRemotePort(host);
+  f.is_public.checked = false;
+  f.is_public.disabled = false;
+  publicHostHintEl.classList.add("hidden");
+
+  if (host.auth && host.auth.method === "certificate") {
+    f.auth_method.value = "certificate";
+    f.certificate_id.value = host.auth.certificateId;
+    f.password.value = "";
+  } else {
+    f.auth_method.value = "password";
+    f.certificate_id.value = "";
+    f.password.value = host && host.auth ? host.auth.password : "";
+  }
+
+  updateHostAuthFields();
+  hostModalEl.classList.remove("hidden");
+  f.name.focus();
+  f.name.select();
+}
+
 function closeHostModal() {
   hostModalEl.classList.add("hidden");
 }
@@ -1289,9 +1332,6 @@ addBtnEl.addEventListener("click", () => {
 });
 
 $("#cancel-host-btn").addEventListener("click", closeHostModal);
-hostModalEl.addEventListener("click", (e) => {
-  if (e.target === hostModalEl) closeHostModal();
-});
 
 $("#edit-tunnel-btn").addEventListener("click", () => {
   const t = tunnelById(state.selectedTunnelId);
@@ -1300,14 +1340,58 @@ $("#edit-tunnel-btn").addEventListener("click", () => {
 $("#delete-tunnel-btn").addEventListener("click", deleteSelectedTunnel);
 $("#cancel-tunnel-btn").addEventListener("click", closeTunnelModal);
 $("#parse-btn").addEventListener("click", parseSshCommand);
-tunnelModalEl.addEventListener("click", (e) => {
-  if (e.target === tunnelModalEl) closeTunnelModal();
-});
 
 $("#delete-cert-btn").addEventListener("click", deleteSelectedCert);
 $("#cancel-cert-btn").addEventListener("click", closeCertModal);
-certModalEl.addEventListener("click", (e) => {
-  if (e.target === certModalEl) closeCertModal();
+
+document.querySelectorAll(".modal-close").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const el = document.getElementById(btn.dataset.close);
+    if (el) el.classList.add("hidden");
+  });
+});
+
+// ---- context menu ------------------------------------------------------------
+
+// Disable the browser's default right-click menu on the page (keep it for
+// form fields so users can still copy/paste while editing).
+document.addEventListener("contextmenu", (e) => {
+  const editable = e.target && e.target.closest
+    ? e.target.closest("input, textarea, select, [contenteditable]")
+    : null;
+  if (!editable) e.preventDefault();
+});
+
+function hideContextMenu() {
+  state.contextHostId = null;
+  ctxMenuEl.classList.add("hidden");
+}
+
+function openHostContextMenu(e, hostId) {
+  state.contextHostId = hostId;
+  ctxMenuEl.classList.remove("hidden");
+
+  const menuW = ctxMenuEl.offsetWidth || 160;
+  const menuH = ctxMenuEl.offsetHeight || 40;
+  const pad = 8;
+  const x = Math.min(e.clientX, window.innerWidth - menuW - pad);
+  const y = Math.min(e.clientY, window.innerHeight - menuH - pad);
+  ctxMenuEl.style.left = `${Math.max(pad, x)}px`;
+  ctxMenuEl.style.top = `${Math.max(pad, y)}px`;
+}
+
+ctxCopyHostBtnEl.addEventListener("click", () => {
+  const host = hostById(state.contextHostId);
+  hideContextMenu();
+  if (host) openCopyHostModal(host);
+});
+
+document.addEventListener("click", hideContextMenu);
+document.addEventListener("scroll", hideContextMenu, true);
+window.addEventListener("resize", hideContextMenu);
+window.addEventListener("blur", hideContextMenu);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") hideContextMenu();
 });
 
 async function onCheckEnvClick() {
