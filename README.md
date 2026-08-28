@@ -12,6 +12,7 @@ commands over SSH with one click.
   to auto-fill the form, or fill the fields manually.
 - Connect/disconnect tunnels; the list shows live connection state.
 - Tunnel auth via password or an ed25519 key pair (generate one in-app).
+- 软件仓库：将指定 git 仓库下载到本地，支持更新（pull），并浏览目录与文本文件内容。
 - Hosts and tunnels persist to a SQLite database in the app data directory.
 
 > **Security note (current state):** passwords are stored in plain text in the
@@ -303,6 +304,7 @@ cangling-keeper/
 │   ├── host.rs             # Host model
 │   ├── tunnel.rs           # Tunnel model + SSH command parsing
 │   ├── store.rs            # SQLite persistence (hosts + tunnels)
+│   ├── repo.rs             # 软件仓库：git clone/pull + 目录/文件浏览
 │   └── ssh.rs              # SSH exec, port forwarding, key generation (russh)
 └── ui/                     # Frontend (plain HTML/CSS/JS, no bundler)
     ├── index.html

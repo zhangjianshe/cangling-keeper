@@ -21,6 +21,7 @@
           <button id="nav-tunnels" class="navlink" type="button">本地隧道</button>
           <button id="nav-certificates" class="navlink" type="button">本地证书</button>
           <button id="nav-proxy" class="navlink" type="button">代理</button>
+          <button id="nav-repo" class="navlink" type="button">软件仓库</button>
         </nav>
         <div id="proxy-indicator" class="proxy-indicator" title="Current proxy (shared across panels)">
           <span id="proxy-indicator-dot" class="status-dot off"></span>
@@ -221,6 +222,35 @@
                   <span class="info-label">说明</span>
                   <span id="proxy-info-message" class="info-value">—</span>
                 </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Software repository view -->
+          <div id="repo-view" class="repo-view hidden">
+            <div class="detail-header">
+              <div class="detail-meta">
+                <h2>软件仓库</h2>
+                <span id="repo-status-line" class="conn">未下载</span>
+              </div>
+              <div class="actions">
+                <span id="repo-path" class="status off"></span>
+                <button id="repo-clone-update-btn" class="btn primary" type="button">下载仓库</button>
+              </div>
+            </div>
+            <div class="repo-body">
+              <div class="repo-tree-panel">
+                <div class="repo-tree-toolbar">
+                  <button id="repo-up-btn" class="btn" type="button" title="上级目录">↑ 上级</button>
+                  <span id="repo-current-path" class="repo-path mono">/</span>
+                </div>
+                <ul id="repo-tree" class="repo-tree-list list"></ul>
+              </div>
+              <div class="repo-file-panel">
+                <div class="repo-file-head">
+                  <span id="repo-file-title" class="repo-path mono">选择文件查看内容</span>
+                </div>
+                <pre id="repo-file-content" class="repo-file-content"></pre>
               </div>
             </div>
           </div>

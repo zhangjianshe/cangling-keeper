@@ -3,6 +3,7 @@ mod certificate;
 mod host;
 mod host_actions;
 mod proxy;
+mod repo;
 mod self_update;
 mod ssh;
 mod store;
@@ -25,13 +26,13 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tunnel::{Tunnel, TunnelInfo};
 use uuid::Uuid;
 
-struct AppState {
+pub(crate) struct AppState {
     store: Mutex<Store>,
     active_tunnels: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     active_terminals: Mutex<HashMap<String, TerminalHandle>>,
     proxy: Mutex<ProxyRuntime>,
     injected_proxies: Mutex<HashMap<String, InjectedHandle>>,
-    data_dir: PathBuf,
+    pub(crate) data_dir: PathBuf,
 }
 
 struct InjectedHandle {
@@ -1331,6 +1332,10 @@ pub fn run() {
             run_cangling_update,
             check_app_update,
             apply_app_update,
+            repo::repo_status,
+            repo::clone_or_update_repo,
+            repo::list_repo_files,
+            repo::read_repo_file,
             login,
             logout,
             get_login_status,

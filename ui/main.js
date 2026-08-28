@@ -3,7 +3,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const state = {
-  section: "hosts", // "hosts" | "tunnels" | "certificates" | "proxy"
+  section: "hosts", // "hosts" | "tunnels" | "certificates" | "proxy" | "repo"
   hosts: [],
   searchHosts: "",
   collapsedGroups: {}, // host catalog group name -> true when collapsed
@@ -24,6 +24,8 @@ const state = {
   appUpdate: null,
   appUpdateBusy: false,
   login: null, // { loggedIn, serverUrl, username, nickname }
+  repoStatus: null, // { cloned, localPath, branch, commit, error }
+  repoPath: "", // relative path inside the repo ("" = root)
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -42,6 +44,7 @@ const hostViewEl = $("#host-view");
 const tunnelViewEl = $("#tunnel-view");
 const certViewEl = $("#cert-view");
 const proxyViewEl = $("#proxy-view");
+const repoViewEl = $("#repo-view");
 const proxySidebarEl = $("#proxy-sidebar");
 
 const hostNameEl = $("#host-name");
@@ -89,6 +92,15 @@ const tunnelAuthCertEl = $("#tunnel-auth-cert");
 
 const certModalEl = $("#cert-modal");
 const certFormEl = $("#cert-form");
+
+const repoStatusLineEl = $("#repo-status-line");
+const repoPathEl = $("#repo-path");
+const repoCloneUpdateBtnEl = $("#repo-clone-update-btn");
+const repoUpBtnEl = $("#repo-up-btn");
+const repoCurrentPathEl = $("#repo-current-path");
+const repoTreeEl = $("#repo-tree");
+const repoFileTitleEl = $("#repo-file-title");
+const repoFileContentEl = $("#repo-file-content");
 
 const ctxMenuEl = $("#ctx-menu");
 const ctxEditHostBtnEl = $("#ctx-edit-host");
@@ -970,6 +982,7 @@ function updateMainView() {
   tunnelViewEl.classList.add("hidden");
   certViewEl.classList.add("hidden");
   proxyViewEl.classList.add("hidden");
+  repoViewEl.classList.add("hidden");
   emptyStateEl.classList.add("hidden");
 
   if (state.section === "hosts") {
@@ -993,8 +1006,11 @@ function updateMainView() {
     }
     emptyTitleEl.textContent = "未选择本地证书";
     emptySubEl.textContent = "在左侧选择一张证书，或添加一张新证书。";
-  } else {
+  } else if (state.section === "proxy") {
     proxyViewEl.classList.remove("hidden");
+    return;
+  } else if (state.section === "repo") {
+    repoViewEl.classList.remove("hidden");
     return;
   }
   emptyStateEl.classList.remove("hidden");
@@ -1066,12 +1082,13 @@ function switchSection(section) {
   $("#nav-tunnels").classList.toggle("active", section === "tunnels");
   $("#nav-certificates").classList.toggle("active", section === "certificates");
   $("#nav-proxy").classList.toggle("active", section === "proxy");
+  $("#nav-repo").classList.toggle("active", section === "repo");
   hostSearchBoxEl.classList.toggle("hidden", section !== "hosts");
   hostListEl.classList.toggle("hidden", section !== "hosts");
   tunnelListEl.classList.toggle("hidden", section !== "tunnels");
   certListEl.classList.toggle("hidden", section !== "certificates");
   proxySidebarEl.classList.toggle("hidden", section !== "proxy");
-  sidebarAddRowEl.classList.toggle("hidden", section === "proxy");
+  sidebarAddRowEl.classList.toggle("hidden", section === "proxy" || section === "repo");
   addBtnEl.textContent =
     section === "hosts"
       ? "+ 添加主机"
@@ -1080,6 +1097,156 @@ function switchSection(section) {
         : "+ 添加本地证书";
   updateSyncBtn();
   updateMainView();
+  if (section === "repo") {
+    enterRepo();
+  }
+}
+
+// ---- software repository ----------------------------------------------------
+
+function repoPathDisplay() {
+  return "/" + (state.repoPath || "").replace(/^\/+|\/+$/g, "");
+}
+
+function formatSize(n) {
+  if (!n) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+async function loadRepoStatus() {
+  state.repoStatus = await invoke("repo_status");
+}
+
+function renderRepoStatus() {
+  const s = state.repoStatus || { cloned: false, localPath: "", branch: "", commit: "", error: "" };
+  repoCloneUpdateBtnEl.textContent = s.cloned ? "更新仓库" : "下载仓库";
+  repoCloneUpdateBtnEl.className = "btn " + (s.cloned ? "" : "primary");
+  if (s.cloned) {
+    repoStatusLineEl.textContent = `已下载 · ${s.branch || "?"} · ${s.commit || "?"}`;
+    repoStatusLineEl.className = "conn";
+    repoPathEl.textContent = s.localPath;
+    repoPathEl.className = "status off";
+  } else {
+    repoStatusLineEl.textContent = "未下载";
+    repoStatusLineEl.className = "conn";
+    repoPathEl.textContent = "";
+    repoPathEl.className = "status off";
+  }
+  repoUpBtnEl.disabled = !s.cloned || !state.repoPath;
+}
+
+async function enterRepo() {
+  await loadRepoStatus();
+  renderRepoStatus();
+  if (state.repoStatus && state.repoStatus.cloned) {
+    await loadRepoDir();
+  } else {
+    state.repoPath = "";
+    repoCurrentPathEl.textContent = "/";
+    repoTreeEl.textContent = "";
+    repoFileTitleEl.textContent = "下载仓库后可浏览目录和内容";
+    repoFileContentEl.textContent = "";
+  }
+}
+
+async function loadRepoDir() {
+  if (!state.repoStatus || !state.repoStatus.cloned) return;
+  try {
+    const entries = await invoke("list_repo_files", { path: state.repoPath });
+    renderRepoTree(entries);
+    repoCurrentPathEl.textContent = repoPathDisplay();
+    repoUpBtnEl.disabled = !state.repoPath;
+  } catch (err) {
+    repoTreeEl.textContent = "";
+    repoCurrentPathEl.textContent = repoPathDisplay();
+    repoFileTitleEl.textContent = `加载失败: ${err}`;
+    repoFileContentEl.textContent = "";
+  }
+}
+
+function renderRepoTree(entries) {
+  repoTreeEl.textContent = "";
+  if (!entries.length) {
+    const li = document.createElement("li");
+    li.className = "list-empty";
+    li.textContent = "空目录";
+    repoTreeEl.appendChild(li);
+    return;
+  }
+  for (const entry of entries) {
+    const li = document.createElement("li");
+    const btn = document.createElement("button");
+    btn.className = "repo-item";
+    btn.type = "button";
+    btn.title = entry.path;
+
+    const icon = document.createElement("span");
+    icon.className = "repo-item-icon";
+    icon.textContent = entry.isDir ? "📁" : "📄";
+
+    const name = document.createElement("span");
+    name.className = "repo-item-name";
+    name.textContent = entry.name;
+
+    const size = document.createElement("span");
+    size.className = "repo-item-size";
+    size.textContent = entry.isDir ? "" : formatSize(entry.size);
+
+    btn.append(icon, name, size);
+    btn.addEventListener("click", () => {
+      if (entry.isDir) {
+        state.repoPath = entry.path;
+        loadRepoDir();
+      } else {
+        openRepoFile(entry.path);
+      }
+    });
+    li.appendChild(btn);
+    repoTreeEl.appendChild(li);
+  }
+}
+
+async function openRepoFile(path) {
+  try {
+    const file = await invoke("read_repo_file", { path });
+    repoFileTitleEl.textContent = `/${file.path} · ${formatSize(file.size)}`;
+    repoFileContentEl.textContent = file.content;
+  } catch (err) {
+    repoFileTitleEl.textContent = `/${path}`;
+    repoFileContentEl.textContent = `无法预览: ${err}`;
+  }
+}
+
+function repoUp() {
+  if (!state.repoPath) return;
+  const parts = state.repoPath.split("/").filter(Boolean);
+  parts.pop();
+  state.repoPath = parts.join("/");
+  loadRepoDir();
+}
+
+async function onRepoCloneUpdateClick() {
+  const updating = !!(state.repoStatus && state.repoStatus.cloned);
+  repoCloneUpdateBtnEl.disabled = true;
+  repoCloneUpdateBtnEl.textContent = updating ? "更新中…" : "下载中…";
+  try {
+    state.repoStatus = await invoke("clone_or_update_repo");
+    state.repoPath = "";
+    renderRepoStatus();
+    if (state.repoStatus.cloned) {
+      await loadRepoDir();
+    }
+  } catch (err) {
+    alert(`Error: ${err}`);
+    await loadRepoStatus();
+    renderRepoStatus();
+  } finally {
+    repoCloneUpdateBtnEl.disabled = false;
+    renderRepoStatus();
+  }
 }
 
 // ---- certificate dropdown ---------------------------------------------------
@@ -1321,7 +1488,10 @@ hostSearchInputEl.addEventListener("input", () => {
 $("#nav-tunnels").addEventListener("click", () => switchSection("tunnels"));
 $("#nav-certificates").addEventListener("click", () => switchSection("certificates"));
 $("#nav-proxy").addEventListener("click", () => switchSection("proxy"));
+$("#nav-repo").addEventListener("click", () => switchSection("repo"));
 $("#proxy-indicator").addEventListener("click", () => switchSection("proxy"));
+repoCloneUpdateBtnEl.addEventListener("click", onRepoCloneUpdateClick);
+repoUpBtnEl.addEventListener("click", repoUp);
 
 addBtnEl.addEventListener("click", () => {
   if (state.section === "hosts") openHostModal(null);
