@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "cangling-keeper"
-version = "0.0.21"
+version = "0.0.22"
 dependencies = [
  "rand",
  "reqwest 0.12.28",
