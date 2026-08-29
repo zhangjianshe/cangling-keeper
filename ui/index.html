@@ -116,6 +116,11 @@
                 <h2 id="host-name"></h2>
                 <span id="host-conn" class="conn"></span>
                 <span id="host-proxy-hint" class="conn hidden"></span>
+                <div id="cluster-token-row" class="cluster-token-row hidden">
+                  <span class="cluster-token-label">Cluster token</span>
+                  <span id="cluster-token-value" class="cluster-token-value mono"></span>
+                  <button id="cluster-token-copy" class="btn cluster-token-copy" type="button" title="复制 cluster token">复制</button>
+                </div>
               </div>
               <div class="header-actions">
                 <div class="actions">
@@ -126,7 +131,14 @@
                   <button id="resource-mgr-btn" class="btn" type="button" title="在浏览器中打开 http://主机IP">资源管理</button>
                   <button id="term-toggle-btn" class="btn primary" type="button">Connect</button>
                 </div>
-                <button id="btn-cangling-update" class="btn update-btn hidden" type="button" disabled>更新程序</button>
+                <div class="header-update-row">
+                  <div id="role-switch" class="seg-switch hidden" role="radiogroup" aria-label="运行模式">
+                    <button type="button" class="seg-opt" data-role="standalone" role="radio" aria-checked="false" title="独立模式（standalone）">独立模式</button>
+                    <button type="button" class="seg-opt" data-role="master" role="radio" aria-checked="false" title="主节点（master）">Master</button>
+                    <button type="button" class="seg-opt" data-role="worker" role="radio" aria-checked="false" title="工作节点（worker）">Worker</button>
+                  </div>
+                  <button id="btn-cangling-update" class="btn update-btn hidden" type="button" disabled>更新程序</button>
+                </div>
               </div>
             </div>
             <div class="terminal-wrap">

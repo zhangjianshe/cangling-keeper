@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 const PROBE_SCRIPT: &str = include_str!("scripts/probe-cangling-update.sh");
 const APPLY_SCRIPT: &str = include_str!("scripts/apply-cangling-update.sh");
+const SET_ROLE_SCRIPT: &str = include_str!("scripts/set-cangling-role.sh");
 const CHECK_SCRIPT: &str = include_str!("scripts/check-cangling-version.sh");
 const CHECK_SSH_ENV_SCRIPT: &str = include_str!("scripts/check-ssh-env.sh");
 
@@ -17,6 +18,10 @@ pub struct UpdateProbe {
     pub latest: String,
     pub update_available: bool,
     pub version_error: String,
+    pub role: String,
+    pub token_set: bool,
+    pub cluster_token: String,
+    pub master: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +42,29 @@ pub struct SshEnvCheck {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetRoleResult {
+    pub role: String,
+    pub active: bool,
+    pub token_set: bool,
+    pub master: String,
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_status: i32,
+}
+
+pub fn normalize_role(role: &str) -> Result<&'static str, String> {
+    match role.trim().to_ascii_lowercase().as_str() {
+        "standalone" | "独立" | "独立模式" => Ok("standalone"),
+        "master" => Ok("master"),
+        "worker" => Ok("worker"),
+        other => Err(format!(
+            "未知运行模式 {other}，可选 standalone / master / worker"
+        )),
+    }
+}
+
 pub fn wrap_probe_command() -> String {
     bash_c(PROBE_SCRIPT, &[])
 }
@@ -47,6 +75,10 @@ pub fn wrap_check_ssh_env_command() -> String {
 
 pub fn wrap_apply_command(action: &str, arch: &str, proxy: &str) -> String {
     bash_c(APPLY_SCRIPT, &[action, arch, proxy])
+}
+
+pub fn wrap_set_role_command(role: &str, token: &str, master: &str) -> String {
+    bash_c(SET_ROLE_SCRIPT, &[role, token, master])
 }
 
 pub fn wrap_check_command(proxy: &str) -> String {
@@ -150,8 +182,20 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
     let mut active = false;
     let mut binary = String::new();
     let mut version = String::new();
+    let mut role = String::new();
+    let mut token_set = false;
+    let mut cluster_token = String::new();
+    let mut master = String::new();
 
-    for part in line.split('|').skip(1) {
+    // `token=` is last on the marker line so the value may contain '|' or '='.
+    let fields = if let Some(idx) = line.find("|token=") {
+        cluster_token = line[idx + "|token=".len()..].to_string();
+        &line[..idx]
+    } else {
+        line
+    };
+
+    for part in fields.split('|').skip(1) {
         let Some((k, v)) = part.split_once('=') else {
             continue;
         };
@@ -161,6 +205,9 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
             "active" => active = v == "1" || v.eq_ignore_ascii_case("true"),
             "binary" => binary = v.to_string(),
             "version" => version = v.to_string(),
+            "role" => role = v.to_string(),
+            "token_set" => token_set = v == "1" || v.eq_ignore_ascii_case("true"),
+            "master" => master = v.to_string(),
             _ => {}
         }
     }
@@ -169,6 +216,13 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
         return Err(format!("probe missing arch: {line}"));
     }
     let supported = arch == "amd64" || arch == "arm64";
+    if role.is_empty() {
+        role = if installed {
+            "standalone".into()
+        } else {
+            String::new()
+        };
+    }
     Ok(UpdateProbe {
         installed,
         arch,
@@ -179,7 +233,49 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
         latest: String::new(),
         update_available: false,
         version_error: String::new(),
+        role,
+        token_set: token_set || !cluster_token.is_empty(),
+        cluster_token,
+        master,
     })
+}
+
+pub fn parse_set_role(stdout: &str) -> Result<(String, bool, bool, String), String> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("CK_ROLE|"))
+        .ok_or_else(|| {
+            let tail = stdout.trim();
+            let tail = if tail.len() > 400 {
+                &tail[tail.len() - 400..]
+            } else {
+                tail
+            };
+            format!("set-role produced no CK_ROLE line: {tail}")
+        })?;
+
+    let mut role = String::new();
+    let mut active = false;
+    let mut token_set = false;
+    let mut master = String::new();
+
+    for part in line.split('|').skip(1) {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        match k {
+            "role" => role = v.to_string(),
+            "active" => active = v == "1" || v.eq_ignore_ascii_case("true"),
+            "token_set" => token_set = v == "1" || v.eq_ignore_ascii_case("true"),
+            "master" => master = v.to_string(),
+            _ => {}
+        }
+    }
+    if role.is_empty() {
+        return Err(format!("set-role missing role: {line}"));
+    }
+    Ok((role, active, token_set, master))
 }
 
 pub fn parse_check_ssh_env(stdout: &str) -> Result<SshEnvCheck, String> {
@@ -255,7 +351,7 @@ mod tests {
 
     #[test]
     fn parses_probe_line() {
-        let out = "noise\nCK_PROBE|installed=1|arch=arm64|active=1|binary=/usr/local/bin/cangling-update|version=v1.2.3\n";
+        let out = "noise\nCK_PROBE|installed=1|arch=arm64|active=1|binary=/usr/local/bin/cangling-update|version=v1.2.3|role=master|token_set=1|master=http://10.0.0.1:80|token=secret|tok\n";
         let p = parse_probe(out).unwrap();
         assert!(p.installed);
         assert!(p.supported);
@@ -263,6 +359,20 @@ mod tests {
         assert!(p.active);
         assert_eq!(p.binary, "/usr/local/bin/cangling-update");
         assert_eq!(p.version, "v1.2.3");
+        assert_eq!(p.role, "master");
+        assert!(p.token_set);
+        assert_eq!(p.cluster_token, "secret|tok");
+        assert_eq!(p.master, "http://10.0.0.1:80");
+    }
+
+    #[test]
+    fn probe_defaults_role_when_missing() {
+        let p = parse_probe("CK_PROBE|installed=1|arch=amd64|active=0|binary=|version=\n")
+            .unwrap();
+        assert_eq!(p.role, "standalone");
+        assert!(!p.token_set);
+        assert!(p.cluster_token.is_empty());
+        assert!(p.master.is_empty());
     }
 
     #[test]
@@ -296,6 +406,32 @@ mod tests {
         assert!(!cmd.contains('\r'));
         assert!(cmd.contains("set -eu"));
         assert!(cmd.contains("echo hi"));
+    }
+
+    #[test]
+    fn wrap_set_role_includes_args() {
+        let cmd = wrap_set_role_command("worker", "tok en", "http://10.0.0.1:80");
+        assert!(cmd.contains("CK_ROLE"));
+        assert!(cmd.contains("standalone|master|worker"));
+        assert!(cmd.ends_with("ck worker 'tok en' http://10.0.0.1:80"));
+    }
+
+    #[test]
+    fn parses_set_role_line() {
+        let (role, active, token_set, master) =
+            parse_set_role("noise\nCK_ROLE|role=worker|active=1|token_set=1|master=http://10.0.0.2:80\n")
+                .unwrap();
+        assert_eq!(role, "worker");
+        assert!(active);
+        assert!(token_set);
+        assert_eq!(master, "http://10.0.0.2:80");
+    }
+
+    #[test]
+    fn normalizes_role_aliases() {
+        assert_eq!(normalize_role("独立模式").unwrap(), "standalone");
+        assert_eq!(normalize_role("Master").unwrap(), "master");
+        assert!(normalize_role("foo").is_err());
     }
 
     #[test]

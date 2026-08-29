@@ -991,6 +991,40 @@ async fn run_cangling_update(
 }
 
 #[tauri::command]
+async fn set_cangling_role(
+    state: State<'_, AppState>,
+    host_id: String,
+    role: String,
+    token: Option<String>,
+    master: Option<String>,
+) -> Result<host_actions::SetRoleResult, String> {
+    let role = host_actions::normalize_role(&role)?;
+    let token = token.unwrap_or_default();
+    let master = master.unwrap_or_default();
+    let cmd = host_actions::wrap_set_role_command(role, token.trim(), master.trim());
+    let out = ssh_run(&state, &host_id, cmd).await?;
+    if out.exit_status != 0 {
+        return Err(format!(
+            "切换运行模式失败 (exit {}): {}\n{}",
+            out.exit_status,
+            out.stderr.trim(),
+            out.stdout.trim()
+        ));
+    }
+    let (parsed_role, active, token_set, parsed_master) =
+        host_actions::parse_set_role(&out.stdout)?;
+    Ok(host_actions::SetRoleResult {
+        role: parsed_role,
+        active,
+        token_set,
+        master: parsed_master,
+        stdout: out.stdout,
+        stderr: out.stderr,
+        exit_status: out.exit_status,
+    })
+}
+
+#[tauri::command]
 fn uninject_proxy(state: State<'_, AppState>, host_id: String) -> Result<(), String> {
     let mut injected = state.injected_proxies.lock().map_err(|e| e.to_string())?;
     match injected.remove(&host_id) {
@@ -1330,6 +1364,7 @@ pub fn run() {
             uninject_proxy,
             probe_cangling_update,
             run_cangling_update,
+            set_cangling_role,
             check_app_update,
             apply_app_update,
             repo::repo_status,

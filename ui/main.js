@@ -21,6 +21,7 @@ const state = {
   injections: {}, // hostId -> { active, remotePort, localEndpoint }
   updateProbe: null,
   updateBusy: false,
+  roleBusy: false,
   appUpdate: null,
   appUpdateBusy: false,
   login: null, // { loggedIn, serverUrl, username, nickname }
@@ -56,6 +57,11 @@ const resourceMgrBtnEl = $("#resource-mgr-btn");
 const injectBtnEl = $("#inject-proxy-btn");
 const injectStatusEl = $("#inject-status");
 const updateBtnEl = $("#btn-cangling-update");
+const roleSwitchEl = $("#role-switch");
+const updateRowEl = updateBtnEl ? updateBtnEl.closest(".header-update-row") : null;
+const clusterTokenRowEl = $("#cluster-token-row");
+const clusterTokenValueEl = $("#cluster-token-value");
+const clusterTokenCopyEl = $("#cluster-token-copy");
 const appUpdateBtnEl = $("#app-update-btn");
 const loginBtnEl = $("#login-btn");
 const loginModalEl = $("#login-modal");
@@ -329,7 +335,97 @@ function hostInjected(hostId) {
 }
 
 function updateUpdateBtnAlign() {
-  updateBtnEl.classList.toggle("align-left", !currentProxy());
+  const left = !currentProxy();
+  updateBtnEl.classList.toggle("align-left", left);
+  if (updateRowEl) updateRowEl.classList.toggle("align-left", left);
+}
+
+function currentRole() {
+  const p = state.updateProbe;
+  const role = p && p.role ? String(p.role).toLowerCase() : "";
+  if (role === "master" || role === "worker" || role === "standalone") return role;
+  return p && p.installed ? "standalone" : "";
+}
+
+function roleLabel(role) {
+  if (role === "master") return "Master";
+  if (role === "worker") return "Worker";
+  return "独立模式";
+}
+
+function clusterToken() {
+  const p = state.updateProbe;
+  return (p && (p.clusterToken || p.token) ? String(p.clusterToken || p.token) : "").trim();
+}
+
+function renderClusterToken() {
+  const show = !!state.termId && currentRole() === "master";
+  const token = clusterToken();
+  clusterTokenRowEl.classList.toggle("hidden", !show);
+  clusterTokenValueEl.textContent = show ? token || "未设置" : "";
+  clusterTokenValueEl.title = token;
+  clusterTokenCopyEl.disabled = !token;
+}
+
+async function copyClusterToken() {
+  const token = clusterToken();
+  if (!token) return;
+  let ok = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(token);
+      ok = true;
+    }
+  } catch (_) {}
+  if (!ok) {
+    const ta = document.createElement("textarea");
+    ta.value = token;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.select();
+    ok = document.execCommand("copy");
+    ta.remove();
+  }
+  const prev = clusterTokenCopyEl.textContent;
+  clusterTokenCopyEl.textContent = ok ? "已复制" : "复制失败";
+  setTimeout(() => {
+    clusterTokenCopyEl.textContent = prev;
+  }, 1500);
+  if (!ok) uiAlert("复制 cluster token 失败");
+}
+
+function renderRoleSwitch() {
+  const connected = !!state.termId;
+  const p = state.updateProbe;
+  const installed = !!(p && p.installed);
+  const busy = state.roleBusy || state.updateBusy;
+  const role = currentRole();
+  renderClusterToken();
+
+  if (!connected || !installed) {
+    roleSwitchEl.classList.add("hidden");
+    roleSwitchEl.classList.remove("disabled");
+    roleSwitchEl.querySelectorAll(".seg-opt").forEach((btn) => {
+      btn.classList.remove("active");
+      btn.setAttribute("aria-checked", "false");
+      btn.disabled = true;
+    });
+    return;
+  }
+
+  roleSwitchEl.classList.remove("hidden");
+  roleSwitchEl.classList.toggle("disabled", busy);
+  roleSwitchEl.querySelectorAll(".seg-opt").forEach((btn) => {
+    const on = btn.dataset.role === role;
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-checked", on ? "true" : "false");
+    btn.disabled = busy;
+  });
+  roleSwitchEl.title = busy
+    ? "正在切换运行模式…"
+    : `当前运行模式：${roleLabel(role)}${p && p.master ? ` · master ${p.master}` : ""}`;
 }
 
 function setUpdateButton({ disabled = false, text = "更新程序", title = "", cls = "", hidden = false } = {}) {
@@ -346,8 +442,11 @@ function updateHostActionsUI() {
   const connected = !!state.termId;
   if (!connected) {
     setUpdateButton({ disabled: true, hidden: true });
+    renderRoleSwitch();
     return;
   }
+
+  renderRoleSwitch();
 
   if (state.updateBusy) {
     return;
@@ -407,19 +506,22 @@ function updateHostActionsUI() {
 async function probeCanglingUpdate() {
   const hostId = state.selectedHostId;
   if (!state.termId || !hostId) return;
-  if (!hostInjected(hostId)) {
-    state.updateProbe = null;
-    updateHostActionsUI();
-    return;
-  }
-  if (state.updateBusy) return;
+  if (state.updateBusy || state.roleBusy) return;
 
-  setUpdateButton({ disabled: true, text: "检测中…", title: "正在检查 cangling-update…" });
+  const injected = hostInjected(hostId);
+  if (injected) {
+    setUpdateButton({ disabled: true, text: "检测中…", title: "正在检查 cangling-update…" });
+  }
   try {
     state.updateProbe = await invoke("probe_cangling_update", { hostId });
   } catch (err) {
     state.updateProbe = null;
-    setUpdateButton({ disabled: false, text: "重新检测", title: String(err), cls: "error" });
+    renderRoleSwitch();
+    if (injected) {
+      setUpdateButton({ disabled: false, text: "重新检测", title: String(err), cls: "error" });
+    } else {
+      updateHostActionsUI();
+    }
     return;
   }
   updateHostActionsUI();
@@ -435,6 +537,7 @@ async function applyCanglingUpdate({ busy, status }) {
   const hostId = state.selectedHostId;
   state.updateBusy = true;
   setUpdateButton({ disabled: true, text: busy, title: status });
+  renderRoleSwitch();
   try {
     const result = await invoke("run_cangling_update", { hostId });
     writeActionLog(
@@ -446,6 +549,92 @@ async function applyCanglingUpdate({ busy, status }) {
     uiAlert(`Error: ${err}`);
   } finally {
     state.updateBusy = false;
+    await probeCanglingUpdate();
+  }
+}
+
+async function onRoleSwitchClick(role) {
+  const hostId = state.selectedHostId;
+  if (!hostId || !state.termId) return;
+  if (state.roleBusy || state.updateBusy) return;
+  const p = state.updateProbe;
+  if (!p || !p.installed) {
+    uiAlert("请先安装更新程序");
+    return;
+  }
+
+  const current = currentRole();
+  let token = "";
+  let master = p.master || "";
+
+  if (role === "master" || role === "worker") {
+    if (!p.tokenSet) {
+      const entered = await uiPrompt(
+        "集群共享令牌（master / worker 必须一致）",
+        "",
+        "集群令牌"
+      );
+      if (entered == null) return;
+      token = String(entered).trim();
+      if (!token) {
+        uiAlert("集群角色需要填写共享令牌");
+        return;
+      }
+    }
+    if (role === "worker") {
+      const entered = await uiPrompt(
+        "主节点地址，例如 http://10.0.0.1:80（留空则 UDP 自动发现）",
+        master,
+        "主节点"
+      );
+      if (entered == null) return;
+      master = String(entered).trim();
+    } else {
+      master = "";
+    }
+  }
+
+  const extra =
+    role === "worker" && master
+      ? `，主节点 ${master}`
+      : role === "worker"
+        ? "，自动发现主节点"
+        : "";
+  const same = current === role ? "重新" : "";
+  if (
+    !(await uiConfirm(
+      `将把本机 cangling-update 服务${same}注册为「${roleLabel(role)}」并重启${extra}。继续？`,
+      "切换运行模式"
+    ))
+  ) {
+    return;
+  }
+
+  state.roleBusy = true;
+  renderRoleSwitch();
+  try {
+    const result = await invoke("set_cangling_role", {
+      hostId,
+      role,
+      token,
+      master,
+    });
+    writeActionLog(
+      `运行模式 → ${roleLabel(result.role)}`,
+      [result.stdout, result.stderr].filter(Boolean).join("\n")
+    );
+    if (state.updateProbe) {
+      state.updateProbe.role = result.role;
+      state.updateProbe.active = result.active;
+      state.updateProbe.tokenSet = result.tokenSet;
+      state.updateProbe.master = result.master || "";
+      if (token) state.updateProbe.clusterToken = token;
+    }
+  } catch (err) {
+    writeActionLog("切换运行模式失败", String(err));
+    uiAlert(`切换运行模式失败: ${err}`);
+  } finally {
+    state.roleBusy = false;
     await probeCanglingUpdate();
   }
 }
@@ -1664,6 +1853,12 @@ checkEnvBtnEl.addEventListener("click", onCheckEnvClick);
 resourceMgrBtnEl.addEventListener("click", onResourceMgrClick);
 injectBtnEl.addEventListener("click", toggleInject);
 updateBtnEl.addEventListener("click", onCanglingUpdateClick);
+roleSwitchEl.addEventListener("click", (e) => {
+  const btn = e.target.closest("[data-role]");
+  if (!btn || btn.disabled) return;
+  onRoleSwitchClick(btn.dataset.role);
+});
+clusterTokenCopyEl.addEventListener("click", copyClusterToken);
 appUpdateBtnEl.addEventListener("click", onAppUpdateClick);
 
 hostFormEl.querySelectorAll('input[name="auth_method"]').forEach((r) => {
