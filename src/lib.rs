@@ -2,6 +2,7 @@ mod auth;
 mod certificate;
 mod host;
 mod host_actions;
+mod host_cmd;
 mod proxy;
 mod repo;
 mod self_update;
@@ -271,7 +272,7 @@ fn open_with_command(url: &str) -> Result<std::process::ExitStatus, String> {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn open_with_command(url: &str) -> Result<std::process::ExitStatus, String> {
-    std::process::Command::new("xdg-open")
+    host_cmd::command("xdg-open")
         .arg(url)
         .status()
         .map_err(|e| format!("无法打开浏览器: {e}"))

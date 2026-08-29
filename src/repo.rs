@@ -54,7 +54,7 @@ fn auth_url() -> String {
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
-    let output = std::process::Command::new("git")
+    let output = crate::host_cmd::command("git")
         .arg("-C")
         .arg(cwd)
         .args(args)

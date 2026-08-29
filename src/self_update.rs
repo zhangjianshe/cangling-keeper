@@ -136,7 +136,7 @@ fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
         if target.is_file() {
             match replace_appimage(dest, &target) {
                 Ok(()) => {
-                    std::process::Command::new(&target)
+                    crate::host_cmd::command(&target)
                         .spawn()
                         .map_err(|e| format!("启动更新失败: {e}"))?;
                     return Ok(());
@@ -151,7 +151,7 @@ fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
     // Fallback: run the downloaded AppImage from the temp directory.
     std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))
         .map_err(|e| format!("设置可执行权限失败: {e}"))?;
-    std::process::Command::new(dest)
+    crate::host_cmd::command(dest)
         .spawn()
         .map_err(|e| format!("启动更新失败: {e}"))?;
     Ok(())
