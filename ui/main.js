@@ -2748,10 +2748,40 @@ const uiDialogCloseBtnEl = $("#ui-dialog-close");
 let uiDialogResolver = null;
 let uiDialogMode = "alert"; // "alert" | "confirm" | "prompt"
 
+function setDialogMessage(text) {
+  const s = String(text ?? "");
+  uiDialogMessageEl.textContent = "";
+  const urlRe = /(https?:\/\/[^\s]+)/g;
+  let last = 0;
+  let m;
+  while ((m = urlRe.exec(s))) {
+    if (m.index > last) {
+      uiDialogMessageEl.appendChild(document.createTextNode(s.slice(last, m.index)));
+    }
+    const url = m[1];
+    const a = document.createElement("a");
+    a.href = url;
+    a.textContent = url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      invoke("open_url", { url }).catch(() => {
+        window.open(url, "_blank", "noopener");
+      });
+    });
+    uiDialogMessageEl.appendChild(a);
+    last = m.index + url.length;
+  }
+  if (last < s.length) {
+    uiDialogMessageEl.appendChild(document.createTextNode(s.slice(last)));
+  }
+}
+
 function uiDialogOpen({ title, message, mode, defaultValue }) {
   uiDialogMode = mode;
   uiDialogTitleEl.textContent = title;
-  uiDialogMessageEl.textContent = message;
+  setDialogMessage(message);
   uiDialogInputEl.classList.toggle("hidden", mode !== "prompt");
   uiDialogCancelBtnEl.classList.toggle("hidden", mode === "alert");
   uiDialogCloseBtnEl.classList.toggle("hidden", mode === "alert");

@@ -1482,6 +1482,15 @@ body {
   word-break: break-word;
 }
 
+.dialog-message a {
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.dialog-message a:hover {
+  text-decoration: underline;
+}
+
 .dialog-input {
   padding: 6px 10px;
   border: 1px solid var(--border);

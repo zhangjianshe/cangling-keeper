@@ -40,6 +40,49 @@ const GIT_HTTP_CFG: [&str; 8] = [
     "http.postBuffer=524288000",
 ];
 
+fn git_download_url() -> &'static str {
+    if cfg!(windows) {
+        "https://git-scm.com/download/win"
+    } else if cfg!(target_os = "macos") {
+        "https://git-scm.com/download/mac"
+    } else {
+        "https://git-scm.com/download/linux"
+    }
+}
+
+fn git_missing_message() -> String {
+    format!(
+        "本机未安装 Git，无法拉取软件仓库。\n请先从官网下载安装：{}",
+        git_download_url()
+    )
+}
+
+fn is_git_missing_io(err: &std::io::Error) -> bool {
+    if err.kind() == std::io::ErrorKind::NotFound {
+        return true;
+    }
+    let s = err.to_string().to_ascii_lowercase();
+    s.contains("not found")
+        || s.contains("cannot find")
+        || s.contains("no such file")
+        || s.contains("系统找不到")
+}
+
+fn map_git_spawn_err(err: std::io::Error) -> String {
+    if is_git_missing_io(&err) {
+        git_missing_message()
+    } else {
+        format!("无法运行 git：{err}")
+    }
+}
+
+fn ensure_git() -> Result<(), String> {
+    match crate::host_cmd::command("git").arg("--version").output() {
+        Ok(_) => Ok(()),
+        Err(e) => Err(map_git_spawn_err(e)),
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoStatus {
@@ -972,7 +1015,7 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
         .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
         .env("GIT_HTTP_LOW_SPEED_TIME", "60")
         .output()
-        .map_err(|e| format!("无法运行 git：{e}"))?;
+        .map_err(map_git_spawn_err)?;
     if !output.status.success() {
         let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if msg.is_empty() {
@@ -1079,7 +1122,7 @@ fn run_git_progress(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| format!("无法运行 git：{e}"))?;
+    let mut child = cmd.spawn().map_err(map_git_spawn_err)?;
     let mut last_pct = 0u32;
     let mut last_emit = Instant::now() - Duration::from_secs(1);
     let mut stderr_text = String::new();
@@ -1220,6 +1263,7 @@ fn sync_git_set(
     data_dir: &Path,
     rec: &SoftwareSetRecord,
 ) -> Result<RepoStatus, String> {
+    ensure_git()?;
     let dest = set_dir(data_dir, &rec.name)?;
     let auth_url = git_auth_url(&rec.git_url, &rec.git_username, &rec.git_token)?;
     let parent = dest.parent().ok_or_else(|| "仓库路径无效".to_string())?;
@@ -1251,6 +1295,9 @@ fn sync_git_set(
             }
             Err(e) => {
                 last_err = e;
+                if last_err.contains("未安装 Git") {
+                    break;
+                }
                 if !is_git_repo(&dest) {
                     remove_incomplete_git(&dest);
                 }
@@ -1261,6 +1308,9 @@ fn sync_git_set(
         }
     }
     if !last_err.is_empty() {
+        if last_err.contains("未安装 Git") {
+            return Err(last_err);
+        }
         return Err(format!("{last_err}（已自动重试 {GIT_ATTEMPTS} 次）"));
     }
 
@@ -1649,6 +1699,22 @@ mod tests {
         assert_eq!(retry_backoff(3), Duration::from_secs(4));
         assert_eq!(retry_backoff(4), Duration::from_secs(8));
         assert_eq!(retry_backoff(8), Duration::from_secs(8));
+    }
+
+    #[test]
+    fn git_missing_message_points_to_official_site() {
+        let msg = git_missing_message();
+        assert!(msg.contains("未安装 Git"));
+        assert!(msg.contains("https://git-scm.com/download"));
+        assert!(git_download_url().starts_with("https://git-scm.com/download"));
+    }
+
+    #[test]
+    fn git_missing_io_detects_not_found() {
+        let err = std::io::Error::new(std::io::ErrorKind::NotFound, "git");
+        assert!(is_git_missing_io(&err));
+        let other = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        assert!(!is_git_missing_io(&other));
     }
 
     #[test]
