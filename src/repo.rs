@@ -2,7 +2,7 @@ use futures_util::StreamExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -26,6 +26,19 @@ const KIND_GIT: &str = "git";
 
 /// Largest text file we are willing to preview in the UI.
 const MAX_PREVIEW_SIZE: u64 = 1024 * 1024;
+const DOWNLOAD_ATTEMPTS: u32 = 8;
+const DOWNLOAD_IDLE: Duration = Duration::from_secs(45);
+const GIT_ATTEMPTS: u32 = 5;
+const GIT_HTTP_CFG: [&str; 8] = [
+    "-c",
+    "http.version=HTTP/1.1",
+    "-c",
+    "http.lowSpeedLimit=1000",
+    "-c",
+    "http.lowSpeedTime=60",
+    "-c",
+    "http.postBuffer=524288000",
+];
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -605,10 +618,38 @@ fn file_url(server_url: &str, url: &str) -> Result<String, String> {
 fn http_client() -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
-        .connect_timeout(std::time::Duration::from_secs(15))
-        .timeout(std::time::Duration::from_secs(30 * 60))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(60))
         .build()
         .map_err(|e| e.to_string())
+}
+
+fn download_client() -> Result<reqwest::Client, String> {
+    // No overall request timeout: large packages can take longer than 30 minutes.
+    // Stalls are caught per-chunk with DOWNLOAD_IDLE. Keepalive + HTTP/1.1 avoid
+    // NAT/proxy drops and HTTP/2 flow-control hangs on big bodies.
+    reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .http1_only()
+        .tcp_keepalive(Duration::from_secs(30))
+        .connect_timeout(Duration::from_secs(20))
+        .pool_idle_timeout(Duration::from_secs(90))
+        .pool_max_idle_per_host(2)
+        .build()
+        .map_err(|e| e.to_string())
+}
+
+fn part_path(dest: &Path) -> PathBuf {
+    let mut name = dest
+        .file_name()
+        .map(|s| s.to_os_string())
+        .unwrap_or_else(|| "download".into());
+    name.push(".part");
+    dest.with_file_name(name)
+}
+
+fn retry_backoff(attempt: u32) -> Duration {
+    Duration::from_secs(1u64 << (attempt.min(4).saturating_sub(1)))
 }
 
 async fn fetch_manifest(server_url: &str, set_name: &str) -> Result<SoftwareSetManifest, String> {
@@ -678,50 +719,138 @@ async fn download_file(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
     }
-    let tmp = dest.with_extension("part");
-    let resp = http_client()?
-        .get(url)
+    let tmp = part_path(dest);
+    let mut last_err = String::new();
+    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+        match download_once(url, dest, &tmp, expected_size, progress).await {
+            Ok(hash) => return Ok(hash),
+            Err(e) => {
+                last_err = e;
+                if attempt < DOWNLOAD_ATTEMPTS {
+                    tokio::time::sleep(retry_backoff(attempt)).await;
+                }
+            }
+        }
+    }
+    Err(format!(
+        "{last_err}（已自动续传重试 {DOWNLOAD_ATTEMPTS} 次）"
+    ))
+}
+
+fn hash_existing_part(file: &mut std::fs::File) -> Result<(Sha256, u64), String> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|e| format!("读取临时文件失败：{e}"))?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 256 * 1024];
+    let mut offset = 0u64;
+    loop {
+        let n = file.read(&mut buf).map_err(|e| format!("读取临时文件失败：{e}"))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        offset += n as u64;
+    }
+    Ok((hasher, offset))
+}
+
+async fn download_once(
+    url: &str,
+    dest: &Path,
+    tmp: &Path,
+    expected_size: u64,
+    progress: Option<&DownloadProgressCtx<'_>>,
+) -> Result<String, String> {
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(tmp)
+        .map_err(|e| format!("写入临时文件失败：{e}"))?;
+    let (mut hasher, mut offset) = hash_existing_part(&mut file)?;
+
+    if expected_size > 0 && offset == expected_size {
+        drop(file);
+        std::fs::rename(tmp, dest).map_err(|e| format!("保存文件失败：{e}"))?;
+        if let Some(ctx) = progress {
+            emit_sync_progress(ctx, "download", offset, expected_size);
+        }
+        return Ok(hex_encode(&hasher.finalize()));
+    }
+
+    let mut req = download_client()?.get(url);
+    if offset > 0 {
+        req = req.header(reqwest::header::RANGE, format!("bytes={offset}-"));
+    }
+    let resp = req
         .send()
         .await
         .map_err(|e| format!("下载失败：{e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("下载失败：HTTP {}", resp.status()));
+    let status = resp.status();
+    if status.as_u16() == 416 {
+        drop(file);
+        return Err(format!("续传范围无效（已有 {offset} 字节）"));
     }
-    let bytes_total = resp.content_length().unwrap_or(expected_size);
+    if !status.is_success() {
+        drop(file);
+        return Err(format!("下载失败：HTTP {status}"));
+    }
+
+    if offset > 0 && status.as_u16() != 206 {
+        file.set_len(0).map_err(|e| format!("重置临时文件失败：{e}"))?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|e| format!("重置临时文件失败：{e}"))?;
+        hasher = Sha256::new();
+        offset = 0;
+    }
+
+    let remaining = resp.content_length().unwrap_or(0);
+    let bytes_total = if expected_size > 0 {
+        expected_size
+    } else if remaining > 0 {
+        offset.saturating_add(remaining)
+    } else {
+        0
+    };
     if let Some(ctx) = progress {
-        emit_sync_progress(ctx, "download", 0, bytes_total);
+        emit_sync_progress(ctx, "download", offset, bytes_total);
     }
-    let mut file = std::fs::File::create(&tmp).map_err(|e| format!("写入临时文件失败：{e}"))?;
-    let mut hasher = Sha256::new();
+
     let mut stream = resp.bytes_stream();
-    let mut bytes_done = 0u64;
+    let mut bytes_done = offset;
     let mut last_emit = Instant::now();
-    while let Some(chunk) = stream.next().await {
-        let chunk = match chunk {
-            Ok(c) => c,
-            Err(e) => {
-                drop(file);
-                let _ = std::fs::remove_file(&tmp);
-                return Err(format!("下载中断：{e}"));
+    loop {
+        let next = tokio::time::timeout(DOWNLOAD_IDLE, stream.next()).await;
+        let chunk = match next {
+            Ok(Some(Ok(c))) => c,
+            Ok(Some(Err(e))) => return Err(format!("下载中断：{e}")),
+            Ok(None) => break,
+            Err(_) => {
+                return Err(format!(
+                    "下载停滞（已写入 {bytes_done} 字节后 {} 秒无数据），将续传",
+                    DOWNLOAD_IDLE.as_secs()
+                ));
             }
         };
         hasher.update(&chunk);
-        if let Err(e) = file.write_all(&chunk) {
-            drop(file);
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!("写入文件失败：{e}"));
-        }
+        file.write_all(&chunk)
+            .map_err(|e| format!("写入文件失败：{e}"))?;
         bytes_done += chunk.len() as u64;
         if let Some(ctx) = progress {
             let now = Instant::now();
             if now.duration_since(last_emit) >= Duration::from_millis(200) {
-                emit_sync_progress(ctx, "download", bytes_done, bytes_total);
+                emit_sync_progress(ctx, "download", bytes_done, bytes_total.max(bytes_done));
                 last_emit = now;
             }
         }
     }
+    file.flush().map_err(|e| format!("写入文件失败：{e}"))?;
     drop(file);
-    std::fs::rename(&tmp, dest).map_err(|e| format!("保存文件失败：{e}"))?;
+    if expected_size > 0 && bytes_done < expected_size {
+        return Err(format!("下载不完整：{bytes_done}/{expected_size} 字节，将续传"));
+    }
+    std::fs::rename(tmp, dest).map_err(|e| format!("保存文件失败：{e}"))?;
     if let Some(ctx) = progress {
         emit_sync_progress(ctx, "download", bytes_done, bytes_total.max(bytes_done));
     }
@@ -763,6 +892,10 @@ fn prune_extra_files(root: &Path, expected: &HashSet<String>) -> Result<(), Stri
                     let _ = std::fs::remove_dir(&path);
                 }
             } else if path.is_file() {
+                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                if name.ends_with(".part") {
+                    continue;
+                }
                 let rel = relative_path(root, &path).unwrap_or_default();
                 if !expected.contains(&rel) {
                     let _ = std::fs::remove_file(&path);
@@ -833,8 +966,11 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
     let output = crate::host_cmd::command("git")
         .arg("-C")
         .arg(cwd)
+        .args(GIT_HTTP_CFG)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "60")
         .output()
         .map_err(|e| format!("无法运行 git：{e}"))?;
     if !output.status.success() {
@@ -934,9 +1070,12 @@ fn run_git_progress(
     if let Some(cwd) = cwd {
         cmd.current_dir(cwd);
     }
-    cmd.args(args)
+    cmd.args(GIT_HTTP_CFG)
+        .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_FLUSH", "1")
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
+        .env("GIT_HTTP_LOW_SPEED_TIME", "60")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
@@ -1006,6 +1145,76 @@ fn run_git_progress(
     Ok(())
 }
 
+fn is_git_repo(path: &Path) -> bool {
+    path.join(".git").is_dir()
+}
+
+fn remove_incomplete_git(dest: &Path) {
+    if dest.exists() && !is_git_repo(dest) {
+        let _ = std::fs::remove_dir_all(dest);
+    }
+}
+
+fn git_fetch_update(
+    app: &AppHandle,
+    rec: &SoftwareSetRecord,
+    dest: &Path,
+    auth_url: &str,
+) -> Result<(), String> {
+    let _ = run_git(dest, &["remote", "set-url", "origin", auth_url]);
+    let branch = rec.git_branch.trim().to_string();
+    let mut fetch_args = vec![
+        "fetch".to_string(),
+        "--progress".to_string(),
+        "--prune".to_string(),
+        "origin".to_string(),
+    ];
+    if !branch.is_empty() {
+        fetch_args.push(branch.clone());
+    }
+    let fetch_refs: Vec<&str> = fetch_args.iter().map(|s| s.as_str()).collect();
+    run_git_progress(app, &rec.name, rec, Some(dest), &fetch_refs, "git-fetch")?;
+    if !branch.is_empty() {
+        let _ = run_git(dest, &["checkout", &branch]);
+    }
+    emit_git_progress(app, &rec.name, "git-fetch", "正在合并远端更新…", &mut 100);
+    run_git(dest, &["merge", "--ff-only", "FETCH_HEAD"])
+        .or_else(|_| run_git(dest, &["merge", "--ff-only"]))?;
+    Ok(())
+}
+
+fn git_clone_once(
+    app: &AppHandle,
+    rec: &SoftwareSetRecord,
+    dest: &Path,
+    parent: &Path,
+    auth_url: &str,
+) -> Result<(), String> {
+    remove_incomplete_git(dest);
+    if dest.exists() && !is_git_repo(dest) {
+        let empty = dest
+            .read_dir()
+            .map(|mut i| i.next().is_none())
+            .unwrap_or(false);
+        if empty {
+            let _ = std::fs::remove_dir(dest);
+        } else {
+            return Err(format!("目标目录已存在且不是 git 仓库：{}", dest.display()));
+        }
+    }
+    let dest_s = dest.to_string_lossy().into_owned();
+    let branch = rec.git_branch.trim().to_string();
+    let mut args = vec!["clone".to_string(), "--progress".to_string()];
+    if !branch.is_empty() {
+        args.push("--branch".into());
+        args.push(branch);
+    }
+    args.push(auth_url.to_string());
+    args.push(dest_s);
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_git_progress(app, &rec.name, rec, Some(parent), &arg_refs, "git-clone")
+}
+
 fn sync_git_set(
     app: &AppHandle,
     data_dir: &Path,
@@ -1016,62 +1225,43 @@ fn sync_git_set(
     let parent = dest.parent().ok_or_else(|| "仓库路径无效".to_string())?;
     std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
 
-    let updating = dest.join(".git").is_dir();
-    emit_git_progress(
-        app,
-        &rec.name,
-        if updating { "git-fetch" } else { "git-clone" },
-        if updating {
-            "正在从远端拉取…"
-        } else {
-            "正在克隆 Git 仓库…"
-        },
-        &mut 0,
-    );
-
-    if updating {
-        let _ = run_git(&dest, &["remote", "set-url", "origin", &auth_url]);
-        let branch = rec.git_branch.trim().to_string();
-        let mut fetch_args = vec![
-            "fetch".to_string(),
-            "--progress".to_string(),
-            "--prune".to_string(),
-            "origin".to_string(),
-        ];
-        if !branch.is_empty() {
-            fetch_args.push(branch.clone());
-        }
-        let fetch_refs: Vec<&str> = fetch_args.iter().map(|s| s.as_str()).collect();
-        run_git_progress(app, &rec.name, rec, Some(&dest), &fetch_refs, "git-fetch")?;
-        if !branch.is_empty() {
-            let _ = run_git(&dest, &["checkout", &branch]);
-        }
-        emit_git_progress(app, &rec.name, "git-fetch", "正在合并远端更新…", &mut 100);
-        run_git(&dest, &["merge", "--ff-only", "FETCH_HEAD"])
-            .or_else(|_| run_git(&dest, &["merge", "--ff-only"]))?;
-    } else {
-        if dest.exists() {
-            let empty = dest
-                .read_dir()
-                .map(|mut i| i.next().is_none())
-                .unwrap_or(false);
-            if empty {
-                let _ = std::fs::remove_dir(&dest);
+    let mut last_err = String::new();
+    for attempt in 1..=GIT_ATTEMPTS {
+        let updating = is_git_repo(&dest);
+        emit_git_progress(
+            app,
+            &rec.name,
+            if updating { "git-fetch" } else { "git-clone" },
+            if updating {
+                "正在从远端拉取…"
             } else {
-                return Err(format!("目标目录已存在且不是 git 仓库：{}", dest.display()));
+                "正在克隆 Git 仓库…"
+            },
+            &mut 0,
+        );
+        let result = if updating {
+            git_fetch_update(app, rec, &dest, &auth_url)
+        } else {
+            git_clone_once(app, rec, &dest, parent, &auth_url)
+        };
+        match result {
+            Ok(()) => {
+                last_err.clear();
+                break;
+            }
+            Err(e) => {
+                last_err = e;
+                if !is_git_repo(&dest) {
+                    remove_incomplete_git(&dest);
+                }
+                if attempt < GIT_ATTEMPTS {
+                    std::thread::sleep(Duration::from_secs(2 * u64::from(attempt)));
+                }
             }
         }
-        let dest_s = dest.to_string_lossy().into_owned();
-        let branch = rec.git_branch.trim().to_string();
-        let mut args = vec!["clone".to_string(), "--progress".to_string()];
-        if !branch.is_empty() {
-            args.push("--branch".into());
-            args.push(branch);
-        }
-        args.push(auth_url);
-        args.push(dest_s);
-        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        run_git_progress(app, &rec.name, rec, Some(parent), &arg_refs, "git-clone")?;
+    }
+    if !last_err.is_empty() {
+        return Err(format!("{last_err}（已自动重试 {GIT_ATTEMPTS} 次）"));
     }
 
     let (branch, commit) = git_head(&dest);
@@ -1379,7 +1569,7 @@ pub fn list_repo_files(state: State<'_, AppState>, path: String) -> Result<Vec<R
         let item = item.map_err(|e| e.to_string())?;
         let file_type = item.file_type().map_err(|e| e.to_string())?;
         let name = item.file_name().to_string_lossy().into_owned();
-        if name == ".git" {
+        if name == ".git" || name.ends_with(".part") {
             continue;
         }
         let path = relative_path(&root, &item.path())?;
@@ -1433,4 +1623,50 @@ pub fn read_repo_file(state: State<'_, AppState>, path: String) -> Result<RepoFi
         size: meta.len(),
         content,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn part_path_keeps_full_filename() {
+        let dest = PathBuf::from("/tmp/k3s-airgap-images-amd64.tar.gz");
+        assert_eq!(
+            part_path(&dest),
+            PathBuf::from("/tmp/k3s-airgap-images-amd64.tar.gz.part")
+        );
+        assert_eq!(
+            PathBuf::from("/tmp/k3s-airgap-images-amd64.tar.gz").with_extension("part"),
+            PathBuf::from("/tmp/k3s-airgap-images-amd64.tar.part")
+        );
+    }
+
+    #[test]
+    fn retry_backoff_grows_then_caps() {
+        assert_eq!(retry_backoff(1), Duration::from_secs(1));
+        assert_eq!(retry_backoff(2), Duration::from_secs(2));
+        assert_eq!(retry_backoff(3), Duration::from_secs(4));
+        assert_eq!(retry_backoff(4), Duration::from_secs(8));
+        assert_eq!(retry_backoff(8), Duration::from_secs(8));
+    }
+
+    #[test]
+    fn prune_keeps_partial_downloads() {
+        let root = std::env::temp_dir().join(format!("ck-prune-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("pkg")).unwrap();
+        let keep = root.join("pkg/ok.bin");
+        let extra = root.join("pkg/old.bin");
+        let part = root.join("pkg/ok.bin.part");
+        std::fs::write(&keep, b"ok").unwrap();
+        std::fs::write(&extra, b"old").unwrap();
+        std::fs::write(&part, b"partial").unwrap();
+        let mut expected = HashSet::new();
+        expected.insert("pkg/ok.bin".into());
+        prune_extra_files(&root, &expected).unwrap();
+        assert!(keep.is_file());
+        assert!(part.is_file());
+        assert!(!extra.is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
