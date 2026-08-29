@@ -1,6 +1,14 @@
 use std::ffi::OsStr;
 use std::process::Command;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Hide the console window when spawning a Windows console subsystem binary
+/// such as `git.exe` from a GUI (Tauri) process.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Spawn a host binary without AppImage/linuxdeploy library search paths.
 ///
 /// AppRun prepends `$APPDIR/usr/lib` to `LD_LIBRARY_PATH` so WebKitGTK can
@@ -15,6 +23,10 @@ use std::process::Command;
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     let mut cmd = Command::new(program);
     apply_host_env(&mut cmd);
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
     cmd
 }
 
@@ -138,5 +150,13 @@ mod tests {
             strip_appdir_entries(&value, appdir).as_deref(),
             Some(value.as_str())
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_hides_console_window() {
+        let cmd = super::command("git");
+        let _ = cmd;
+        assert_eq!(CREATE_NO_WINDOW, 0x0800_0000);
     }
 }

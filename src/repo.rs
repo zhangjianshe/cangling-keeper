@@ -1014,6 +1014,9 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
         .env("GIT_HTTP_LOW_SPEED_TIME", "60")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .output()
         .map_err(map_git_spawn_err)?;
     if !output.status.success() {
