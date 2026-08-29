@@ -720,8 +720,8 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 4px;
   min-width: 0;
+  max-width: 320px;
 }
 
 .cluster-token-label {
@@ -813,24 +813,78 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 12px 16px 16px;
+  padding: 0;
 }
 
 .terminal-frame {
   flex: 1;
   min-height: 0;
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 0;
+  border-radius: 0;
   background: #ffffff;
   overflow: hidden;
-  padding: 8px;
+  padding: 0;
 }
 
 #terminal {
   flex: 1;
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
+}
+
+#terminal .xterm {
+  width: 100%;
+  height: 100%;
+}
+
+.cluster-frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.cluster-frame-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--canvas);
+  flex: 0 0 auto;
+}
+
+.cluster-frame-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.cluster-frame iframe {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  outline: none;
+  background: #ffffff;
+}
+
+#resource-mgr-btn.active {
+  border-color: var(--accent);
+  background: var(--accent-subtle);
+  color: var(--accent);
 }
 
 /* ---- Tunnel / certificate detail ------------------------------------------- */
@@ -954,6 +1008,7 @@ body {
 }
 
 .modal-box {
+  position: relative;
   width: 100%;
   max-width: 400px;
   max-height: 90vh;
@@ -1117,6 +1172,16 @@ body {
   color: var(--fg-muted);
 }
 
+#set-git-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+#set-git-fields.hidden {
+  display: none;
+}
+
 /* ---- Context menu ----------------------------------------------------------- */
 
 .ctx-menu {
@@ -1202,6 +1267,50 @@ body {
   white-space: nowrap;
   font-size: 12px;
   color: var(--fg-muted);
+}
+
+.repo-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 22px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+
+.repo-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-weight: 600;
+}
+
+.repo-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--btn-default-bg);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.repo-progress-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 0.16s ease;
+}
+
+.repo-progress-detail {
+  font-size: 12px;
+  color: var(--fg-muted);
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-local-path {
@@ -1295,8 +1404,8 @@ body {
   font-size: 12px;
   line-height: 1.5;
   white-space: pre;
-  background: #0d1117;
-  color: #e6edf3;
+  background: #ffffff;
+  color: var(--fg);
 }
 
 /* ---- Custom dialog (alert / confirm / prompt) ------------------------------- */

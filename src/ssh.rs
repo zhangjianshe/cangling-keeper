@@ -27,7 +27,7 @@ pub enum ResolvedAuth {
     Key(String),
 }
 
-struct SshClient;
+pub(crate) struct SshClient;
 
 impl client::Handler for SshClient {
     type Error = russh::Error;
@@ -61,11 +61,11 @@ where
         .map_err(|e| format!("SSH handshake failed: {e:?}"))
 }
 
-async fn connect(host: &str, port: u16) -> Result<client::Handle<SshClient>, String> {
+pub(crate) async fn connect(host: &str, port: u16) -> Result<client::Handle<SshClient>, String> {
     connect_with(host, port, SshClient).await
 }
 
-async fn authenticate<H>(
+pub(crate) async fn authenticate<H>(
     session: &mut client::Handle<H>,
     username: &str,
     auth: &ResolvedAuth,
@@ -173,6 +173,40 @@ pub async fn establish_tunnel(
         .map_err(|e| format!("Failed to bind local port {}: {e}", tunnel.local_port))?;
 
     Ok(EstablishedTunnel { session, listener })
+}
+
+/// Open an SSH session and bind a local port for a later forward.
+/// Prefers `prefer_port` (the remote cangling-update listen port) so the
+/// opened URL uses the same port; falls back to an ephemeral port if busy.
+pub async fn establish_host_local_forward(
+    host: &Host,
+    auth: &ResolvedAuth,
+    prefer_port: u16,
+) -> Result<(EstablishedTunnel, u16), String> {
+    let mut session = connect(&host.hostname, host.port).await?;
+    authenticate(&mut session, &host.username, auth).await?;
+
+    let listener = if prefer_port > 0 {
+        match TcpListener::bind(("127.0.0.1", prefer_port)).await {
+            Ok(l) => l,
+            Err(_) => TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .map_err(|e| format!("无法绑定本机控制台端口: {e}"))?,
+        }
+    } else {
+        TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|e| format!("无法绑定本机控制台端口: {e}"))?
+    };
+    let local_port = listener
+        .local_addr()
+        .map_err(|e| format!("无法读取本机控制台端口: {e}"))?
+        .port();
+    if local_port == 0 {
+        return Err("本机控制台端口分配失败".into());
+    }
+
+    Ok((EstablishedTunnel { session, listener }, local_port))
 }
 
 pub async fn accept_loop(

@@ -153,7 +153,8 @@ pub async fn push_host(server_url: &str, token: &str, host: &SyncHost) -> Result
         .map_err(|e| format!("保存主机到服务器失败: {e}"))?;
     let text = resp.text().await.map_err(|e| e.to_string())?;
     let data: SaveHostData = unwrap_envelope(text).await?;
-    data.host.ok_or_else(|| "服务器未返回保存后的主机".to_string())
+    data.host
+        .ok_or_else(|| "服务器未返回保存后的主机".to_string())
 }
 
 pub async fn delete_remote(server_url: &str, token: &str, id: &str) -> Result<(), String> {
@@ -176,9 +177,7 @@ pub async fn delete_remote(server_url: &str, token: &str, id: &str) -> Result<()
 /// file for certificate auth so it can be synced too.
 pub fn host_to_sync(store: &Store, data_dir: &Path, host: &Host) -> Result<SyncHost, String> {
     let (auth_method, password, private_key, public_key) = match &host.auth {
-        Auth::Password { password } => {
-            ("password".to_string(), Some(password.clone()), None, None)
-        }
+        Auth::Password { password } => ("password".to_string(), Some(password.clone()), None, None),
         Auth::Certificate { certificate_id } => {
             let cert = store.get_certificate(certificate_id)?;
             let key_path = crate::resolve_key_path(data_dir, &cert.private_key_path);
@@ -278,7 +277,8 @@ fn import_certificate(
     std::fs::write(&private_path, private_key.trim_end())
         .map_err(|e| format!("写入私钥失败: {e}"))?;
     let public_path = private_path.with_extension("pub");
-    std::fs::write(&public_path, public_key.trim_end()).map_err(|e| format!("写入公钥失败: {e}"))?;
+    std::fs::write(&public_path, public_key.trim_end())
+        .map_err(|e| format!("写入公钥失败: {e}"))?;
 
     #[cfg(unix)]
     {

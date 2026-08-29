@@ -1,5 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+/// Hosts that must never go through HTTP_PROXY / Clash (SSH console forwards
+/// bind here; a system proxy often answers those CONNECT requests with 502).
+const LOOPBACK_NO_PROXY: &[&str] = &["localhost", "127.0.0.1", "::1", "[::1]"];
+
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -24,6 +28,42 @@ pub struct ProxySettings {
     pub last_socks5: bool,
     pub last_message: String,
     pub last_checked_at: i64,
+}
+
+/// Merge loopback entries into `NO_PROXY` / `no_proxy` so WebKit does not send
+/// `http://127.0.0.1:<mapped-port>` through the system proxy.
+pub fn ensure_loopback_not_proxied() {
+    for key in ["NO_PROXY", "no_proxy"] {
+        let merged = merge_no_proxy(std::env::var(key).ok().as_deref());
+        // SAFETY: called once at process start, before the webview starts.
+        unsafe {
+            std::env::set_var(key, merged);
+        }
+    }
+    // GNOME's proxy resolver often ignores NO_PROXY and still CONNECT-proxies
+    // loopback; Clash then returns 502. Dummy resolver is process-local and
+    // only affects GIO/WebKit — reqwest still honours HTTP_PROXY.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("GIO_USE_PROXY_RESOLVER").is_none() {
+        unsafe {
+            std::env::set_var("GIO_USE_PROXY_RESOLVER", "dummy");
+        }
+    }
+}
+
+fn merge_no_proxy(existing: Option<&str>) -> String {
+    let mut parts: Vec<String> = existing
+        .unwrap_or("")
+        .split(|c: char| c == ',' || c == ';' || c.is_ascii_whitespace())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    for extra in LOOPBACK_NO_PROXY {
+        if !parts.iter().any(|p| p.eq_ignore_ascii_case(extra)) {
+            parts.push((*extra).to_string());
+        }
+    }
+    parts.join(",")
 }
 
 impl Default for ProxySettings {
@@ -594,6 +634,20 @@ mod tests {
         assert!(result.http, "{}", result.message);
         let _ = stop.send(());
         let _ = proxy.await;
+    }
+
+    #[test]
+    fn merge_no_proxy_adds_loopback() {
+        let merged = merge_no_proxy(Some("example.com,10.0.0.0/8"));
+        assert!(merged.contains("example.com"));
+        assert!(merged.contains("127.0.0.1"));
+        assert!(merged.contains("localhost"));
+    }
+
+    #[test]
+    fn merge_no_proxy_does_not_duplicate() {
+        let merged = merge_no_proxy(Some("localhost,127.0.0.1"));
+        assert_eq!(merged.matches("127.0.0.1").count(), 1, "{merged}");
     }
 
     #[test]

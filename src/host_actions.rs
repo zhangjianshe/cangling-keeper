@@ -22,6 +22,8 @@ pub struct UpdateProbe {
     pub token_set: bool,
     pub cluster_token: String,
     pub master: String,
+    /// Listen port of the remote `cangling-update` service. `0` if unknown.
+    pub port: u16,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -162,6 +164,21 @@ pub fn inject_proxy_url(remote_port: u16) -> String {
     format!("http://127.0.0.1:{remote_port}")
 }
 
+/// cangling-update listens on 5400 unless `--port` / `CANGLING_PORT` is set.
+pub const DEFAULT_CONSOLE_PORT: u16 = 5400;
+
+pub fn console_remote_port(probe_port: u16) -> u16 {
+    if probe_port > 0 {
+        probe_port
+    } else {
+        DEFAULT_CONSOLE_PORT
+    }
+}
+
+pub fn console_url(local_port: u16) -> String {
+    format!("http://127.0.0.1:{local_port}/console")
+}
+
 pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
     let line = stdout
         .lines()
@@ -186,6 +203,7 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
     let mut token_set = false;
     let mut cluster_token = String::new();
     let mut master = String::new();
+    let mut port = 0u16;
 
     // `token=` is last on the marker line so the value may contain '|' or '='.
     let fields = if let Some(idx) = line.find("|token=") {
@@ -208,6 +226,13 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
             "role" => role = v.to_string(),
             "token_set" => token_set = v == "1" || v.eq_ignore_ascii_case("true"),
             "master" => master = v.to_string(),
+            "port" => {
+                port = v
+                    .parse()
+                    .ok()
+                    .filter(|n| (1..=65535).contains(n))
+                    .unwrap_or(0);
+            }
             _ => {}
         }
     }
@@ -237,6 +262,7 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
         token_set: token_set || !cluster_token.is_empty(),
         cluster_token,
         master,
+        port,
     })
 }
 
@@ -351,7 +377,7 @@ mod tests {
 
     #[test]
     fn parses_probe_line() {
-        let out = "noise\nCK_PROBE|installed=1|arch=arm64|active=1|binary=/usr/local/bin/cangling-update|version=v1.2.3|role=master|token_set=1|master=http://10.0.0.1:80|token=secret|tok\n";
+        let out = "noise\nCK_PROBE|installed=1|arch=arm64|active=1|binary=/usr/local/bin/cangling-update|version=v1.2.3|role=master|token_set=1|master=http://10.0.0.1:80|port=80|token=secret|tok\n";
         let p = parse_probe(out).unwrap();
         assert!(p.installed);
         assert!(p.supported);
@@ -363,12 +389,37 @@ mod tests {
         assert!(p.token_set);
         assert_eq!(p.cluster_token, "secret|tok");
         assert_eq!(p.master, "http://10.0.0.1:80");
+        assert_eq!(p.port, 80);
+    }
+
+    #[test]
+    fn probe_port_defaults_when_missing() {
+        let p =
+            parse_probe("CK_PROBE|installed=1|arch=amd64|active=1|binary=|version=v1\n").unwrap();
+        assert_eq!(p.port, 0);
+        assert_eq!(console_remote_port(p.port), DEFAULT_CONSOLE_PORT);
+    }
+
+    #[test]
+    fn console_url_goes_to_cangling_update_console() {
+        assert_eq!(console_url(15400), "http://127.0.0.1:15400/console");
+        assert_eq!(console_remote_port(5400), 5400);
+        assert_eq!(console_remote_port(0), 5400);
+        assert_eq!(console_remote_port(80), 80);
+    }
+
+    #[test]
+    fn probe_ignores_invalid_port() {
+        let p = parse_probe(
+            "CK_PROBE|installed=1|arch=amd64|active=1|binary=|version=v1|port=not-a-port\n",
+        )
+        .unwrap();
+        assert_eq!(p.port, 0);
     }
 
     #[test]
     fn probe_defaults_role_when_missing() {
-        let p = parse_probe("CK_PROBE|installed=1|arch=amd64|active=0|binary=|version=\n")
-            .unwrap();
+        let p = parse_probe("CK_PROBE|installed=1|arch=amd64|active=0|binary=|version=\n").unwrap();
         assert_eq!(p.role, "standalone");
         assert!(!p.token_set);
         assert!(p.cluster_token.is_empty());
@@ -396,6 +447,7 @@ mod tests {
         assert!(cmd.ends_with("ck install amd64 http://127.0.0.1:7890"));
         let probe = wrap_probe_command();
         assert!(probe.contains("CK_PROBE"));
+        assert!(probe.contains("|port=%s|token=%s"));
         assert_eq!(inject_proxy_url(1080), "http://127.0.0.1:1080");
     }
 
@@ -418,9 +470,10 @@ mod tests {
 
     #[test]
     fn parses_set_role_line() {
-        let (role, active, token_set, master) =
-            parse_set_role("noise\nCK_ROLE|role=worker|active=1|token_set=1|master=http://10.0.0.2:80\n")
-                .unwrap();
+        let (role, active, token_set, master) = parse_set_role(
+            "noise\nCK_ROLE|role=worker|active=1|token_set=1|master=http://10.0.0.2:80\n",
+        )
+        .unwrap();
         assert_eq!(role, "worker");
         assert!(active);
         assert!(token_set);

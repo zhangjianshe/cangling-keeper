@@ -108,8 +108,7 @@ mod tests {
     #[test]
     fn strips_appdir_lib_paths() {
         let appdir = "/tmp/.mount_canglXYZ";
-        let value =
-            format!("{appdir}/usr/lib:{appdir}/usr/lib/x86_64-linux-gnu:/usr/lib:/lib");
+        let value = format!("{appdir}/usr/lib:{appdir}/usr/lib/x86_64-linux-gnu:/usr/lib:/lib");
         assert_eq!(
             strip_appdir_entries(&value, appdir).as_deref(),
             Some("/usr/lib:/lib")

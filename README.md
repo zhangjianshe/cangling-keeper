@@ -12,7 +12,9 @@ commands over SSH with one click.
   to auto-fill the form, or fill the fields manually.
 - Connect/disconnect tunnels; the list shows live connection state.
 - Tunnel auth via password or an ed25519 key pair (generate one in-app).
-- 软件仓库：将指定 git 仓库下载到本地，支持更新（pull），并浏览目录与文本文件内容。
+- 软件仓库：可管理多个软件集（缺省包含维护中心 Manifest 集 `np4`，以及 Git 仓库 `cangling-repo`）。软件集分为两种：向维护中心查询 manifest 后按哈希下载，或自定义 Git 仓库 clone/pull。同步大文件时显示下载/克隆进度，并可浏览目录与文本文件内容。
+- 主机面板可将本地已拉取的软件同步到 Master 主机上 cangling-update 的 `repo/<软件集>/` 目录（按软件集名分目录，避免同名覆盖）。已存在且大小、SHA-256 都相同的文件会跳过，避免 `version.txt` 这类等长变更被漏传。
+- 集群管理：通过 SSH 本地端口转发连接该主机上 cangling-update 的 `/console` 控制台（不依赖远端 HTTP 端口对维护中心本机开放）。
 - Hosts and tunnels persist to a SQLite database in the app data directory.
 
 > **Security note (current state):** passwords are stored in plain text in the
@@ -252,6 +254,7 @@ classDiagram
         +active_terminals
         +ProxyRuntime proxy
         +injected_proxies
+        +console_forwards
         +data_dir
     }
     class Store {
@@ -304,7 +307,7 @@ cangling-keeper/
 │   ├── host.rs             # Host model
 │   ├── tunnel.rs           # Tunnel model + SSH command parsing
 │   ├── store.rs            # SQLite persistence (hosts + tunnels)
-│   ├── repo.rs             # 软件仓库：git clone/pull + 目录/文件浏览
+│   ├── repo.rs             # 软件仓库：软件集 manifest 同步 + 目录/文件浏览
 │   └── ssh.rs              # SSH exec, port forwarding, key generation (russh)
 └── ui/                     # Frontend (plain HTML/CSS/JS, no bundler)
     ├── index.html

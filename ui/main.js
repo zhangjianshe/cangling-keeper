@@ -15,6 +15,7 @@ const state = {
   editingHostId: null,
   editingTunnelId: null,
   contextHostId: null,
+  contextSetName: null,
   termId: null,
   connectedHostId: null,
   proxy: null, // shared ProxyStatus for every panel
@@ -25,8 +26,19 @@ const state = {
   appUpdate: null,
   appUpdateBusy: false,
   login: null, // { loggedIn, serverUrl, username, nickname }
-  repoStatus: null, // { cloned, localPath, branch, commit, error }
-  repoPath: "", // relative path inside the repo ("" = root)
+  repoStatus: null, // { cloned, localPath, setName, totalFiles, downloaded, skipped, failed, error }
+  softwareSets: [], // [{ name, kind, cloned, localPath, gitUrl, ... }]
+  editingSetName: null,
+  selectedSetName: "",
+  repoPath: "", // relative path inside the synced set ("" = root)
+  repoSyncing: false,
+  hostSyncing: false,
+  clusterPorts: {}, // hostId -> cangling-update listen port
+  clusterFrameUrl: "",
+  clusterForwardHostId: "",
+  clusterLocalPort: 0,
+  clusterConnecting: false,
+  clusterConnectGen: 0,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -38,6 +50,7 @@ const hostSearchInputEl = $("#host-search-input");
 const hostListEl = $("#host-list");
 const tunnelListEl = $("#tunnel-list");
 const certListEl = $("#cert-list");
+const setListEl = $("#set-list");
 const emptyStateEl = $("#empty-state");
 const emptyTitleEl = $("#empty-title");
 const emptySubEl = $("#empty-sub");
@@ -54,6 +67,19 @@ const termToggleBtnEl = $("#term-toggle-btn");
 const termStatusEl = $("#term-status");
 const checkEnvBtnEl = $("#check-env-btn");
 const resourceMgrBtnEl = $("#resource-mgr-btn");
+const softwareSyncBtnEl = $("#software-sync-btn");
+const terminalFrameEl = $("#terminal-frame");
+const clusterFrameEl = $("#cluster-frame");
+const clusterFrameUrlEl = $("#cluster-frame-url");
+const clusterIframeEl = $("#cluster-iframe");
+const clusterFrameRefreshEl = $("#cluster-frame-refresh");
+const clusterFrameExternalEl = $("#cluster-frame-external");
+const clusterFrameCloseEl = $("#cluster-frame-close");
+const hostSyncProgressEl = $("#host-sync-progress");
+const hostSyncProgressLabelEl = $("#host-sync-progress-label");
+const hostSyncProgressPctEl = $("#host-sync-progress-pct");
+const hostSyncProgressBarEl = $("#host-sync-progress-bar");
+const hostSyncProgressDetailEl = $("#host-sync-progress-detail");
 const injectBtnEl = $("#inject-proxy-btn");
 const injectStatusEl = $("#inject-status");
 const updateBtnEl = $("#btn-cangling-update");
@@ -100,8 +126,17 @@ const certModalEl = $("#cert-modal");
 const certFormEl = $("#cert-form");
 
 const repoStatusLineEl = $("#repo-status-line");
+const repoSetTitleEl = $("#repo-set-title");
 const repoPathEl = $("#repo-path");
 const repoCloneUpdateBtnEl = $("#repo-clone-update-btn");
+const setModalEl = $("#set-modal");
+const setFormEl = $("#set-form");
+const setModalTitleEl = $("#set-modal-title");
+const repoProgressEl = $("#repo-progress");
+const repoProgressLabelEl = $("#repo-progress-label");
+const repoProgressPctEl = $("#repo-progress-pct");
+const repoProgressBarEl = $("#repo-progress-bar");
+const repoProgressDetailEl = $("#repo-progress-detail");
 const repoUpBtnEl = $("#repo-up-btn");
 const repoCurrentPathEl = $("#repo-current-path");
 const repoTreeEl = $("#repo-tree");
@@ -112,6 +147,9 @@ const ctxMenuEl = $("#ctx-menu");
 const ctxEditHostBtnEl = $("#ctx-edit-host");
 const ctxCopyHostBtnEl = $("#ctx-copy-host");
 const ctxDeleteHostBtnEl = $("#ctx-delete-host");
+const setCtxMenuEl = $("#set-ctx-menu");
+const ctxEditSetBtnEl = $("#ctx-edit-set");
+const ctxDeleteSetBtnEl = $("#ctx-delete-set");
 
 // ---- xterm.js terminal ------------------------------------------------------
 
@@ -220,6 +258,7 @@ async function toggleTerminal() {
     return;
   }
 
+  hideClusterFrame();
   const host = hostById(state.selectedHostId);
   if (!host) return;
 
@@ -438,7 +477,143 @@ function setUpdateButton({ disabled = false, text = "更新程序", title = "", 
   updateUpdateBtnAlign();
 }
 
+function renderSoftwareSyncBtn() {
+  if (!softwareSyncBtnEl) return;
+  const hasHost = !!hostById(state.selectedHostId);
+  softwareSyncBtnEl.disabled = !hasHost || state.hostSyncing;
+  softwareSyncBtnEl.textContent = state.hostSyncing ? "同步中…" : "软件同步";
+}
+
+function hideHostSyncProgress() {
+  if (!hostSyncProgressEl) return;
+  hostSyncProgressEl.classList.add("hidden");
+  hostSyncProgressBarEl.style.width = "0%";
+  hostSyncProgressPctEl.textContent = "0%";
+  hostSyncProgressLabelEl.textContent = "同步中";
+  hostSyncProgressDetailEl.textContent = "";
+}
+
+function renderHostSyncProgress(p) {
+  if (!hostSyncProgressEl) return;
+  hostSyncProgressEl.classList.remove("hidden");
+  const current = p.current || 0;
+  const total = p.total || 0;
+  const overallDone = Number(p.overallDone) || 0;
+  const overallTotal = Number(p.overallTotal) || 0;
+  const bytesDone = Number(p.bytesDone) || 0;
+  const bytesTotal = Number(p.bytesTotal) || 0;
+  let pct = 0;
+  if (overallTotal > 0) {
+    pct = Math.min(100, (overallDone / overallTotal) * 100);
+  } else if (total > 0) {
+    pct = Math.min(100, (current / total) * 100);
+  }
+  const action =
+    p.action === "upload"
+      ? "上传"
+      : p.action === "skip"
+        ? "跳过"
+        : p.action === "fail"
+          ? "失败"
+          : p.action || "同步";
+  hostSyncProgressLabelEl.textContent =
+    total > 0 ? `软件同步 ${current}/${total} · ${action}` : `软件同步 · ${action}`;
+  hostSyncProgressPctEl.textContent = `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
+  hostSyncProgressBarEl.style.width = `${pct}%`;
+  const sizePart =
+    p.action === "upload" && (bytesDone > 0 || bytesTotal > 0)
+      ? bytesTotal
+        ? `${formatBytes(bytesDone)} / ${formatBytes(bytesTotal)}`
+        : formatBytes(bytesDone)
+      : "";
+  hostSyncProgressDetailEl.textContent = [p.file || "", sizePart, p.remotePath || ""]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function hostHttpHost(hostname) {
+  const h = String(hostname || "").trim();
+  if (!h) return "";
+  if (h.includes(":") && !h.startsWith("[")) return `[${h}]`;
+  return h;
+}
+
+function clusterMgrPort(hostId) {
+  const p = state.updateProbe;
+  if (hostId && state.selectedHostId === hostId && p && Number(p.port) > 0) {
+    return Number(p.port);
+  }
+  const cached = hostId ? Number(state.clusterPorts[hostId] || 0) : 0;
+  return cached > 0 ? cached : 0;
+}
+
+function clusterMgrUrl(host) {
+  if (!host || !host.hostname) return "";
+  const hostPart = hostHttpHost(host.hostname);
+  const port = clusterMgrPort(host.id);
+  const base = port > 0 ? `http://${hostPart}:${port}` : `http://${hostPart}`;
+  return `${base}/console`;
+}
+
+function renderClusterMgrBtn() {
+  if (!resourceMgrBtnEl) return;
+  const host = hostById(state.selectedHostId);
+  const url = state.clusterFrameUrl || clusterMgrUrl(host);
+  const open = clusterFrameEl && !clusterFrameEl.classList.contains("hidden");
+  resourceMgrBtnEl.disabled = !host || state.clusterConnecting;
+  resourceMgrBtnEl.classList.toggle("active", !!open);
+  if (state.clusterConnecting) {
+    resourceMgrBtnEl.title = "正在通过 SSH 连接 cangling-update 控制台…";
+  } else if (open && url) {
+    resourceMgrBtnEl.title = `已连接 ${url}`;
+  } else {
+    resourceMgrBtnEl.title = "通过 SSH 打开该主机 cangling-update 控制台";
+  }
+}
+
+function hideClusterFrame() {
+  state.clusterConnectGen += 1;
+  const hostId = state.clusterForwardHostId;
+  state.clusterForwardHostId = "";
+  state.clusterLocalPort = 0;
+  state.clusterConnecting = false;
+  if (!clusterFrameEl) {
+    if (hostId) invoke("disconnect_update_console", { hostId }).catch(() => {});
+    return;
+  }
+  clusterFrameEl.classList.add("hidden");
+  if (terminalFrameEl) terminalFrameEl.classList.remove("hidden");
+  if (clusterIframeEl) clusterIframeEl.src = "about:blank";
+  state.clusterFrameUrl = "";
+  if (clusterFrameUrlEl) clusterFrameUrlEl.textContent = "";
+  if (hostId) invoke("disconnect_update_console", { hostId }).catch(() => {});
+  if (fitAddon && terminalEl && terminalEl.offsetWidth > 0 && terminalEl.offsetHeight > 0) {
+    fitAddon.fit();
+  }
+  renderClusterMgrBtn();
+}
+
+function showClusterFrame(url, remotePort) {
+  if (!clusterFrameEl || !clusterIframeEl || !url) return;
+  state.clusterFrameUrl = url;
+  if (clusterFrameUrlEl) {
+    const rp = Number(remotePort) || 0;
+    const label =
+      rp > 0 && !url.includes(`:${rp}/`) && !url.endsWith(`:${rp}`)
+        ? `${url}  （远端 :${rp}）`
+        : url;
+    clusterFrameUrlEl.textContent = label;
+    clusterFrameUrlEl.title = label;
+  }
+  if (terminalFrameEl) terminalFrameEl.classList.add("hidden");
+  clusterFrameEl.classList.remove("hidden");
+  if (clusterIframeEl.src !== url) clusterIframeEl.src = url;
+  renderClusterMgrBtn();
+}
+
 function updateHostActionsUI() {
+  renderSoftwareSyncBtn();
+  renderClusterMgrBtn();
   const connected = !!state.termId;
   if (!connected) {
     setUpdateButton({ disabled: true, hidden: true });
@@ -524,6 +699,8 @@ async function probeCanglingUpdate() {
     }
     return;
   }
+  const port = Number(state.updateProbe && state.updateProbe.port) || 0;
+  if (port > 0) state.clusterPorts[hostId] = port;
   updateHostActionsUI();
 }
 
@@ -1257,13 +1434,16 @@ async function selectHost(id) {
     term.reset();
     updateTerminalUI();
   }
+  hideClusterFrame();
 
   state.selectedHostId = id;
   hostNameEl.textContent = host.name;
   hostConnEl.textContent = `${host.username}@${host.hostname}:${host.port}`;
+  if (!state.hostSyncing) hideHostSyncProgress();
   renderHostList();
   updateMainView();
   updateInjectUI();
+  renderClusterMgrBtn();
 }
 
 function selectTunnel(id) {
@@ -1316,14 +1496,17 @@ function switchSection(section) {
   hostListEl.classList.toggle("hidden", section !== "hosts");
   tunnelListEl.classList.toggle("hidden", section !== "tunnels");
   certListEl.classList.toggle("hidden", section !== "certificates");
+  setListEl.classList.toggle("hidden", section !== "repo");
   proxySidebarEl.classList.toggle("hidden", section !== "proxy");
-  sidebarAddRowEl.classList.toggle("hidden", section === "proxy" || section === "repo");
+  sidebarAddRowEl.classList.toggle("hidden", section === "proxy");
   addBtnEl.textContent =
     section === "hosts"
       ? "+ 添加主机"
       : section === "tunnels"
         ? "+ 添加本地隧道"
-        : "+ 添加本地证书";
+        : section === "repo"
+          ? "+ 添加软件集"
+          : "+ 添加本地证书";
   updateSyncBtn();
   updateMainView();
   if (section === "repo") {
@@ -1339,43 +1522,267 @@ function repoPathDisplay() {
 
 function formatSize(n) {
   if (!n) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+  return formatBytes(n);
+}
+
+function formatBytes(n) {
+  const v = Number(n) || 0;
+  if (v < 1024) return `${v} B`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB`;
+  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MB`;
+  return `${(v / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function selectedSoftwareSet() {
+  const name = state.selectedSetName || (state.repoStatus && state.repoStatus.setName) || "";
+  return (state.softwareSets || []).find((s) => s.name === name) || null;
+}
+
+async function loadSoftwareSets() {
+  state.softwareSets = (await invoke("list_software_sets")) || [];
+  if (!state.selectedSetName) {
+    const current = (state.repoStatus && state.repoStatus.setName) || "";
+    state.selectedSetName =
+      current || (state.softwareSets[0] && state.softwareSets[0].name) || "np4";
+  }
+}
+
+function setKindLabel(kind) {
+  return kind === "git" ? "Git" : "Manifest";
+}
+
+function renderSetList() {
+  setListEl.textContent = "";
+  if (!state.softwareSets.length) {
+    setListEl.appendChild(makeEmptyItem("暂无软件集"));
+    return;
+  }
+  for (const set of state.softwareSets) {
+    const kind = setKindLabel(set.kind);
+    setListEl.appendChild(
+      makeItem({
+        selected: set.name === state.selectedSetName,
+        name: set.name,
+        sub: set.cloned ? `${kind} · 已同步` : `${kind} · 未同步`,
+        onClick: () => selectSoftwareSet(set.name),
+        onContextMenu: (e) => openSetContextMenu(e, set.name),
+      })
+    );
+  }
 }
 
 async function loadRepoStatus() {
   state.repoStatus = await invoke("repo_status");
+  if (state.repoStatus && state.repoStatus.setName) {
+    state.selectedSetName = state.repoStatus.setName;
+  }
+}
+
+function hideRepoProgress() {
+  repoProgressEl.classList.add("hidden");
+  repoProgressBarEl.style.width = "0%";
+  repoProgressPctEl.textContent = "0%";
+  repoProgressLabelEl.textContent = "同步中";
+  repoProgressDetailEl.textContent = "";
+}
+
+function renderRepoProgress(p) {
+  repoProgressEl.classList.remove("hidden");
+  const current = p.current || 0;
+  const total = p.total || 0;
+  const overallDone = Number(p.overallDone) || 0;
+  const overallTotal = Number(p.overallTotal) || 0;
+  const bytesDone = Number(p.bytesDone) || 0;
+  const bytesTotal = Number(p.bytesTotal) || 0;
+  let pct = 0;
+  if (overallTotal > 0) {
+    pct = Math.min(100, (overallDone / overallTotal) * 100);
+  } else if (total > 0) {
+    pct = Math.min(100, (current / total) * 100);
+  }
+  const git =
+    p.action === "git" || p.action === "git-clone" || p.action === "git-fetch";
+  const action =
+    p.action === "download"
+      ? "下载"
+      : p.action === "skip"
+        ? "跳过"
+        : p.action === "fail"
+          ? "失败"
+          : p.action === "git-clone"
+            ? "克隆"
+            : p.action === "git-fetch"
+              ? "拉取"
+              : p.action === "git"
+                ? "Git"
+                : p.action || "同步";
+  repoProgressLabelEl.textContent = git
+    ? `Git ${action}中`
+    : total > 0
+      ? `同步中 ${current}/${total} · ${action}`
+      : `同步中 · ${action}`;
+  repoProgressPctEl.textContent = `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
+  repoProgressBarEl.style.width = `${pct}%`;
+  const filePart = p.file || "";
+  const sizePart =
+    (p.action === "download" || git) && (bytesDone > 0 || bytesTotal > 0)
+      ? bytesTotal
+        ? `${formatBytes(bytesDone)} / ${formatBytes(bytesTotal)}`
+        : formatBytes(bytesDone)
+      : "";
+  repoProgressDetailEl.textContent = [filePart, sizePart].filter(Boolean).join(" · ");
 }
 
 function renderRepoStatus() {
-  const s = state.repoStatus || { cloned: false, localPath: "", branch: "", commit: "", error: "" };
-  repoCloneUpdateBtnEl.textContent = s.cloned ? "更新仓库" : "下载仓库";
-  repoCloneUpdateBtnEl.className = "btn " + (s.cloned ? "" : "primary");
-  repoPathEl.textContent = s.localPath || "下载后自动填充";
+  const s = state.repoStatus || {
+    cloned: false,
+    localPath: "",
+    setName: state.selectedSetName || "",
+    totalFiles: 0,
+    downloaded: 0,
+    skipped: 0,
+    failed: 0,
+    error: "",
+  };
+  const set = selectedSoftwareSet();
+  const setName = s.setName || state.selectedSetName || "软件仓库";
+  const kind = (set && set.kind) || s.kind || "manifest";
+  repoSetTitleEl.textContent = setName;
+  repoCloneUpdateBtnEl.textContent = state.repoSyncing ? "同步中…" : "同步";
+  repoCloneUpdateBtnEl.disabled = state.repoSyncing || !setName;
+  repoCloneUpdateBtnEl.className = "btn primary";
+  repoPathEl.textContent = s.localPath || "同步后自动填充";
   repoPathEl.title = s.localPath || "";
-  if (s.cloned) {
-    repoStatusLineEl.textContent = `已下载 · ${s.branch || "?"} · ${s.commit || "?"}`;
+  if (state.repoSyncing) {
+    repoStatusLineEl.className = "conn";
+  } else if (s.cloned) {
+    if (kind === "git") {
+      const ref = [s.branch || (set && set.branch), s.commit || (set && set.commit)]
+        .filter(Boolean)
+        .join(" · ");
+      repoStatusLineEl.textContent = ref ? `Git 已同步 · ${ref}` : "Git 已同步";
+    } else {
+      const extra =
+        s.totalFiles > 0
+          ? ` · ${s.totalFiles} 文件 · 下载 ${s.downloaded} · 跳过 ${s.skipped}` +
+            (s.failed ? ` · 失败 ${s.failed}` : "")
+          : "";
+      repoStatusLineEl.textContent = `Manifest 已同步${extra}`;
+    }
     repoStatusLineEl.className = "conn";
   } else {
-    repoStatusLineEl.textContent = "未下载";
+    repoStatusLineEl.textContent = kind === "git" ? "Git 未同步" : "Manifest 未同步";
     repoStatusLineEl.className = "conn";
   }
-  repoUpBtnEl.disabled = !s.cloned || !state.repoPath;
+  repoUpBtnEl.disabled = state.repoSyncing || !s.cloned || !state.repoPath;
 }
 
 async function enterRepo() {
+  await loadSoftwareSets();
   await loadRepoStatus();
+  renderSetList();
   renderRepoStatus();
+  if (!state.repoSyncing) hideRepoProgress();
   if (state.repoStatus && state.repoStatus.cloned) {
     await loadRepoDir();
   } else {
     state.repoPath = "";
     repoCurrentPathEl.textContent = "/";
     repoTreeEl.textContent = "";
-    repoFileTitleEl.textContent = "下载仓库后可浏览目录和内容";
+    repoFileTitleEl.textContent = "同步软件集后可浏览目录和内容";
     repoFileContentEl.textContent = "";
+  }
+}
+
+async function selectSoftwareSet(name) {
+  if (!name || name === state.selectedSetName) {
+    state.selectedSetName = name;
+    renderSetList();
+    return;
+  }
+  try {
+    state.repoStatus = await invoke("select_software_set", { setName: name });
+    state.selectedSetName = name;
+    state.repoPath = "";
+    renderSetList();
+    renderRepoStatus();
+    if (state.repoStatus && state.repoStatus.cloned) {
+      await loadRepoDir();
+    } else {
+      repoCurrentPathEl.textContent = "/";
+      repoTreeEl.textContent = "";
+      repoFileTitleEl.textContent = "同步软件集后可浏览目录和内容";
+      repoFileContentEl.textContent = "";
+    }
+  } catch (err) {
+    uiAlert(`Error: ${err}`);
+  }
+}
+
+function selectedSetKind() {
+  const set = selectedSoftwareSet();
+  return (set && set.kind) || (state.repoStatus && state.repoStatus.kind) || "manifest";
+}
+
+function updateSetModalKindFields() {
+  const kind = (setFormEl.elements.kind.value || "manifest");
+  const git = kind === "git";
+  $("#set-git-fields").classList.toggle("hidden", !git);
+  $("#set-manifest-hint").classList.toggle("hidden", git);
+  setFormEl.elements.git_url.required = git;
+}
+
+function closeSetModal() {
+  setModalEl.classList.add("hidden");
+  state.editingSetName = null;
+}
+
+function openSetModal(set) {
+  state.editingSetName = set ? set.name : null;
+  setModalTitleEl.textContent = set ? "编辑软件集" : "添加软件集";
+  const f = setFormEl.elements;
+  f.name.value = set ? set.name : "";
+  f.name.readOnly = !!set;
+  const kind = set && set.kind === "git" ? "git" : "manifest";
+  setFormEl.querySelectorAll('input[name="kind"]').forEach((radio) => {
+    radio.checked = radio.value === kind;
+    radio.disabled = !!set;
+  });
+  f.git_url.value = set ? set.gitUrl || "" : "";
+  f.git_branch.value = set ? set.gitBranch || "" : "";
+  f.git_username.value = set ? set.gitUsername || "" : "";
+  f.git_token.value = set ? set.gitToken || "" : "";
+  updateSetModalKindFields();
+  setModalEl.classList.remove("hidden");
+  f.name.focus();
+}
+
+async function onAddSoftwareSet() {
+  openSetModal(null);
+}
+
+function onEditSoftwareSet(name) {
+  const setName = name || state.contextSetName || state.selectedSetName;
+  const set = (state.softwareSets || []).find((s) => s.name === setName);
+  if (!set) {
+    uiAlert("请先选择软件集");
+    return;
+  }
+  openSetModal(set);
+}
+
+async function onDeleteSoftwareSet(name) {
+  const setName = name || state.contextSetName || (selectedSoftwareSet() && selectedSoftwareSet().name) || state.selectedSetName;
+  if (!setName) return;
+  const ok = await uiConfirm(`删除软件集 ${setName}？本地已下载的文件也会一并删除。`, "删除软件集");
+  if (!ok) return;
+  try {
+    state.softwareSets = (await invoke("remove_software_set", { setName })) || [];
+    state.selectedSetName = "";
+    state.repoPath = "";
+    await enterRepo();
+  } catch (err) {
+    uiAlert(`Error: ${err}`);
   }
 }
 
@@ -1456,22 +1863,48 @@ function repoUp() {
 }
 
 async function onRepoCloneUpdateClick() {
-  const updating = !!(state.repoStatus && state.repoStatus.cloned);
-  repoCloneUpdateBtnEl.disabled = true;
-  repoCloneUpdateBtnEl.textContent = updating ? "更新中…" : "下载中…";
+  const setName = state.selectedSetName || (state.repoStatus && state.repoStatus.setName) || "";
+  if (!setName) {
+    uiAlert("请先选择软件集");
+    return;
+  }
+  const kind = selectedSetKind();
+  if (kind !== "git" && (!state.login || !state.login.serverUrl)) {
+    uiAlert("请先登录维护中心，以便获取服务器地址");
+    return;
+  }
+  state.repoSyncing = true;
+  renderRepoProgress({
+    current: 0,
+    total: 0,
+    file: "",
+    action: "download",
+    bytesDone: 0,
+    bytesTotal: 0,
+    overallDone: 0,
+    overallTotal: 0,
+  });
+  renderRepoStatus();
   try {
-    state.repoStatus = await invoke("clone_or_update_repo");
+    state.repoStatus = await invoke("sync_software_set", { setName });
+    state.selectedSetName = setName;
     state.repoPath = "";
+    await loadSoftwareSets();
+    renderSetList();
     renderRepoStatus();
     if (state.repoStatus.cloned) {
       await loadRepoDir();
+    }
+    if (state.repoStatus.error) {
+      uiAlert(`部分文件同步失败: ${state.repoStatus.error}`);
     }
   } catch (err) {
     uiAlert(`Error: ${err}`);
     await loadRepoStatus();
     renderRepoStatus();
   } finally {
-    repoCloneUpdateBtnEl.disabled = false;
+    state.repoSyncing = false;
+    hideRepoProgress();
     renderRepoStatus();
   }
 }
@@ -1718,12 +2151,63 @@ $("#nav-proxy").addEventListener("click", () => switchSection("proxy"));
 $("#nav-repo").addEventListener("click", () => switchSection("repo"));
 $("#proxy-indicator").addEventListener("click", () => switchSection("proxy"));
 repoCloneUpdateBtnEl.addEventListener("click", onRepoCloneUpdateClick);
+if (setFormEl) {
+  setFormEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = setFormEl.elements;
+    const setName = f.name.value.trim();
+    const kind = f.kind.value || "manifest";
+    if (!setName) {
+      uiAlert("请填写软件集名称");
+      return;
+    }
+    if (kind === "git" && !f.git_url.value.trim()) {
+      uiAlert("请填写 Git 仓库地址");
+      return;
+    }
+    const payload = {
+      setName,
+      kind,
+      gitUrl: f.git_url.value.trim(),
+      gitUsername: f.git_username.value.trim(),
+      gitToken: f.git_token.value,
+      gitBranch: f.git_branch.value.trim(),
+    };
+    try {
+      const cmd = state.editingSetName ? "update_software_set" : "add_software_set";
+      state.softwareSets = (await invoke(cmd, payload)) || [];
+      state.selectedSetName = setName;
+      state.repoPath = "";
+      closeSetModal();
+      await loadRepoStatus();
+      renderSetList();
+      renderRepoStatus();
+      if (state.repoStatus && state.repoStatus.cloned) {
+        await loadRepoDir();
+      } else {
+        repoCurrentPathEl.textContent = "/";
+        repoTreeEl.textContent = "";
+        repoFileTitleEl.textContent = "同步软件集后可浏览目录和内容";
+        repoFileContentEl.textContent = "";
+      }
+    } catch (err) {
+      uiAlert(`Error: ${err}`);
+    }
+  });
+  setFormEl.querySelectorAll('input[name="kind"]').forEach((el) => {
+    el.addEventListener("change", updateSetModalKindFields);
+  });
+}
+if ($("#cancel-set-btn")) {
+  $("#cancel-set-btn").addEventListener("click", closeSetModal);
+}
 repoUpBtnEl.addEventListener("click", repoUp);
 
 addBtnEl.addEventListener("click", () => {
   if (state.section === "hosts") openHostModal(null);
   else if (state.section === "tunnels") openTunnelModal(null);
   else if (state.section === "certificates") openCertModal();
+  else if (state.section === "repo") onAddSoftwareSet();
 });
 
 $("#cancel-host-btn").addEventListener("click", closeHostModal);
@@ -1759,7 +2243,27 @@ document.addEventListener("contextmenu", (e) => {
 
 function hideContextMenu() {
   state.contextHostId = null;
+  state.contextSetName = null;
   ctxMenuEl.classList.add("hidden");
+  if (setCtxMenuEl) setCtxMenuEl.classList.add("hidden");
+}
+
+function placeContextMenu(el, e) {
+  el.classList.remove("hidden");
+  const menuW = el.offsetWidth || 160;
+  const menuH = el.offsetHeight || 40;
+  const pad = 8;
+  const x = Math.min(e.clientX, window.innerWidth - menuW - pad);
+  const y = Math.min(e.clientY, window.innerHeight - menuH - pad);
+  el.style.left = `${Math.max(pad, x)}px`;
+  el.style.top = `${Math.max(pad, y)}px`;
+}
+
+function openSetContextMenu(e, setName) {
+  state.contextSetName = setName;
+  if (ctxMenuEl) ctxMenuEl.classList.add("hidden");
+  if (!setCtxMenuEl) return;
+  placeContextMenu(setCtxMenuEl, e);
 }
 
 function openHostContextMenu(e, hostId) {
@@ -1770,15 +2274,8 @@ function openHostContextMenu(e, hostId) {
   ctxEditHostBtnEl.classList.toggle("hidden", !canManage);
   ctxDeleteHostBtnEl.classList.toggle("hidden", !canManage);
 
-  ctxMenuEl.classList.remove("hidden");
-
-  const menuW = ctxMenuEl.offsetWidth || 160;
-  const menuH = ctxMenuEl.offsetHeight || 40;
-  const pad = 8;
-  const x = Math.min(e.clientX, window.innerWidth - menuW - pad);
-  const y = Math.min(e.clientY, window.innerHeight - menuH - pad);
-  ctxMenuEl.style.left = `${Math.max(pad, x)}px`;
-  ctxMenuEl.style.top = `${Math.max(pad, y)}px`;
+  if (setCtxMenuEl) setCtxMenuEl.classList.add("hidden");
+  placeContextMenu(ctxMenuEl, e);
 }
 
 ctxEditHostBtnEl.addEventListener("click", () => {
@@ -1798,6 +2295,21 @@ ctxDeleteHostBtnEl.addEventListener("click", () => {
   hideContextMenu();
   if (host && host.owned) deleteHost(host);
 });
+
+if (ctxEditSetBtnEl) {
+  ctxEditSetBtnEl.addEventListener("click", () => {
+    const name = state.contextSetName;
+    hideContextMenu();
+    if (name) onEditSoftwareSet(name);
+  });
+}
+if (ctxDeleteSetBtnEl) {
+  ctxDeleteSetBtnEl.addEventListener("click", () => {
+    const name = state.contextSetName;
+    hideContextMenu();
+    if (name) onDeleteSoftwareSet(name);
+  });
+}
 
 document.addEventListener("click", hideContextMenu);
 document.addEventListener("scroll", hideContextMenu, true);
@@ -1832,18 +2344,92 @@ async function onCheckEnvClick() {
   }
 }
 
+async function onSoftwareSyncClick() {
+  const host = hostById(state.selectedHostId);
+  if (!host || state.hostSyncing) return;
+  const ok = await uiConfirm(
+    `将本地已拉取的软件同步到主机「${host.name}」的软件仓库目录（cangling-update 程序目录下的 repo/）。继续？`,
+    "软件同步"
+  );
+  if (!ok) return;
+  state.hostSyncing = true;
+  renderSoftwareSyncBtn();
+  renderHostSyncProgress({
+    current: 0,
+    total: 0,
+    file: "",
+    action: "upload",
+    bytesDone: 0,
+    bytesTotal: 0,
+    overallDone: 0,
+    overallTotal: 0,
+    remotePath: "",
+  });
+  try {
+    const result = await invoke("sync_host_software", { hostId: host.id });
+    hideHostSyncProgress();
+    const extra =
+      result && result.totalFiles
+        ? `上传 ${result.uploaded} · 跳过 ${result.skipped}` +
+          (result.failed ? ` · 失败 ${result.failed}` : "")
+        : "";
+    const path = result && result.remotePath ? `\n远端：${result.remotePath}` : "";
+    if (result && result.error) {
+      uiAlert(`部分文件同步失败: ${result.error}${path}`);
+    } else {
+      uiAlert(`软件已同步到 Master 软件仓库。${extra}${path}`, "软件同步");
+    }
+  } catch (err) {
+    hideHostSyncProgress();
+    uiAlert(`软件同步失败: ${err}`);
+  } finally {
+    state.hostSyncing = false;
+    renderSoftwareSyncBtn();
+  }
+}
+
 async function onResourceMgrClick() {
   const host = hostById(state.selectedHostId);
-  if (!host) return;
-  const url = `http://${host.hostname}`;
-  const btn = resourceMgrBtnEl;
-  btn.disabled = true;
+  if (!host || state.clusterConnecting) return;
+  const open =
+    clusterFrameEl &&
+    !clusterFrameEl.classList.contains("hidden") &&
+    state.clusterForwardHostId === host.id;
+  if (open) {
+    hideClusterFrame();
+    return;
+  }
+  const gen = ++state.clusterConnectGen;
+  state.clusterConnecting = true;
+  renderClusterMgrBtn();
+  try {
+    const info = await invoke("connect_update_console", { hostId: host.id });
+    if (gen !== state.clusterConnectGen || state.selectedHostId !== host.id) {
+      invoke("disconnect_update_console", { hostId: host.id }).catch(() => {});
+      return;
+    }
+    const remotePort = Number(info && info.remotePort) || 0;
+    if (remotePort > 0) state.clusterPorts[host.id] = remotePort;
+    state.clusterForwardHostId = host.id;
+    state.clusterLocalPort = Number(info.localPort) || 0;
+    state.clusterConnecting = false;
+    showClusterFrame(info.url, remotePort);
+  } catch (err) {
+    if (gen === state.clusterConnectGen) {
+      state.clusterConnecting = false;
+      renderClusterMgrBtn();
+      uiAlert(`连接集群控制台失败: ${err}`);
+    }
+  }
+}
+
+async function onClusterFrameExternal() {
+  const url = state.clusterFrameUrl || clusterMgrUrl(hostById(state.selectedHostId));
+  if (!url) return;
   try {
     await invoke("open_url", { url });
   } catch (err) {
-    uiAlert(`打开资源管理失败: ${err}`);
-  } finally {
-    btn.disabled = false;
+    uiAlert(`打开集群管理失败: ${err}`);
   }
 }
 
@@ -1851,6 +2437,19 @@ toggleTunnelBtnEl.addEventListener("click", toggleTunnel);
 termToggleBtnEl.addEventListener("click", toggleTerminal);
 checkEnvBtnEl.addEventListener("click", onCheckEnvClick);
 resourceMgrBtnEl.addEventListener("click", onResourceMgrClick);
+if (clusterFrameCloseEl) clusterFrameCloseEl.addEventListener("click", hideClusterFrame);
+if (clusterFrameRefreshEl) {
+  clusterFrameRefreshEl.addEventListener("click", () => {
+    const url = state.clusterFrameUrl || clusterMgrUrl(hostById(state.selectedHostId));
+    if (url && clusterIframeEl) clusterIframeEl.src = url;
+  });
+}
+if (clusterFrameExternalEl) {
+  clusterFrameExternalEl.addEventListener("click", onClusterFrameExternal);
+}
+if (softwareSyncBtnEl) {
+  softwareSyncBtnEl.addEventListener("click", onSoftwareSyncClick);
+}
 injectBtnEl.addEventListener("click", toggleInject);
 updateBtnEl.addEventListener("click", onCanglingUpdateClick);
 roleSwitchEl.addEventListener("click", (e) => {
@@ -1955,6 +2554,46 @@ listen("tunnel-stopped", async () => {
   renderTunnelDetail();
 });
 
+listen("host-software-sync-progress", (e) => {
+  const p = e.payload || {};
+  if (p.hostId && state.selectedHostId && p.hostId !== state.selectedHostId) return;
+  state.hostSyncing = true;
+  renderHostSyncProgress(p);
+  renderSoftwareSyncBtn();
+});
+
+listen("repo-sync-progress", (e) => {
+  const p = e.payload || {};
+  if (p.setName && state.selectedSetName && p.setName !== state.selectedSetName) return;
+  state.repoSyncing = true;
+  renderRepoProgress(p);
+  const git =
+    p.action === "git" || p.action === "git-clone" || p.action === "git-fetch";
+  const action =
+    p.action === "download"
+      ? "下载"
+      : p.action === "skip"
+        ? "跳过"
+        : p.action === "fail"
+          ? "失败"
+          : p.action === "git-clone"
+            ? "克隆"
+            : p.action === "git-fetch"
+              ? "拉取"
+              : p.action === "git"
+                ? "Git"
+                : p.action || "";
+  const bytes =
+    (p.action === "download" || git) && (p.bytesDone || p.bytesTotal)
+      ? p.bytesTotal
+        ? ` · ${formatBytes(p.bytesDone || 0)} / ${formatBytes(p.bytesTotal)}`
+        : ` · ${formatBytes(p.bytesDone || 0)}`
+      : "";
+  repoStatusLineEl.textContent = git
+    ? `Git ${action}中 ${p.current || 0}% · ${p.file || ""}${bytes}`
+    : `同步中 ${p.current || 0}/${p.total || 0} · ${action} ${p.file || ""}${bytes}`;
+});
+
 listen("proxy-status", (e) => {
   applyProxyStatus(e.payload);
 });
@@ -1967,6 +2606,15 @@ listen("proxy-injection", (e) => {
     updateInjectUI();
     if (state.termId) probeCanglingUpdate();
   }
+});
+
+listen("update-console", (e) => {
+  const info = e.payload;
+  if (!info || info.active || !info.hostId) return;
+  if (state.clusterForwardHostId !== info.hostId) return;
+  const localPort = Number(info.localPort) || 0;
+  if (localPort && state.clusterLocalPort && localPort !== state.clusterLocalPort) return;
+  hideClusterFrame();
 });
 
 function selectedProxyMode() {

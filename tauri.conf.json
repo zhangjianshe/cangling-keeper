@@ -19,7 +19,8 @@
         "minWidth": 480,
         "minHeight": 360,
         "resizable": true,
-        "center": true
+        "center": true,
+        "additionalBrowserArgs": "--proxy-bypass-list=<-loopback>;localhost;127.0.0.1;::1"
       }
     ],
     "security": {

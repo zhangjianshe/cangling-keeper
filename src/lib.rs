@@ -3,6 +3,7 @@ mod certificate;
 mod host;
 mod host_actions;
 mod host_cmd;
+mod host_sync;
 mod proxy;
 mod repo;
 mod self_update;
@@ -28,11 +29,12 @@ use tunnel::{Tunnel, TunnelInfo};
 use uuid::Uuid;
 
 pub(crate) struct AppState {
-    store: Mutex<Store>,
+    pub(crate) store: Mutex<Store>,
     active_tunnels: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     active_terminals: Mutex<HashMap<String, TerminalHandle>>,
     proxy: Mutex<ProxyRuntime>,
     injected_proxies: Mutex<HashMap<String, InjectedHandle>>,
+    console_forwards: Mutex<HashMap<String, ConsoleForwardHandle>>,
     pub(crate) data_dir: PathBuf,
 }
 
@@ -40,6 +42,34 @@ struct InjectedHandle {
     stop_tx: tokio::sync::oneshot::Sender<()>,
     remote_port: u16,
     local_endpoint: String,
+}
+
+struct ConsoleForwardHandle {
+    stop_tx: tokio::sync::oneshot::Sender<()>,
+    local_port: u16,
+    remote_port: u16,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConsoleForward {
+    host_id: String,
+    local_port: u16,
+    remote_port: u16,
+    url: String,
+    active: bool,
+}
+
+impl ConsoleForward {
+    fn from_handle(host_id: String, local_port: u16, remote_port: u16, active: bool) -> Self {
+        Self {
+            host_id,
+            local_port,
+            remote_port,
+            url: host_actions::console_url(local_port),
+            active,
+        }
+    }
 }
 
 struct ProxyRuntime {
@@ -188,6 +218,14 @@ async fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), Strin
     let remote_id = host.remote_id.clone();
     if let Some(handle) = state
         .injected_proxies
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&id)
+    {
+        let _ = handle.stop_tx.send(());
+    }
+    if let Some(handle) = state
+        .console_forwards
         .lock()
         .map_err(|e| e.to_string())?
         .remove(&id)
@@ -1037,6 +1075,104 @@ fn uninject_proxy(state: State<'_, AppState>, host_id: String) -> Result<(), Str
     }
 }
 
+// ---- cangling-update console (SSH local forward to /console) ---------------
+
+fn console_forward_info(host_id: &str, handle: &ConsoleForwardHandle) -> ConsoleForward {
+    ConsoleForward::from_handle(
+        host_id.to_string(),
+        handle.local_port,
+        handle.remote_port,
+        true,
+    )
+}
+
+#[tauri::command]
+async fn connect_update_console(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    host_id: String,
+) -> Result<ConsoleForward, String> {
+    {
+        let forwards = state.console_forwards.lock().map_err(|e| e.to_string())?;
+        if let Some(handle) = forwards.get(&host_id) {
+            return Ok(console_forward_info(&host_id, handle));
+        }
+    }
+
+    let probe = run_probe(&state, &host_id).await?;
+    if !probe.installed {
+        return Err("该主机尚未安装 cangling-update，请先安装更新程序".into());
+    }
+    let remote_port = host_actions::console_remote_port(probe.port);
+
+    let data_dir = state.data_dir.clone();
+    let (host, auth) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let host = store.get_host(&host_id)?;
+        let auth = resolve_auth(&store, &host.auth, &data_dir)?;
+        (host, auth)
+    };
+
+    let (established, local_port) =
+        ssh::establish_host_local_forward(&host, &auth, remote_port).await?;
+    let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let mut forwards = state.console_forwards.lock().map_err(|e| e.to_string())?;
+        if let Some(handle) = forwards.get(&host_id) {
+            drop(established);
+            return Ok(console_forward_info(&host_id, handle));
+        }
+        forwards.insert(
+            host_id.clone(),
+            ConsoleForwardHandle {
+                stop_tx: tx,
+                local_port,
+                remote_port,
+            },
+        );
+    }
+
+    let app2 = app.clone();
+    let id = host_id.clone();
+    tauri::async_runtime::spawn(async move {
+        ssh::accept_loop(established, "127.0.0.1".into(), remote_port, rx).await;
+        if let Some(st) = app2.try_state::<AppState>() {
+            if let Ok(mut forwards) = st.console_forwards.lock() {
+                if forwards
+                    .get(&id)
+                    .map(|h| h.local_port == local_port)
+                    .unwrap_or(false)
+                {
+                    forwards.remove(&id);
+                }
+            }
+        }
+        let _ = app2.emit(
+            "update-console",
+            ConsoleForward::from_handle(id, local_port, remote_port, false),
+        );
+    });
+
+    Ok(ConsoleForward::from_handle(
+        host_id,
+        local_port,
+        remote_port,
+        true,
+    ))
+}
+
+#[tauri::command]
+fn disconnect_update_console(state: State<'_, AppState>, host_id: String) -> Result<(), String> {
+    let mut forwards = state.console_forwards.lock().map_err(|e| e.to_string())?;
+    match forwards.remove(&host_id) {
+        Some(handle) => {
+            let _ = handle.stop_tx.send(());
+            Ok(())
+        }
+        None => Ok(()),
+    }
+}
+
 // ---- login & host sync -----------------------------------------------------
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1075,10 +1211,7 @@ fn read_login_status(store: &Store) -> LoginStatus {
 }
 
 fn login_credentials(store: &Store) -> Option<(String, String)> {
-    let url = store
-        .get_setting(sync::SETTING_SERVER_URL)
-        .ok()
-        .flatten()?;
+    let url = store.get_setting(sync::SETTING_SERVER_URL).ok().flatten()?;
     let token = store.get_setting(sync::SETTING_TOKEN).ok().flatten()?;
     if url.trim().is_empty() || token.trim().is_empty() {
         None
@@ -1278,6 +1411,7 @@ async fn sync_public_hosts(state: State<'_, AppState>) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    proxy::ensure_loopback_not_proxied();
     tauri::Builder::default()
         .setup(|app| {
             // Store user data in the platform data directory instead of the
@@ -1329,6 +1463,7 @@ pub fn run() {
                     stop_tx: None,
                 }),
                 injected_proxies: Mutex::new(HashMap::new()),
+                console_forwards: Mutex::new(HashMap::new()),
                 data_dir,
             });
             Ok(())
@@ -1369,9 +1504,17 @@ pub fn run() {
             check_app_update,
             apply_app_update,
             repo::repo_status,
-            repo::clone_or_update_repo,
+            repo::list_software_sets,
+            repo::add_software_set,
+            repo::update_software_set,
+            repo::remove_software_set,
+            repo::select_software_set,
+            repo::sync_software_set,
             repo::list_repo_files,
             repo::read_repo_file,
+            host_sync::sync_host_software,
+            connect_update_console,
+            disconnect_update_console,
             login,
             logout,
             get_login_status,

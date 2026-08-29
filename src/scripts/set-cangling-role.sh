@@ -39,7 +39,7 @@ quote_arg() {
 }
 
 bind="0.0.0.0"
-port="80"
+port="5400"
 data_dir=""
 exe=""
 workdir=""
