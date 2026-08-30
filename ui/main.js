@@ -1190,6 +1190,17 @@ function makeEmptyItem(text) {
   return li;
 }
 
+function replaceListChildren(el, nodes) {
+  const frag = document.createDocumentFragment();
+  for (const node of nodes) frag.appendChild(node);
+  el.replaceChildren(frag);
+}
+
+const REPO_ICON_DIR =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const REPO_ICON_FILE =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
+
 function makeItem({ selected, name, sub, active, onClick, actions, onContextMenu }) {
   const li = document.createElement("li");
   li.className = "item" + (selected ? " selected" : "");
@@ -1536,24 +1547,45 @@ function setKindLabel(kind) {
   return kind === "git" ? "Git" : "Manifest";
 }
 
+function setListSub(set) {
+  const kind = setKindLabel(set.kind);
+  return set.cloned ? `${kind} · 已同步` : `${kind} · 未同步`;
+}
+
 function renderSetList() {
-  setListEl.textContent = "";
-  if (!state.softwareSets.length) {
-    setListEl.appendChild(makeEmptyItem("暂无软件集"));
+  const sets = state.softwareSets || [];
+  const items = [...setListEl.children];
+  const canReuse =
+    sets.length > 0 &&
+    items.length === sets.length &&
+    items.every((li, i) => li.dataset.setName === sets[i].name);
+  if (canReuse) {
+    for (let i = 0; i < sets.length; i++) {
+      const set = sets[i];
+      const li = items[i];
+      li.classList.toggle("selected", set.name === state.selectedSetName);
+      const sub = li.querySelector(".item-sub");
+      const next = setListSub(set);
+      if (sub && sub.textContent !== next) sub.textContent = next;
+    }
     return;
   }
-  for (const set of state.softwareSets) {
-    const kind = setKindLabel(set.kind);
-    setListEl.appendChild(
-      makeItem({
-        selected: set.name === state.selectedSetName,
-        name: set.name,
-        sub: set.cloned ? `${kind} · 已同步` : `${kind} · 未同步`,
-        onClick: () => selectSoftwareSet(set.name),
-        onContextMenu: (e) => openSetContextMenu(e, set.name),
-      })
-    );
+  if (!sets.length) {
+    replaceListChildren(setListEl, [makeEmptyItem("暂无软件集")]);
+    return;
   }
+  const nodes = sets.map((set) => {
+    const li = makeItem({
+      selected: set.name === state.selectedSetName,
+      name: set.name,
+      sub: setListSub(set),
+      onClick: () => selectSoftwareSet(set.name),
+      onContextMenu: (e) => openSetContextMenu(e, set.name),
+    });
+    li.dataset.setName = set.name;
+    return li;
+  });
+  replaceListChildren(setListEl, nodes);
 }
 
 async function loadRepoStatus() {
@@ -1635,7 +1667,6 @@ function renderRepoStatus() {
   repoSetTitleEl.textContent = setName;
   repoCloneUpdateBtnEl.textContent = state.repoSyncing ? "同步中…" : "同步";
   repoCloneUpdateBtnEl.disabled = state.repoSyncing || !setName;
-  repoCloneUpdateBtnEl.className = "btn primary";
   repoPathEl.textContent = s.localPath || "同步后自动填充";
   repoPathEl.title = s.localPath || "";
   if (state.repoSyncing) {
@@ -1672,19 +1703,26 @@ async function enterRepo() {
     await loadRepoDir();
   } else {
     state.repoPath = "";
-    repoCurrentPathEl.textContent = "/";
-    repoTreeEl.textContent = "";
-    repoFileTitleEl.textContent = "同步软件集后可浏览目录和内容";
-    repoFileContentEl.textContent = "";
+    showRepoUnsynced();
   }
 }
 
+function resetRepoFilePanel(title) {
+  repoFileTitleEl.textContent = title;
+  if (repoFileContentEl.firstChild) repoFileContentEl.replaceChildren();
+}
+
+function showRepoUnsynced() {
+  repoCurrentPathEl.textContent = "/";
+  replaceListChildren(repoTreeEl, [makeEmptyItem("尚未同步")]);
+  resetRepoFilePanel("同步软件集后可浏览目录和内容");
+}
+
 async function selectSoftwareSet(name) {
-  if (!name || name === state.selectedSetName) {
-    state.selectedSetName = name;
-    renderSetList();
-    return;
-  }
+  if (!name || name === state.selectedSetName) return;
+  const prev = state.selectedSetName;
+  state.selectedSetName = name;
+  renderSetList();
   try {
     state.repoStatus = await invoke("select_software_set", { setName: name });
     state.selectedSetName = name;
@@ -1692,14 +1730,14 @@ async function selectSoftwareSet(name) {
     renderSetList();
     renderRepoStatus();
     if (state.repoStatus && state.repoStatus.cloned) {
-      await loadRepoDir();
+      const ok = await loadRepoDir();
+      if (ok) resetRepoFilePanel("选择文件查看内容");
     } else {
-      repoCurrentPathEl.textContent = "/";
-      repoTreeEl.textContent = "";
-      repoFileTitleEl.textContent = "同步软件集后可浏览目录和内容";
-      repoFileContentEl.textContent = "";
+      showRepoUnsynced();
     }
   } catch (err) {
+    state.selectedSetName = prev;
+    renderSetList();
     uiAlert(`Error: ${err}`);
   }
 }
@@ -1772,30 +1810,27 @@ async function onDeleteSoftwareSet(name) {
 }
 
 async function loadRepoDir() {
-  if (!state.repoStatus || !state.repoStatus.cloned) return;
+  if (!state.repoStatus || !state.repoStatus.cloned) return false;
   try {
     const entries = await invoke("list_repo_files", { path: state.repoPath });
     renderRepoTree(entries);
     repoCurrentPathEl.textContent = repoPathDisplay();
     repoUpBtnEl.disabled = !state.repoPath;
+    return true;
   } catch (err) {
-    repoTreeEl.textContent = "";
     repoCurrentPathEl.textContent = repoPathDisplay();
-    repoFileTitleEl.textContent = `加载失败: ${err}`;
-    repoFileContentEl.textContent = "";
+    replaceListChildren(repoTreeEl, [makeEmptyItem(`加载失败: ${err}`)]);
+    resetRepoFilePanel(`加载失败: ${err}`);
+    return false;
   }
 }
 
 function renderRepoTree(entries) {
-  repoTreeEl.textContent = "";
   if (!entries.length) {
-    const li = document.createElement("li");
-    li.className = "list-empty";
-    li.textContent = "空目录";
-    repoTreeEl.appendChild(li);
+    replaceListChildren(repoTreeEl, [makeEmptyItem("空目录")]);
     return;
   }
-  for (const entry of entries) {
+  const nodes = entries.map((entry) => {
     const li = document.createElement("li");
     const btn = document.createElement("button");
     btn.className = "repo-item";
@@ -1804,7 +1839,7 @@ function renderRepoTree(entries) {
 
     const icon = document.createElement("span");
     icon.className = "repo-item-icon";
-    icon.textContent = entry.isDir ? "📁" : "📄";
+    icon.innerHTML = entry.isDir ? REPO_ICON_DIR : REPO_ICON_FILE;
 
     const name = document.createElement("span");
     name.className = "repo-item-name";
@@ -1824,8 +1859,9 @@ function renderRepoTree(entries) {
       }
     });
     li.appendChild(btn);
-    repoTreeEl.appendChild(li);
-  }
+    return li;
+  });
+  replaceListChildren(repoTreeEl, nodes);
 }
 
 async function openRepoFile(path) {
@@ -2170,10 +2206,7 @@ if (setFormEl) {
       if (state.repoStatus && state.repoStatus.cloned) {
         await loadRepoDir();
       } else {
-        repoCurrentPathEl.textContent = "/";
-        repoTreeEl.textContent = "";
-        repoFileTitleEl.textContent = "同步软件集后可浏览目录和内容";
-        repoFileContentEl.textContent = "";
+        showRepoUnsynced();
       }
     } catch (err) {
       uiAlert(`Error: ${err}`);

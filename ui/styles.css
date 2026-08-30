@@ -58,12 +58,12 @@ html,
 body {
   height: 100%;
   margin: 0;
+  background: var(--canvas);
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
     Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-  background: var(--canvas);
   color: var(--fg);
   font-size: 14px;
   line-height: 1.5;
@@ -81,7 +81,7 @@ body {
 .app {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
 }
 
 /* ---- Top bar --------------------------------------------------------------- */
@@ -278,9 +278,15 @@ body {
   padding: 0;
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+#set-list {
+  isolation: isolate;
+  contain: layout;
 }
 
 .list-empty {
@@ -1227,6 +1233,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  isolation: isolate;
 }
 
 .repo-body {
@@ -1246,6 +1253,8 @@ body {
   border-radius: 6px;
   background: var(--card);
   overflow: hidden;
+  isolation: isolate;
+  contain: layout;
 }
 
 .repo-tree-toolbar {
@@ -1338,6 +1347,7 @@ body {
 .repo-tree-list {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 6px;
 }
 
@@ -1362,6 +1372,15 @@ body {
 
 .repo-item-icon {
   flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--fg-muted);
+}
+
+.repo-item-icon svg {
+  display: block;
+  width: 16px;
+  height: 16px;
 }
 
 .repo-item-name {
@@ -1387,6 +1406,8 @@ body {
   background: var(--card);
   min-width: 0;
   overflow: hidden;
+  isolation: isolate;
+  contain: layout;
 }
 
 .repo-file-head {
@@ -1400,6 +1421,7 @@ body {
   margin: 0;
   padding: 10px 12px;
   overflow: auto;
+  scrollbar-gutter: stable;
   font-family: var(--mono);
   font-size: 12px;
   line-height: 1.5;
