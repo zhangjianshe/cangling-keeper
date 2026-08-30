@@ -866,6 +866,33 @@ body {
   height: 14px;
 }
 
+.more-menu {
+  position: relative;
+}
+
+.more-menu .icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.more-menu .icon-btn[aria-expanded="true"] {
+  background: var(--btn-hover-bg);
+  color: var(--fg);
+}
+
+.more-menu-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 20;
+  min-width: 140px;
+  padding: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 35, 40, 0.18);
+}
+
 /* ---- Terminal (host view) -------------------------------------------------- */
 
 .terminal-wrap {
@@ -1278,6 +1305,15 @@ body {
 
 .ctx-item.danger:hover {
   background: var(--danger-subtle);
+}
+
+.ctx-item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.ctx-item:disabled:hover {
+  background: transparent;
 }
 
 /* ---- Software repository ---------------------------------------------------- */

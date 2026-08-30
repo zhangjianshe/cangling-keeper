@@ -129,12 +129,23 @@
               <div class="header-actions">
                 <div class="actions">
                   <span id="inject-status" class="status off">未注入</span>
-                  <button id="inject-proxy-btn" class="btn" type="button" title="连接时自动检测本地代理并注入">注入代理</button>
                   <span id="term-status" class="status off">Disconnected</span>
-                  <button id="check-env-btn" class="btn" type="button" title="检查并修改 sshd 允许 TCP Forward">检查环境</button>
                   <button id="resource-mgr-btn" class="btn" type="button" title="打开该主机 cangling-update 控制台">集群管理</button>
                   <button id="software-sync-btn" class="btn" type="button" title="将本地已拉取的软件同步到该 Master 主机的软件仓库目录">软件同步</button>
                   <button id="term-toggle-btn" class="btn primary" type="button">Connect</button>
+                  <div class="more-menu">
+                    <button id="host-more-btn" class="icon-btn" type="button" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="host-more-menu">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                        <circle cx="12" cy="5" r="2"/>
+                        <circle cx="12" cy="12" r="2"/>
+                        <circle cx="12" cy="19" r="2"/>
+                      </svg>
+                    </button>
+                    <div id="host-more-menu" class="more-menu-panel hidden" role="menu">
+                      <button id="inject-proxy-btn" class="ctx-item" type="button" role="menuitem" title="连接时自动检测本地代理并注入">注入代理</button>
+                      <button id="check-env-btn" class="ctx-item" type="button" role="menuitem" title="检查并修改 sshd 允许 TCP Forward">检查环境</button>
+                    </div>
+                  </div>
                 </div>
                 <div class="header-update-row">
                   <div id="cluster-token-row" class="cluster-token-row hidden">
@@ -186,8 +197,20 @@
                 <span id="tunnel-status" class="status off">Disconnected</span>
               </div>
               <div class="actions">
-                <button id="edit-tunnel-btn" class="btn" type="button">Edit</button>
-                <button id="delete-tunnel-btn" class="btn danger" type="button">Delete</button>
+                <button id="toggle-tunnel-btn" class="btn primary" type="button">Connect</button>
+                <div class="more-menu">
+                  <button id="tunnel-more-btn" class="icon-btn" type="button" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="tunnel-more-menu">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <circle cx="12" cy="5" r="2"/>
+                      <circle cx="12" cy="12" r="2"/>
+                      <circle cx="12" cy="19" r="2"/>
+                    </svg>
+                  </button>
+                  <div id="tunnel-more-menu" class="more-menu-panel hidden" role="menu">
+                    <button id="edit-tunnel-btn" class="ctx-item" type="button" role="menuitem">Edit</button>
+                    <button id="delete-tunnel-btn" class="ctx-item danger" type="button" role="menuitem">Delete</button>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="detail-body">
@@ -209,7 +232,6 @@
                   <span id="t-auth" class="info-value"></span>
                 </div>
               </div>
-              <button id="toggle-tunnel-btn" class="btn primary full" type="button">Connect</button>
             </div>
           </div>
 

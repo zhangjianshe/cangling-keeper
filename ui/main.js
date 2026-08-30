@@ -105,6 +105,10 @@ const tRemoteEl = $("#t-remote");
 const tSshEl = $("#t-ssh");
 const tAuthEl = $("#t-auth");
 const toggleTunnelBtnEl = $("#toggle-tunnel-btn");
+const tunnelMoreBtnEl = $("#tunnel-more-btn");
+const tunnelMoreMenuEl = $("#tunnel-more-menu");
+const hostMoreBtnEl = $("#host-more-btn");
+const hostMoreMenuEl = $("#host-more-menu");
 
 const certNameEl = $("#cert-name");
 const cKeypathEl = $("#c-keypath");
@@ -301,7 +305,7 @@ function updateInjectUI() {
 
   if (active) {
     injectBtnEl.textContent = "关闭代理";
-    injectBtnEl.className = "btn danger";
+    injectBtnEl.className = "ctx-item danger";
     injectBtnEl.disabled = false;
     injectBtnEl.title = `ssh -N -R ${inj.remotePort}:${inj.localEndpoint} — 点击关闭`;
     injectStatusEl.textContent = `已注入 ${inj.remotePort} → ${inj.localEndpoint}`;
@@ -310,7 +314,7 @@ function updateInjectUI() {
   }
 
   injectBtnEl.textContent = "注入代理";
-  injectBtnEl.className = "btn";
+  injectBtnEl.className = "ctx-item";
   injectBtnEl.disabled = false;
   injectBtnEl.title = proxy
     ? `ssh -N -R ${remotePort}:${proxy.endpoint}`
@@ -1539,6 +1543,7 @@ async function selectHost(id) {
     updateTerminalUI();
   }
   hideClusterFrame();
+  hideHostMoreMenu();
 
   state.selectedHostId = id;
   hostNameEl.textContent = host.name;
@@ -1574,7 +1579,7 @@ function renderTunnelDetail() {
       ? `Certificate · ${certNameById(t.auth.certificateId)}`
       : "Password";
   toggleTunnelBtnEl.textContent = t.active ? "Disconnect" : "Connect";
-  toggleTunnelBtnEl.className = "btn full " + (t.active ? "danger" : "primary");
+  toggleTunnelBtnEl.className = "btn " + (t.active ? "danger" : "primary");
 }
 
 function selectCert(id) {
@@ -1591,6 +1596,7 @@ function selectCert(id) {
 // ---- sections ---------------------------------------------------------------
 
 function switchSection(section) {
+  hideAllMoreMenus();
   state.section = section;
   $("#nav-hosts").classList.toggle("active", section === "hosts");
   $("#nav-repo").classList.toggle("active", section === "repo");
@@ -2341,10 +2347,27 @@ addBtnEl.addEventListener("click", () => {
 $("#cancel-host-btn").addEventListener("click", closeHostModal);
 
 $("#edit-tunnel-btn").addEventListener("click", () => {
+  hideTunnelMoreMenu();
   const t = tunnelById(state.selectedTunnelId);
   if (t) openTunnelModal(t);
 });
-$("#delete-tunnel-btn").addEventListener("click", deleteSelectedTunnel);
+$("#delete-tunnel-btn").addEventListener("click", () => {
+  hideTunnelMoreMenu();
+  deleteSelectedTunnel();
+});
+if (tunnelMoreBtnEl) {
+  tunnelMoreBtnEl.addEventListener("click", (e) => {
+    toggleMoreMenu(tunnelMoreMenuEl, tunnelMoreBtnEl, e);
+  });
+}
+if (hostMoreBtnEl) {
+  hostMoreBtnEl.addEventListener("click", (e) => {
+    toggleMoreMenu(hostMoreMenuEl, hostMoreBtnEl, e);
+  });
+}
+document.querySelectorAll(".more-menu-panel").forEach((panel) => {
+  panel.addEventListener("click", (e) => e.stopPropagation());
+});
 $("#cancel-tunnel-btn").addEventListener("click", closeTunnelModal);
 $("#parse-btn").addEventListener("click", parseSshCommand);
 
@@ -2369,11 +2392,38 @@ document.addEventListener("contextmenu", (e) => {
   if (!editable) e.preventDefault();
 });
 
+function setMoreMenuOpen(menuEl, btnEl, open) {
+  if (!menuEl) return;
+  menuEl.classList.toggle("hidden", !open);
+  if (btnEl) btnEl.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function hideTunnelMoreMenu() {
+  setMoreMenuOpen(tunnelMoreMenuEl, tunnelMoreBtnEl, false);
+}
+
+function hideHostMoreMenu() {
+  setMoreMenuOpen(hostMoreMenuEl, hostMoreBtnEl, false);
+}
+
+function hideAllMoreMenus() {
+  hideTunnelMoreMenu();
+  hideHostMoreMenu();
+}
+
+function toggleMoreMenu(menuEl, btnEl, e) {
+  e.stopPropagation();
+  const willOpen = menuEl.classList.contains("hidden");
+  hideContextMenu();
+  if (willOpen) setMoreMenuOpen(menuEl, btnEl, true);
+}
+
 function hideContextMenu() {
   state.contextHostId = null;
   state.contextSetName = null;
   ctxMenuEl.classList.add("hidden");
   if (setCtxMenuEl) setCtxMenuEl.classList.add("hidden");
+  hideAllMoreMenus();
 }
 
 function placeContextMenu(el, e) {
@@ -2390,6 +2440,7 @@ function placeContextMenu(el, e) {
 function openSetContextMenu(e, setName) {
   state.contextSetName = setName;
   if (ctxMenuEl) ctxMenuEl.classList.add("hidden");
+  hideAllMoreMenus();
   if (!setCtxMenuEl) return;
   placeContextMenu(setCtxMenuEl, e);
 }
@@ -2403,6 +2454,7 @@ function openHostContextMenu(e, hostId) {
   ctxDeleteHostBtnEl.classList.toggle("hidden", !canManage);
 
   if (setCtxMenuEl) setCtxMenuEl.classList.add("hidden");
+  hideAllMoreMenus();
   placeContextMenu(ctxMenuEl, e);
 }
 
