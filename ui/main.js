@@ -1785,6 +1785,7 @@ function renderRepoStatus() {
   repoCloneUpdateBtnEl.disabled = state.repoSyncing || !setName;
   repoPathEl.textContent = s.localPath || "同步后自动填充";
   repoPathEl.title = s.localPath || "";
+  const gitUrl = (set && set.gitUrl) || s.gitUrl || "";
   if (state.repoSyncing) {
     repoStatusLineEl.className = "conn";
   } else if (s.cloned) {
@@ -1792,7 +1793,9 @@ function renderRepoStatus() {
       const ref = [s.branch || (set && set.branch), s.commit || (set && set.commit)]
         .filter(Boolean)
         .join(" · ");
-      repoStatusLineEl.textContent = ref ? `Git 已同步 · ${ref}` : "Git 已同步";
+      let text = ref ? `Git 已同步 · ${ref}` : "Git 已同步";
+      if (gitUrl) text += ` · ${gitUrl}`;
+      repoStatusLineEl.textContent = text;
     } else {
       const extra =
         s.totalFiles > 0
@@ -1803,9 +1806,15 @@ function renderRepoStatus() {
     }
     repoStatusLineEl.className = "conn";
   } else {
-    repoStatusLineEl.textContent = kind === "git" ? "Git 未同步" : "Manifest 未同步";
+    repoStatusLineEl.textContent =
+      kind === "git"
+        ? gitUrl
+          ? `Git 未同步 · ${gitUrl}`
+          : "Git 未同步"
+        : "Manifest 未同步";
     repoStatusLineEl.className = "conn";
   }
+  repoStatusLineEl.title = repoStatusLineEl.textContent;
   repoUpBtnEl.disabled = state.repoSyncing || !s.cloned || !state.repoPath;
 }
 

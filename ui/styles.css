@@ -776,6 +776,12 @@ body {
   font-size: 12px;
 }
 
+#repo-status-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cluster-token-row {
   display: flex;
   align-items: center;
@@ -1326,11 +1332,22 @@ body {
   isolation: isolate;
 }
 
+.repo-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.repo-title-row h2 {
+  flex: none;
+}
+
 .repo-body {
   flex: 1;
   display: flex;
-  gap: 12px;
-  padding: 12px 16px 16px;
+  gap: 0;
+  padding: 0;
   min-height: 0;
 }
 
@@ -1339,8 +1356,9 @@ body {
   min-width: 240px;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
   background: var(--card);
   overflow: hidden;
   isolation: isolate;
@@ -1414,13 +1432,15 @@ body {
 
 .repo-local-path {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
-  max-width: 460px;
-  padding: 2px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--btn-default-bg);
+  min-width: 0;
+  flex: 1;
+  max-width: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
   color: var(--fg-muted);
   font-size: 12px;
 }
@@ -1431,14 +1451,15 @@ body {
 }
 
 .repo-local-path .repo-path {
-  max-width: 320px;
+  max-width: none;
+  flex: 1;
 }
 
 .repo-tree-list {
   flex: 1;
   overflow-y: auto;
   scrollbar-gutter: stable;
-  padding: 6px;
+  padding: 0;
 }
 
 .repo-item {
@@ -1448,7 +1469,7 @@ body {
   width: 100%;
   padding: 6px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 0;
   background: transparent;
   color: var(--fg);
   cursor: pointer;
@@ -1495,6 +1516,7 @@ body {
   border-radius: 6px;
   background: var(--card);
   min-width: 0;
+  margin: 12px 16px 16px 12px;
   overflow: hidden;
   isolation: isolate;
   contain: layout;

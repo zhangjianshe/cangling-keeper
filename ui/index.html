@@ -340,14 +340,16 @@
           <div id="repo-view" class="repo-view hidden">
             <div class="detail-header">
               <div class="detail-meta">
-                <h2 id="repo-set-title">软件仓库</h2>
+                <div class="repo-title-row">
+                  <h2 id="repo-set-title">软件仓库</h2>
+                  <span class="repo-local-path">
+                    <span class="repo-local-label">本地路径</span>
+                    <span id="repo-path" class="repo-path mono"></span>
+                  </span>
+                </div>
                 <span id="repo-status-line" class="conn">未同步</span>
               </div>
               <div class="actions">
-                <span class="repo-local-path">
-                  <span class="repo-local-label">本地路径</span>
-                  <span id="repo-path" class="repo-path mono"></span>
-                </span>
                 <button id="repo-clone-update-btn" class="btn primary" type="button">同步</button>
               </div>
             </div>
