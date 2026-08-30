@@ -1061,8 +1061,15 @@ async fn cluster_console_url(
         store.get_host(&host_id)?
     };
     let port = host_actions::console_remote_port(probe.port);
+    let mut url = host_actions::console_url(&host.hostname, port);
+    let cmd = host_actions::wrap_issue_session_command(&probe.binary);
+    if let Ok(out) = ssh_run(&state, &host_id, cmd).await {
+        if let Ok(session) = host_actions::parse_console_session(&out.stdout) {
+            url = host_actions::console_url_with_token(&host.hostname, port, &session.token);
+        }
+    }
     Ok(ClusterConsole {
-        url: host_actions::console_url(&host.hostname, port),
+        url,
         port,
     })
 }

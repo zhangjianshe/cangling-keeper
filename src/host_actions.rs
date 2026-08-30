@@ -5,6 +5,7 @@ const APPLY_SCRIPT: &str = include_str!("scripts/apply-cangling-update.sh");
 const SET_ROLE_SCRIPT: &str = include_str!("scripts/set-cangling-role.sh");
 const CHECK_SCRIPT: &str = include_str!("scripts/check-cangling-version.sh");
 const CHECK_SSH_ENV_SCRIPT: &str = include_str!("scripts/check-ssh-env.sh");
+const ISSUE_SESSION_SCRIPT: &str = include_str!("scripts/issue-console-session.sh");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +70,63 @@ pub fn normalize_role(role: &str) -> Result<&'static str, String> {
 
 pub fn wrap_probe_command() -> String {
     bash_c(PROBE_SCRIPT, &[])
+}
+
+pub fn wrap_issue_session_command(binary: &str) -> String {
+    bash_c(ISSUE_SESSION_SCRIPT, &[binary])
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsoleSession {
+    pub username: String,
+    pub token: String,
+}
+
+pub fn parse_console_session(stdout: &str) -> Result<ConsoleSession, String> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("CK_SESSION|"))
+        .ok_or_else(|| "issue-session produced no CK_SESSION line".to_string())?;
+    let mut ok = false;
+    let mut username = String::new();
+    let mut token = String::new();
+    let mut error = String::new();
+    let fields = if let Some(idx) = line.find("|token=") {
+        &line[..idx]
+    } else {
+        line
+    };
+    for part in fields.split('|').skip(1) {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        match k {
+            "ok" => ok = v == "1" || v.eq_ignore_ascii_case("true"),
+            "username" => username = v.to_string(),
+            "error" => error = v.to_string(),
+            _ => {}
+        }
+    }
+    if let Some(idx) = line.find("|token=") {
+        token = line[idx + "|token=".len()..].to_string();
+    }
+    if !ok {
+        return Err(if error.is_empty() {
+            "无法签发控制台会话".into()
+        } else if error == "needs_setup" {
+            "该主机尚未初始化管理员账号".into()
+        } else {
+            format!("无法签发控制台会话：{error}")
+        });
+    }
+    if token.trim().is_empty() {
+        return Err("签发的控制台会话为空".into());
+    }
+    Ok(ConsoleSession {
+        username,
+        token: token.trim().to_string(),
+    })
 }
 
 pub fn wrap_check_ssh_env_command() -> String {
@@ -188,6 +246,16 @@ pub fn console_url(hostname: &str, port: u16) -> String {
     let host = http_host(hostname);
     let port = console_remote_port(port);
     format!("http://{host}:{port}/console")
+}
+
+pub fn console_url_with_token(hostname: &str, port: u16, token: &str) -> String {
+    let base = console_url(hostname, port);
+    let token = token.trim();
+    if token.is_empty() {
+        base
+    } else {
+        format!("{base}?token={token}")
+    }
 }
 
 pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
@@ -432,6 +500,25 @@ mod tests {
         assert_eq!(console_remote_port(5400), 5400);
         assert_eq!(console_remote_port(0), 5400);
         assert_eq!(console_remote_port(80), 80);
+        assert_eq!(
+            console_url_with_token("10.1.2.3", 80, "abc-123"),
+            "http://10.1.2.3:80/console?token=abc-123"
+        );
+        assert_eq!(
+            console_url_with_token("10.1.2.3", 80, ""),
+            "http://10.1.2.3:80/console"
+        );
+    }
+
+    #[test]
+    fn parses_console_session_line() {
+        let s = parse_console_session(
+            "noise\nCK_SESSION|ok=1|username=admin|token=abc|def\n",
+        )
+        .unwrap();
+        assert_eq!(s.username, "admin");
+        assert_eq!(s.token, "abc|def");
+        assert!(parse_console_session("CK_SESSION|ok=0|error=needs_setup\n").is_err());
     }
 
     #[test]

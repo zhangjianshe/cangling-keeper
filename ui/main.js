@@ -607,12 +607,26 @@ function hideClusterFrame() {
   renderClusterMgrBtn();
 }
 
+function consoleUrlForDisplay(url) {
+  try {
+    const u = new URL(url);
+    u.searchParams.delete("token");
+    u.searchParams.delete("access_token");
+    let shown = u.toString();
+    if (shown.endsWith("?")) shown = shown.slice(0, -1);
+    return shown;
+  } catch (_) {
+    return String(url || "");
+  }
+}
+
 function showClusterFrame(url, { reload = false } = {}) {
   if (!clusterFrameEl || !clusterIframeEl || !url) return;
   state.clusterFrameUrl = url;
   if (clusterFrameUrlEl) {
-    clusterFrameUrlEl.textContent = url;
-    clusterFrameUrlEl.title = url;
+    const shown = consoleUrlForDisplay(url);
+    clusterFrameUrlEl.textContent = shown;
+    clusterFrameUrlEl.title = shown;
   }
   if (terminalFrameEl) terminalFrameEl.classList.add("hidden");
   clusterFrameEl.classList.remove("hidden");
