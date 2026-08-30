@@ -250,8 +250,6 @@ body {
 
 .sidebar-search {
   flex-shrink: 0;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
 }
 
 .sidebar-search input {
@@ -280,7 +278,6 @@ body {
   padding: 0;
   flex: 1;
   overflow-y: auto;
-  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 2px;
