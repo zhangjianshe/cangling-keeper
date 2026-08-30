@@ -471,12 +471,44 @@ fn git_head(dest: &Path) -> (String, String) {
     (branch, commit)
 }
 
+pub(crate) fn dir_has_complete_files(dir: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for item in rd.flatten() {
+        let path = item.path();
+        let name = item.file_name();
+        let name = name.to_string_lossy();
+        if name == ".git" || name.ends_with(".part") {
+            continue;
+        }
+        if path.is_dir() {
+            if dir_has_complete_files(&path) {
+                return true;
+            }
+        } else if path.is_file() {
+            return true;
+        }
+    }
+    false
+}
+
 fn set_cloned(dest: &Path, kind: &str) -> bool {
     if kind == KIND_GIT {
         dest.join(".git").is_dir()
     } else {
-        dest.is_dir()
+        dest.is_dir() && dir_has_complete_files(dest)
     }
+}
+
+pub(crate) fn list_configured_set_names(
+    store: &Store,
+    data_dir: &Path,
+) -> Result<Vec<String>, String> {
+    Ok(ensure_set_records(store, data_dir)?
+        .into_iter()
+        .map(|r| r.name)
+        .collect())
 }
 
 fn set_info(data_dir: &Path, rec: &SoftwareSetRecord) -> SoftwareSetInfo {
@@ -787,7 +819,9 @@ fn hash_existing_part(file: &mut std::fs::File) -> Result<(Sha256, u64), String>
     let mut buf = [0u8; 256 * 1024];
     let mut offset = 0u64;
     loop {
-        let n = file.read(&mut buf).map_err(|e| format!("读取临时文件失败：{e}"))?;
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("读取临时文件失败：{e}"))?;
         if n == 0 {
             break;
         }
@@ -826,10 +860,7 @@ async fn download_once(
     if offset > 0 {
         req = req.header(reqwest::header::RANGE, format!("bytes={offset}-"));
     }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("下载失败：{e}"))?;
+    let resp = req.send().await.map_err(|e| format!("下载失败：{e}"))?;
     let status = resp.status();
     if status.as_u16() == 416 {
         drop(file);
@@ -841,7 +872,8 @@ async fn download_once(
     }
 
     if offset > 0 && status.as_u16() != 206 {
-        file.set_len(0).map_err(|e| format!("重置临时文件失败：{e}"))?;
+        file.set_len(0)
+            .map_err(|e| format!("重置临时文件失败：{e}"))?;
         file.seek(SeekFrom::Start(0))
             .map_err(|e| format!("重置临时文件失败：{e}"))?;
         hasher = Sha256::new();
@@ -891,7 +923,9 @@ async fn download_once(
     file.flush().map_err(|e| format!("写入文件失败：{e}"))?;
     drop(file);
     if expected_size > 0 && bytes_done < expected_size {
-        return Err(format!("下载不完整：{bytes_done}/{expected_size} 字节，将续传"));
+        return Err(format!(
+            "下载不完整：{bytes_done}/{expected_size} 字节，将续传"
+        ));
     }
     std::fs::rename(tmp, dest).map_err(|e| format!("保存文件失败：{e}"))?;
     if let Some(ctx) = progress {
@@ -1718,6 +1752,20 @@ mod tests {
         assert!(is_git_missing_io(&err));
         let other = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
         assert!(!is_git_missing_io(&other));
+    }
+
+    #[test]
+    fn manifest_dir_with_only_part_is_not_complete() {
+        let root = std::env::temp_dir().join(format!("ck-part-only-{}", uuid::Uuid::new_v4()));
+        let dir = root.join("np4/np4-jars/latest/all platform/arm64+x86");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cis-map-1.0.0.part"), b"partial").unwrap();
+        assert!(!dir_has_complete_files(&root.join("np4")));
+        assert!(!set_cloned(&root.join("np4"), KIND_MANIFEST));
+        std::fs::write(dir.join("cis-map-1.0.0.jar"), b"jar").unwrap();
+        assert!(dir_has_complete_files(&root.join("np4")));
+        assert!(set_cloned(&root.join("np4"), KIND_MANIFEST));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

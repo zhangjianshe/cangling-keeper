@@ -178,7 +178,11 @@ pub fn parse_apply_progress_line(line: &str) -> Option<ApplyProgress> {
                 other => other.to_string(),
             };
         }
-        return Some(ApplyProgress { phase, pct, message });
+        return Some(ApplyProgress {
+            phase,
+            pct,
+            message,
+        });
     }
     parse_percent(line).map(|pct| ApplyProgress {
         phase: "download".into(),
@@ -551,10 +555,7 @@ mod tests {
             console_url("10.1.2.3", 15400),
             "http://10.1.2.3:15400/console"
         );
-        assert_eq!(
-            console_url("10.1.2.3", 0),
-            "http://10.1.2.3:5400/console"
-        );
+        assert_eq!(console_url("10.1.2.3", 0), "http://10.1.2.3:5400/console");
         assert_eq!(
             console_url("2001:db8::1", 5400),
             "http://[2001:db8::1]:5400/console"
@@ -578,10 +579,8 @@ mod tests {
 
     #[test]
     fn parses_console_session_line() {
-        let s = parse_console_session(
-            "noise\nCK_SESSION|ok=1|username=admin|token=abc|def\n",
-        )
-        .unwrap();
+        let s =
+            parse_console_session("noise\nCK_SESSION|ok=1|username=admin|token=abc|def\n").unwrap();
         assert_eq!(s.username, "admin");
         assert_eq!(s.token, "abc|def");
         assert!(parse_console_session("CK_SESSION|ok=0|error=needs_setup\n").is_err());

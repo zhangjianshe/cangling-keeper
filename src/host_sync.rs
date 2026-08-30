@@ -24,6 +24,24 @@ pub struct HostSoftwareSyncResult {
     pub failed: u32,
     pub error: String,
     pub sets: Vec<String>,
+    pub incomplete_sets: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostSoftwareSetPreview {
+    pub name: String,
+    pub files: u32,
+    pub bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostSoftwareSyncPreview {
+    pub sets: Vec<HostSoftwareSetPreview>,
+    pub incomplete_sets: Vec<String>,
+    pub total_files: u32,
+    pub total_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -120,19 +138,64 @@ fn collect_local_software(data_dir: &Path) -> Result<Vec<LocalFile>, String> {
 }
 
 fn collect_set_names(files: &[LocalFile]) -> Vec<String> {
-    let mut names = Vec::new();
+    summarize_sets(files).into_iter().map(|s| s.name).collect()
+}
+
+fn summarize_sets(files: &[LocalFile]) -> Vec<HostSoftwareSetPreview> {
+    let mut out: Vec<HostSoftwareSetPreview> = Vec::new();
     for f in files {
-        let Some(set) = f.rel.split('/').next() else {
+        let Some(name) = f.rel.split('/').next().filter(|s| !s.is_empty()) else {
             continue;
         };
-        if set.is_empty() {
-            continue;
+        if let Some(last) = out.last_mut() {
+            if last.name == name {
+                last.files += 1;
+                last.bytes = last.bytes.saturating_add(f.size);
+                continue;
+            }
         }
-        if names.last().map(String::as_str) != Some(set) {
-            names.push(set.to_string());
+        out.push(HostSoftwareSetPreview {
+            name: name.to_string(),
+            files: 1,
+            bytes: f.size,
+        });
+    }
+    out
+}
+
+fn incomplete_set_names(data_dir: &Path, present: &[String], configured: &[String]) -> Vec<String> {
+    let present: HashSet<&str> = present.iter().map(String::as_str).collect();
+    let mut names = Vec::new();
+    for name in configured {
+        if !present.contains(name.as_str()) {
+            names.push(name.clone());
         }
     }
+    let root = crate::repo::sets_root(data_dir);
+    if let Ok(rd) = std::fs::read_dir(&root) {
+        for item in rd.flatten() {
+            let path = item.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = item.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || present.contains(name.as_str()) {
+                continue;
+            }
+            if !names.iter().any(|n| n == &name) {
+                names.push(name);
+            }
+        }
+    }
+    names.sort();
     names
+}
+
+fn configured_set_names(state: &AppState, data_dir: &Path) -> Vec<String> {
+    let Ok(store) = state.store.lock() else {
+        return Vec::new();
+    };
+    crate::repo::list_configured_set_names(&store, data_dir).unwrap_or_default()
 }
 
 fn emit_progress(app: &AppHandle, p: &SyncProgress) {
@@ -416,9 +479,11 @@ pub async fn sync_host_software(
     let data_dir = state.data_dir.clone();
     let files = collect_local_software(&data_dir)?;
     if files.is_empty() {
-        return Err("本地没有已拉取的软件，请先在「软件仓库」同步软件集".into());
+        return Err("本地没有已拉取完成的软件，请先在「软件仓库」同步软件集".into());
     }
     let sets = collect_set_names(&files);
+    let configured = configured_set_names(&state, &data_dir);
+    let incomplete_sets = incomplete_set_names(&data_dir, &sets, &configured);
 
     let (host, auth) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -494,6 +559,7 @@ pub async fn sync_host_software(
             failed: 0,
             error: String::new(),
             sets,
+            incomplete_sets,
         });
     }
 
@@ -592,6 +658,24 @@ pub async fn sync_host_software(
         failed,
         error: last_error,
         sets,
+        incomplete_sets,
+    })
+}
+
+#[tauri::command]
+pub fn preview_host_software_sync(
+    state: State<'_, AppState>,
+) -> Result<HostSoftwareSyncPreview, String> {
+    let files = collect_local_software(&state.data_dir)?;
+    let sets = summarize_sets(&files);
+    let names: Vec<String> = sets.iter().map(|s| s.name.clone()).collect();
+    let configured = configured_set_names(&state, &state.data_dir);
+    let incomplete_sets = incomplete_set_names(&state.data_dir, &names, &configured);
+    Ok(HostSoftwareSyncPreview {
+        total_files: files.len() as u32,
+        total_bytes: files.iter().map(|f| f.size).sum(),
+        sets,
+        incomplete_sets,
     })
 }
 
@@ -655,6 +739,32 @@ mod tests {
         assert_eq!(
             collect_set_names(&files),
             ["cangling-repo".to_string(), "np4".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn collect_skips_part_files_and_reports_incomplete_np4() {
+        let tmp = std::env::temp_dir().join(format!("ck-sets-part-{}", uuid::Uuid::new_v4()));
+        let root = tmp.join("software-sets");
+        std::fs::create_dir_all(root.join("np4/np4-jars/latest/all platform/arm64+x86")).unwrap();
+        std::fs::create_dir_all(root.join("cangling-repo/linux-x86")).unwrap();
+        std::fs::write(
+            root.join("np4/np4-jars/latest/all platform/arm64+x86/cis-map-1.0.0.part"),
+            b"partial",
+        )
+        .unwrap();
+        std::fs::write(root.join("cangling-repo/linux-x86/pkg.rpm"), b"rpm").unwrap();
+        let files = collect_local_software(&tmp).unwrap();
+        assert_eq!(
+            files.iter().map(|f| f.rel.as_str()).collect::<Vec<_>>(),
+            ["cangling-repo/linux-x86/pkg.rpm"]
+        );
+        let names = collect_set_names(&files);
+        assert_eq!(names, ["cangling-repo".to_string()]);
+        assert_eq!(
+            incomplete_set_names(&tmp, &names, &["cangling-repo".into(), "np4".into()]),
+            ["np4".to_string()]
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

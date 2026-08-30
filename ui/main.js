@@ -2527,10 +2527,30 @@ async function onCheckEnvClick() {
 async function onSoftwareSyncClick() {
   const host = hostById(state.selectedHostId);
   if (!host || state.hostSyncing) return;
-  const ok = await uiConfirm(
-    `将本地已拉取的全部软件集（含 np4、cangling-repo）同步到主机「${host.name}」上 cangling-update 程序目录下的 repo/<软件集>/。继续？`,
-    "软件同步"
-  );
+  let preview;
+  try {
+    preview = await invoke("preview_host_software_sync");
+  } catch (err) {
+    uiAlert(`无法检查本地软件集: ${err}`);
+    return;
+  }
+  const ready = (preview && preview.sets) || [];
+  const incomplete = (preview && preview.incompleteSets) || [];
+  if (!ready.length) {
+    const extra = incomplete.length
+      ? `\n尚未拉取完成：${incomplete.join("、")}。`
+      : "";
+    uiAlert(`本地没有已拉取完成的软件，请先在「软件仓库」同步软件集。${extra}`);
+    return;
+  }
+  const readyText = ready
+    .map((s) => `${s.name}（${s.files} 个文件）`)
+    .join("、");
+  let msg = `将把以下本地软件集同步到主机「${host.name}」上 cangling-update 的 repo/<软件集>/：\n${readyText}`;
+  if (incomplete.length) {
+    msg += `\n\n尚未拉取完成、本次不会上传：${incomplete.join("、")}。请先在「软件仓库」同步这些软件集。`;
+  }
+  const ok = await uiConfirm(msg, "软件同步");
   if (!ok) return;
   state.hostSyncing = true;
   renderSoftwareSyncBtn();
@@ -2555,13 +2575,17 @@ async function onSoftwareSyncClick() {
         : "";
     const sets =
       result && result.sets && result.sets.length
-        ? `\n软件集：${result.sets.join("、")}`
+        ? `\n已上传软件集：${result.sets.join("、")}`
+        : "";
+    const incomplete =
+      result && result.incompleteSets && result.incompleteSets.length
+        ? `\n未上传（本地未拉取完成）：${result.incompleteSets.join("、")}`
         : "";
     const path = result && result.remotePath ? `\n远端：${result.remotePath}` : "";
     if (result && result.error) {
-      uiAlert(`部分文件同步失败: ${result.error}${sets}${path}`);
+      uiAlert(`部分文件同步失败: ${result.error}${sets}${incomplete}${path}`);
     } else {
-      uiAlert(`软件已同步到 Master 软件仓库。${extra}${sets}${path}`, "软件同步");
+      uiAlert(`软件已同步到 Master 软件仓库。${extra}${sets}${incomplete}${path}`, "软件同步");
     }
   } catch (err) {
     hideHostSyncProgress();

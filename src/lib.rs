@@ -1155,10 +1155,7 @@ async fn cluster_console_url(
             url = host_actions::console_url_with_token(&host.hostname, port, &session.token);
         }
     }
-    Ok(ClusterConsole {
-        url,
-        port,
-    })
+    Ok(ClusterConsole { url, port })
 }
 
 // ---- login & host sync -----------------------------------------------------
@@ -1499,6 +1496,7 @@ pub fn run() {
             repo::sync_software_set,
             repo::list_repo_files,
             repo::read_repo_file,
+            host_sync::preview_host_software_sync,
             host_sync::sync_host_software,
             cluster_console_url,
             login,
