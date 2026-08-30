@@ -609,8 +609,15 @@ fn resolve_relative(root: &Path, rel: &str) -> Result<PathBuf, String> {
 }
 
 fn relative_path(root: &Path, full: &Path) -> Result<String, String> {
-    let canon_root = root.canonicalize().map_err(|e| e.to_string())?;
-    let rel = full.strip_prefix(&canon_root).map_err(|e| e.to_string())?;
+    let rel = match (root.canonicalize(), full.canonicalize()) {
+        (Ok(canon_root), Ok(canon_full)) => canon_full
+            .strip_prefix(&canon_root)
+            .ok()
+            .map(|p| p.to_path_buf()),
+        _ => None,
+    };
+    let rel = rel.or_else(|| full.strip_prefix(root).ok().map(|p| p.to_path_buf()));
+    let rel = rel.ok_or_else(|| format!("路径不在仓库内：{}", full.display()))?;
     Ok(rel.to_string_lossy().replace('\\', "/"))
 }
 
@@ -849,7 +856,7 @@ async fn download_once(
 
     if expected_size > 0 && offset == expected_size {
         drop(file);
-        std::fs::rename(tmp, dest).map_err(|e| format!("保存文件失败：{e}"))?;
+        persist_download(tmp, dest)?;
         if let Some(ctx) = progress {
             emit_sync_progress(ctx, "download", offset, expected_size);
         }
@@ -927,11 +934,29 @@ async fn download_once(
             "下载不完整：{bytes_done}/{expected_size} 字节，将续传"
         ));
     }
-    std::fs::rename(tmp, dest).map_err(|e| format!("保存文件失败：{e}"))?;
+    persist_download(tmp, dest)?;
     if let Some(ctx) = progress {
         emit_sync_progress(ctx, "download", bytes_done, bytes_total.max(bytes_done));
     }
     Ok(hex_encode(&hasher.finalize()))
+}
+
+fn persist_download(tmp: &Path, dest: &Path) -> Result<(), String> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
+    }
+    match std::fs::rename(tmp, dest) {
+        Ok(()) => return Ok(()),
+        Err(_) => {
+            let _ = std::fs::remove_file(dest);
+            if std::fs::rename(tmp, dest).is_ok() {
+                return Ok(());
+            }
+        }
+    }
+    std::fs::copy(tmp, dest).map_err(|e| format!("保存文件失败：{e}"))?;
+    let _ = std::fs::remove_file(tmp);
+    Ok(())
 }
 
 fn local_matches(path: &Path, file: &SoftwareFileManifest) -> bool {
@@ -954,34 +979,49 @@ fn prune_extra_files(root: &Path, expected: &HashSet<String>) -> Result<(), Stri
     if !root.is_dir() {
         return Ok(());
     }
-    fn walk(dir: &Path, root: &Path, expected: &HashSet<String>) -> Result<(), String> {
+    fn is_expected_part(rel: &str, expected: &HashSet<String>) -> bool {
+        rel.strip_suffix(".part")
+            .map(|complete| expected.contains(complete))
+            .unwrap_or(false)
+    }
+    fn walk(dir: &Path, root: &Path, expected: &HashSet<String>) -> Result<bool, String> {
         let rd = std::fs::read_dir(dir).map_err(|e| e.to_string())?;
+        let mut empty = true;
         for item in rd {
             let item = item.map_err(|e| e.to_string())?;
             let path = item.path();
             if path.is_dir() {
-                walk(&path, root, expected)?;
-                if path
-                    .read_dir()
-                    .map(|mut i| i.next().is_none())
-                    .unwrap_or(false)
-                {
+                let child_empty = walk(&path, root, expected)?;
+                if child_empty {
                     let _ = std::fs::remove_dir(&path);
+                } else {
+                    empty = false;
                 }
             } else if path.is_file() {
-                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if name.ends_with(".part") {
+                let Ok(rel) = relative_path(root, &path) else {
+                    empty = false;
                     continue;
+                };
+                let name = path.file_name().and_then(|s| s.to_str()).unwrap_or("");
+                let keep = if name.ends_with(".part") {
+                    is_expected_part(&rel, expected)
+                } else {
+                    expected.contains(&rel)
+                };
+                if keep {
+                    empty = false;
+                } else {
+                    std::fs::remove_file(&path)
+                        .map_err(|e| format!("删除多余文件 {} 失败：{e}", path.display()))?;
                 }
-                let rel = relative_path(root, &path).unwrap_or_default();
-                if !expected.contains(&rel) {
-                    let _ = std::fs::remove_file(&path);
-                }
+            } else {
+                empty = false;
             }
         }
-        Ok(())
+        Ok(empty)
     }
-    walk(root, root, expected)
+    walk(root, root, expected)?;
+    Ok(())
 }
 
 fn encode_userinfo(value: &str) -> String {
@@ -1555,6 +1595,13 @@ pub async fn sync_software_set(
         }
     }
 
+    if jobs.is_empty() {
+        prune_extra_files(&dest, &expected)?;
+        return Err(format!(
+            "服务器软件集「{set_name}」没有可下载文件。请确认名称与维护中心一致，且该集下已有文件（不必包含 install.sh）。"
+        ));
+    }
+
     let total = jobs.len() as u32;
     let overall_total: u64 = jobs.iter().map(|(_, _, _, file)| file.size).sum();
     let mut downloaded = 0u32;
@@ -1616,6 +1663,7 @@ pub async fn sync_software_set(
 
     prune_extra_files(&dest, &expected)?;
 
+    let cloned = dir_has_complete_files(&dest);
     if failed > 0 && downloaded == 0 && skipped == 0 {
         return Err(if last_error.is_empty() {
             "同步失败".into()
@@ -1623,9 +1671,16 @@ pub async fn sync_software_set(
             last_error
         });
     }
+    if !cloned {
+        return Err(if last_error.is_empty() {
+            "同步完成但本地没有完整文件（可能仍是未下完的 .part）。请重试同步。".into()
+        } else {
+            last_error
+        });
+    }
 
     Ok(RepoStatus {
-        cloned: true,
+        cloned,
         local_path: dest.to_string_lossy().into_owned(),
         set_name,
         kind: KIND_MANIFEST.to_string(),
@@ -1659,7 +1714,9 @@ pub fn list_repo_files(state: State<'_, AppState>, path: String) -> Result<Vec<R
         if name == ".git" || name.ends_with(".part") {
             continue;
         }
-        let path = relative_path(&root, &item.path())?;
+        let Ok(path) = relative_path(&root, &item.path()) else {
+            continue;
+        };
         let size = if file_type.is_dir() {
             0
         } else {
@@ -1784,6 +1841,40 @@ mod tests {
         assert!(keep.is_file());
         assert!(part.is_file());
         assert!(!extra.is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn prune_removes_extra_software_dirs_and_stale_parts() {
+        let root = std::env::temp_dir().join(format!("ck-prune-extra-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("keep/latest")).unwrap();
+        std::fs::create_dir_all(root.join("gone/latest")).unwrap();
+        let keep = root.join("keep/latest/app.bin");
+        let keep_part = root.join("keep/latest/app.bin.part");
+        let extra_file = root.join("gone/latest/old.bin");
+        let extra_part = root.join("gone/latest/old.bin.part");
+        std::fs::write(&keep, b"ok").unwrap();
+        std::fs::write(&keep_part, b"partial").unwrap();
+        std::fs::write(&extra_file, b"old").unwrap();
+        std::fs::write(&extra_part, b"stale").unwrap();
+        let mut expected = HashSet::new();
+        expected.insert("keep/latest/app.bin".into());
+        prune_extra_files(&root, &expected).unwrap();
+        assert!(keep.is_file());
+        assert!(keep_part.is_file());
+        assert!(!extra_file.is_file());
+        assert!(!extra_part.is_file());
+        assert!(!root.join("gone").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn relative_path_uses_forward_slashes() {
+        let root = std::env::temp_dir().join(format!("ck-rel-{}", uuid::Uuid::new_v4()));
+        let file = root.join("a").join("b.txt");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(relative_path(&root, &file).unwrap(), "a/b.txt");
         let _ = std::fs::remove_dir_all(&root);
     }
 }

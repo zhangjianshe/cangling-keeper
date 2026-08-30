@@ -2031,14 +2031,23 @@ async function onRepoCloneUpdateClick() {
     renderRepoStatus();
     if (state.repoStatus.cloned) {
       await loadRepoDir();
+    } else {
+      showRepoUnsynced();
     }
     if (state.repoStatus.error) {
       uiAlert(`部分文件同步失败: ${state.repoStatus.error}`);
     }
   } catch (err) {
     uiAlert(`Error: ${err}`);
+    await loadSoftwareSets();
     await loadRepoStatus();
+    renderSetList();
     renderRepoStatus();
+    if (state.repoStatus && state.repoStatus.cloned) {
+      await loadRepoDir();
+    } else {
+      showRepoUnsynced();
+    }
   } finally {
     state.repoSyncing = false;
     hideRepoProgress();
