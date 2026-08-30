@@ -1593,10 +1593,10 @@ function selectCert(id) {
 function switchSection(section) {
   state.section = section;
   $("#nav-hosts").classList.toggle("active", section === "hosts");
-  $("#nav-tunnels").classList.toggle("active", section === "tunnels");
-  $("#nav-certificates").classList.toggle("active", section === "certificates");
-  $("#nav-proxy").classList.toggle("active", section === "proxy");
   $("#nav-repo").classList.toggle("active", section === "repo");
+  $("#nav-proxy").classList.toggle("active", section === "proxy");
+  $("#nav-certificates").classList.toggle("active", section === "certificates");
+  $("#nav-tunnels").classList.toggle("active", section === "tunnels");
   hostSearchBoxEl.classList.toggle("hidden", section !== "hosts");
   hostListEl.classList.toggle("hidden", section !== "hosts");
   tunnelListEl.classList.toggle("hidden", section !== "tunnels");
@@ -2276,10 +2276,10 @@ hostSearchInputEl.addEventListener("input", () => {
   state.searchHosts = hostSearchInputEl.value;
   renderHostList();
 });
-$("#nav-tunnels").addEventListener("click", () => switchSection("tunnels"));
-$("#nav-certificates").addEventListener("click", () => switchSection("certificates"));
-$("#nav-proxy").addEventListener("click", () => switchSection("proxy"));
 $("#nav-repo").addEventListener("click", () => switchSection("repo"));
+$("#nav-proxy").addEventListener("click", () => switchSection("proxy"));
+$("#nav-certificates").addEventListener("click", () => switchSection("certificates"));
+$("#nav-tunnels").addEventListener("click", () => switchSection("tunnels"));
 $("#proxy-indicator").addEventListener("click", () => switchSection("proxy"));
 repoCloneUpdateBtnEl.addEventListener("click", onRepoCloneUpdateClick);
 if (setFormEl) {
