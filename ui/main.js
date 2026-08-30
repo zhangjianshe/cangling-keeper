@@ -36,6 +36,8 @@ const state = {
   clusterPorts: {}, // hostId -> cangling-update listen port
   clusterFrameUrl: "",
   clusterFrameHostId: "",
+  clusterConnecting: false,
+  clusterConnectGen: 0,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -556,9 +558,11 @@ function renderClusterMgrBtn() {
   const host = hostById(state.selectedHostId);
   const url = state.clusterFrameUrl || clusterMgrUrl(host);
   const open = clusterFrameEl && !clusterFrameEl.classList.contains("hidden");
-  resourceMgrBtnEl.disabled = !host;
+  resourceMgrBtnEl.disabled = !host || state.clusterConnecting;
   resourceMgrBtnEl.classList.toggle("active", !!open);
-  if (open && url) {
+  if (state.clusterConnecting) {
+    resourceMgrBtnEl.title = "正在探测该主机 cangling-update 端口…";
+  } else if (open && url) {
     resourceMgrBtnEl.title = `已打开 ${url}`;
   } else if (url) {
     resourceMgrBtnEl.title = `打开 ${url}`;
@@ -567,8 +571,19 @@ function renderClusterMgrBtn() {
   }
 }
 
+function rememberClusterPort(hostId, port) {
+  const n = Number(port) || 0;
+  if (!hostId || n <= 0) return;
+  state.clusterPorts[hostId] = n;
+  if (state.updateProbe && state.selectedHostId === hostId) {
+    state.updateProbe.port = n;
+  }
+}
+
 function hideClusterFrame() {
+  state.clusterConnectGen += 1;
   state.clusterFrameHostId = "";
+  state.clusterConnecting = false;
   if (!clusterFrameEl) {
     return;
   }
@@ -583,7 +598,7 @@ function hideClusterFrame() {
   renderClusterMgrBtn();
 }
 
-function showClusterFrame(url) {
+function showClusterFrame(url, { reload = false } = {}) {
   if (!clusterFrameEl || !clusterIframeEl || !url) return;
   state.clusterFrameUrl = url;
   if (clusterFrameUrlEl) {
@@ -592,7 +607,7 @@ function showClusterFrame(url) {
   }
   if (terminalFrameEl) terminalFrameEl.classList.add("hidden");
   clusterFrameEl.classList.remove("hidden");
-  if (clusterIframeEl.src !== url) clusterIframeEl.src = url;
+  if (reload || clusterIframeEl.src !== url) clusterIframeEl.src = url;
   renderClusterMgrBtn();
 }
 
@@ -2406,9 +2421,15 @@ async function onSoftwareSyncClick() {
   }
 }
 
+async function probeClusterConsole(host) {
+  const info = await invoke("cluster_console_url", { hostId: host.id });
+  rememberClusterPort(host.id, info && info.port);
+  return info && info.url ? String(info.url) : "";
+}
+
 async function onResourceMgrClick() {
   const host = hostById(state.selectedHostId);
-  if (!host) return;
+  if (!host || state.clusterConnecting) return;
   const open =
     clusterFrameEl &&
     !clusterFrameEl.classList.contains("hidden") &&
@@ -2417,16 +2438,26 @@ async function onResourceMgrClick() {
     hideClusterFrame();
     return;
   }
+  const gen = ++state.clusterConnectGen;
+  state.clusterConnecting = true;
+  renderClusterMgrBtn();
   try {
-    const url = await invoke("cluster_console_url", {
-      hostId: host.id,
-      port: clusterMgrPort(host.id),
-    });
-    if (!url || state.selectedHostId !== host.id) return;
+    const url = await probeClusterConsole(host);
+    if (gen !== state.clusterConnectGen || state.selectedHostId !== host.id) return;
+    state.clusterConnecting = false;
+    if (!url) {
+      renderClusterMgrBtn();
+      uiAlert("打开集群控制台失败: 未得到控制台地址");
+      return;
+    }
     state.clusterFrameHostId = host.id;
     showClusterFrame(url);
   } catch (err) {
-    uiAlert(`打开集群控制台失败: ${err}`);
+    if (gen === state.clusterConnectGen) {
+      state.clusterConnecting = false;
+      renderClusterMgrBtn();
+      uiAlert(`打开集群控制台失败: ${err}`);
+    }
   }
 }
 
@@ -2446,9 +2477,29 @@ checkEnvBtnEl.addEventListener("click", onCheckEnvClick);
 resourceMgrBtnEl.addEventListener("click", onResourceMgrClick);
 if (clusterFrameCloseEl) clusterFrameCloseEl.addEventListener("click", hideClusterFrame);
 if (clusterFrameRefreshEl) {
-  clusterFrameRefreshEl.addEventListener("click", () => {
-    const url = state.clusterFrameUrl || clusterMgrUrl(hostById(state.selectedHostId));
-    if (url && clusterIframeEl) clusterIframeEl.src = url;
+  clusterFrameRefreshEl.addEventListener("click", async () => {
+    const host = hostById(state.selectedHostId);
+    if (!host || state.clusterConnecting) return;
+    const gen = ++state.clusterConnectGen;
+    state.clusterConnecting = true;
+    renderClusterMgrBtn();
+    try {
+      const url = await probeClusterConsole(host);
+      if (gen !== state.clusterConnectGen || state.selectedHostId !== host.id) return;
+      state.clusterConnecting = false;
+      if (!url) {
+        renderClusterMgrBtn();
+        return;
+      }
+      state.clusterFrameHostId = host.id;
+      showClusterFrame(url, { reload: true });
+    } catch (err) {
+      if (gen === state.clusterConnectGen) {
+        state.clusterConnecting = false;
+        renderClusterMgrBtn();
+        uiAlert(`刷新集群控制台失败: ${err}`);
+      }
+    }
   });
 }
 if (clusterFrameExternalEl) {

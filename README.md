@@ -14,7 +14,7 @@ commands over SSH with one click.
 - Tunnel auth via password or an ed25519 key pair (generate one in-app).
 - 软件仓库：可管理多个软件集（缺省包含维护中心 Manifest 集 `np4`，以及 Git 仓库 `cangling-repo`）。软件集分为两种：向维护中心查询 manifest 后按哈希下载，或自定义 Git 仓库 clone/pull。同步大文件时显示下载/克隆进度，并可浏览目录与文本文件内容。
 - 主机面板可将本地已拉取的软件同步到 Master 主机上 cangling-update 的 `repo/<软件集>/` 目录（按软件集名分目录，避免同名覆盖）。已存在且大小、SHA-256 都相同的文件会跳过，避免 `version.txt` 这类等长变更被漏传。
-- 集群管理：用主机地址 + cangling-update 服务端口直接打开 `/console` 控制台（缺省端口 5400；若已探测到实际监听端口则用探测结果）。
+- 集群管理：SSH 探测该主机 cangling-update 的实际监听端口后，用主机地址 + 服务端口直接打开 `/console`（`install-service` 后端口变化也会跟上；探测不到时缺省 5400）。
 - Hosts and tunnels persist to a SQLite database in the app data directory.
 
 > **Security note (current state):** passwords are stored in plain text in the

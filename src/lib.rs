@@ -1038,22 +1038,33 @@ fn uninject_proxy(state: State<'_, AppState>, host_id: String) -> Result<(), Str
     }
 }
 
-// ---- cangling-update console (host + service port, no SSH forward) ---------
+// ---- cangling-update console (host + probed service port, no SSH forward) ---
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClusterConsole {
+    url: String,
+    port: u16,
+}
 
 #[tauri::command]
-fn cluster_console_url(
+async fn cluster_console_url(
     state: State<'_, AppState>,
     host_id: String,
-    port: Option<u16>,
-) -> Result<String, String> {
+) -> Result<ClusterConsole, String> {
+    let probe = run_probe(&state, &host_id).await?;
+    if !probe.installed {
+        return Err("该主机尚未安装 cangling-update，请先安装更新程序".into());
+    }
     let host = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         store.get_host(&host_id)?
     };
-    Ok(host_actions::console_url(
-        &host.hostname,
-        port.unwrap_or(0),
-    ))
+    let port = host_actions::console_remote_port(probe.port);
+    Ok(ClusterConsole {
+        url: host_actions::console_url(&host.hostname, port),
+        port,
+    })
 }
 
 // ---- login & host sync -----------------------------------------------------
