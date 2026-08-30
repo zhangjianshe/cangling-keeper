@@ -154,6 +154,49 @@ pub async fn execute(
     })
 }
 
+pub async fn execute_on(
+    session: &client::Handle<SshClient>,
+    command: &str,
+) -> Result<ExecOutput, String> {
+    if command.trim().is_empty() {
+        return Err("Command is empty".into());
+    }
+    let mut channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open session: {e}"))?;
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("Failed to execute command: {e}"))?;
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_status: i32 = -1;
+    loop {
+        let Some(msg) = channel.wait().await else {
+            break;
+        };
+        match msg {
+            ChannelMsg::Data { data } => {
+                stdout.push_str(&String::from_utf8_lossy(&data));
+            }
+            ChannelMsg::ExtendedData { data, ext } if ext == 1 => {
+                stderr.push_str(&String::from_utf8_lossy(&data));
+            }
+            ChannelMsg::ExitStatus { exit_status: code } => {
+                exit_status = code as i32;
+            }
+            _ => {}
+        }
+    }
+    Ok(ExecOutput {
+        stdout,
+        stderr,
+        exit_status,
+    })
+}
+
 /// Like [`execute`], but invokes `on_line` for each stdout/stderr line as it arrives
 /// (`\\r` is treated as a line break so curl progress meters stream).
 pub async fn execute_streaming(

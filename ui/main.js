@@ -524,7 +524,9 @@ function renderHostSyncProgress(p) {
         ? "跳过"
         : p.action === "fail"
           ? "失败"
-          : p.action || "同步";
+          : p.action === "compare"
+            ? "比对"
+            : p.action || "同步";
   const fileSize = fileTransferHint(bytesDone, bytesTotal);
   const countPart = total > 0 ? `${current}/${total}` : "";
   hostSyncProgressLabelEl.textContent = ["软件同步", countPart, action, fileSize]

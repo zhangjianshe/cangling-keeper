@@ -1,12 +1,12 @@
+use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, State};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 
 use crate::ssh;
 use crate::{AppState, resolve_auth};
@@ -145,57 +145,217 @@ async fn ensure_remote_dir(sftp: &SftpSession, path: &str) -> Result<(), String>
     }
 }
 
-async fn remote_repo_path(sftp: &SftpSession, binary: &str) -> Result<String, String> {
-    if !binary.trim().is_empty() {
-        if let Some(dir) = unix_parent(binary.trim()) {
-            if !dir.is_empty() {
-                return Ok(join_remote(dir, REMOTE_REPO_NAME));
-            }
-        }
+fn sh_quote(s: &str) -> String {
+    if !s.is_empty()
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b":/._-+=".contains(&b))
+    {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\"'\"'"))
     }
-    let home = sftp
-        .canonicalize(".")
-        .await
-        .unwrap_or_else(|_| "/root".into());
-    Ok(join_remote(
-        &format!("{}/update", home.trim_end_matches('/')),
-        REMOTE_REPO_NAME,
-    ))
 }
 
-async fn sha256_remote(sftp: &SftpSession, path: &str) -> Result<String, String> {
-    let mut file = sftp
-        .open(path)
-        .await
-        .map_err(|e| format!("读取远端失败：{e}"))?;
-    let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 64 * 1024];
-    loop {
-        let n = file.read(&mut buf).await.map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(crate::repo::hex_encode(&hasher.finalize()))
+fn is_path_install_dir(dir: &str) -> bool {
+    matches!(
+        dir,
+        "/usr/local/bin" | "/usr/bin" | "/bin" | "/usr/local/sbin" | "/usr/sbin" | "/sbin"
+    )
 }
 
-/// Unchanged only when size and SHA-256 both match. Size-only is not enough:
-/// files like `version.txt` often keep the same length after a version bump.
-async fn remote_unchanged(sftp: &SftpSession, remote: &str, local: &LocalFile) -> bool {
-    let Ok(meta) = sftp.metadata(remote).await else {
-        return false;
-    };
-    if meta.size != Some(local.size) {
-        return false;
+fn remote_repo_from_binary(binary: &str) -> String {
+    let b = binary.trim();
+    if let Some(dir) = unix_parent(b) {
+        // install-service also drops a symlink at /usr/local/bin/cangling-update.
+        // dirname of that path is not the software repo.
+        if !dir.is_empty() && dir != "/" && !is_path_install_dir(dir) {
+            return join_remote(dir, REMOTE_REPO_NAME);
+        }
     }
-    let Ok(local_hash) = crate::repo::sha256_file(&local.abs) else {
-        return false;
-    };
-    match sha256_remote(sftp, remote).await {
-        Ok(remote_hash) => remote_hash.eq_ignore_ascii_case(&local_hash),
-        Err(_) => false,
+    "/root/update/repo".into()
+}
+
+/// Same-size files larger than this are treated as unchanged. Hashing GB
+/// package images (k3s, docker) on the host is as slow as uploading them;
+/// size changes when those packages actually change. Small files such as
+/// `version.txt` can keep the same length after a bump, so they are hashed.
+const HASH_MAX_BYTES: u64 = 256 * 1024;
+
+fn parse_remote_sizes(stdout: &str) -> HashMap<String, u64> {
+    let mut map = HashMap::new();
+    for line in stdout.lines() {
+        if line.starts_with("CK_REPO\t") {
+            continue;
+        }
+        let Some((sz, rel)) = line.split_once('\t') else {
+            continue;
+        };
+        let Ok(n) = sz.trim().parse::<u64>() else {
+            continue;
+        };
+        let rel = rel.trim().trim_start_matches("./").replace('\\', "/");
+        if !rel.is_empty() {
+            map.insert(rel, n);
+        }
     }
+    map
+}
+
+fn parse_inventory_root(stdout: &str, fallback: &str) -> String {
+    stdout
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("CK_REPO\t")
+                .map(|r| r.trim().to_string())
+                .filter(|r| !r.is_empty())
+        })
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn parse_sha256_list(stdout: &str) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    for line in stdout.lines() {
+        if line.len() < 66 {
+            continue;
+        }
+        let hash = line[..64].trim();
+        if !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            continue;
+        }
+        let path = line[64..]
+            .trim()
+            .trim_start_matches('*')
+            .trim()
+            .trim_start_matches("./")
+            .replace('\\', "/");
+        if !path.is_empty() {
+            map.insert(path, hash.to_ascii_lowercase());
+        }
+    }
+    map
+}
+
+fn remote_inventory_cmd(preferred: &str) -> String {
+    let preferred = sh_quote(preferred);
+    format!(
+        r#"home="${{HOME:-/root}}"
+pref={preferred}
+best=""
+bestn=0
+for d in "$pref" "$home/update/repo" /usr/local/bin/repo; do
+  [ -n "$d" ] || continue
+  [ -d "$d" ] || continue
+  n=$(find "$d" -type f ! -name '*.part' 2>/dev/null | wc -l | tr -d ' ')
+  n=${{n:-0}}
+  if [ "$n" -gt "$bestn" ]; then bestn=$n; best=$d; fi
+done
+if [ -z "$best" ]; then
+  if [ -n "$pref" ]; then best="$pref"; else best="$home/update/repo"; fi
+fi
+printf 'CK_REPO\t%s\n' "$best"
+if [ -d "$best" ]; then
+  cd "$best" || exit 0
+  if find . -maxdepth 0 -printf '' >/dev/null 2>&1; then
+    find . -type f ! -name '*.part' ! -path '*/.git/*' -printf '%s\t%P\n'
+  else
+    find . -type f ! -name '*.part' ! -path '*/.git/*' -exec stat -c '%s\t%n' {{}} + | sed 's/\t\.\//\t/'
+  fi
+fi
+"#,
+        preferred = preferred
+    )
+}
+
+fn remote_hash_cmd(root: &str, rels: &[String]) -> String {
+    let mut cmd = format!("cd {} && sha256sum --", sh_quote(root));
+    for rel in rels {
+        cmd.push(' ');
+        cmd.push_str(&sh_quote(rel));
+    }
+    cmd
+}
+
+fn same_size(local: u64, remote: Option<&u64>) -> bool {
+    remote.copied() == Some(local)
+}
+
+async fn remote_skip_set(
+    session: &russh::client::Handle<crate::ssh::SshClient>,
+    preferred_root: &str,
+    files: &[LocalFile],
+    app: &AppHandle,
+    host_id: &str,
+) -> (String, HashSet<String>) {
+    let fallback = if preferred_root.trim().is_empty() {
+        "/root/update/repo".to_string()
+    } else {
+        preferred_root.to_string()
+    };
+    let mut skip = HashSet::new();
+    let listing = ssh::execute_on(session, &remote_inventory_cmd(&fallback)).await;
+    let (remote_root, sizes) = match listing {
+        Ok(out) => (
+            parse_inventory_root(&out.stdout, &fallback),
+            parse_remote_sizes(&out.stdout),
+        ),
+        Err(_) => return (fallback, skip),
+    };
+
+    let mut hash_candidates = Vec::new();
+    for f in files {
+        if !same_size(f.size, sizes.get(&f.rel)) {
+            continue;
+        }
+        if f.size > HASH_MAX_BYTES {
+            skip.insert(f.rel.clone());
+        } else {
+            hash_candidates.push(f);
+        }
+    }
+
+    if hash_candidates.is_empty() {
+        return (remote_root, skip);
+    }
+
+    emit_progress(
+        app,
+        &SyncProgress {
+            host_id: host_id.to_string(),
+            current: 0,
+            total: files.len() as u32,
+            file: "正在比对小文件…".into(),
+            action: "compare".into(),
+            bytes_done: 0,
+            bytes_total: 0,
+            overall_done: 0,
+            overall_total: 0,
+            remote_path: remote_root.clone(),
+        },
+    );
+
+    let mut remote_hashes = HashMap::new();
+    const BATCH: usize = 80;
+    for chunk in hash_candidates.chunks(BATCH) {
+        let rels: Vec<String> = chunk.iter().map(|f| f.rel.clone()).collect();
+        if let Ok(out) = ssh::execute_on(session, &remote_hash_cmd(&remote_root, &rels)).await {
+            // sha256sum exits non-zero if any path is missing; keep the hashes
+            // it did print so the rest of the batch can still skip.
+            remote_hashes.extend(parse_sha256_list(&out.stdout));
+        }
+    }
+
+    for f in hash_candidates {
+        let Some(remote_hash) = remote_hashes.get(&f.rel) else {
+            continue;
+        };
+        let Ok(local_hash) = crate::repo::sha256_file(&f.abs) else {
+            continue;
+        };
+        if local_hash.eq_ignore_ascii_case(remote_hash) {
+            skip.insert(f.rel.clone());
+        }
+    }
+    (remote_root, skip)
 }
 
 async fn upload_file(
@@ -267,6 +427,60 @@ pub async fn sync_host_software(
 
     let mut session = ssh::connect(&host.hostname, host.port).await?;
     ssh::authenticate(&mut session, &host.username, &auth).await?;
+
+    let preferred_root = if binary.trim().is_empty() {
+        String::new()
+    } else {
+        remote_repo_from_binary(&binary)
+    };
+
+    emit_progress(
+        &app,
+        &SyncProgress {
+            host_id: host_id.clone(),
+            current: 0,
+            total: files.len() as u32,
+            file: "正在比对远端已有文件…".into(),
+            action: "compare".into(),
+            bytes_done: 0,
+            bytes_total: 0,
+            overall_done: 0,
+            overall_total: files.iter().map(|f| f.size).sum(),
+            remote_path: preferred_root.clone(),
+        },
+    );
+    let (remote_root, skip) =
+        remote_skip_set(&session, &preferred_root, &files, &app, &host_id).await;
+
+    let total = files.len() as u32;
+    let overall_total: u64 = files.iter().map(|f| f.size).sum();
+    if skip.len() == files.len() {
+        emit_progress(
+            &app,
+            &SyncProgress {
+                host_id: host_id.clone(),
+                current: total,
+                total,
+                file: "全部文件未改动，已跳过".into(),
+                action: "skip".into(),
+                bytes_done: overall_total,
+                bytes_total: overall_total,
+                overall_done: overall_total,
+                overall_total,
+                remote_path: remote_root.clone(),
+            },
+        );
+        drop(session);
+        return Ok(HostSoftwareSyncResult {
+            remote_path: remote_root,
+            total_files: total,
+            uploaded: 0,
+            skipped: total,
+            failed: 0,
+            error: String::new(),
+        });
+    }
+
     let channel = session
         .channel_open_session()
         .await
@@ -279,12 +493,8 @@ pub async fn sync_host_software(
         .await
         .map_err(|e| format!("初始化 SFTP 失败：{e}"))?;
     sftp.set_timeout(30 * 60);
-
-    let remote_root = remote_repo_path(&sftp, &binary).await?;
     ensure_remote_dir(&sftp, &remote_root).await?;
 
-    let total = files.len() as u32;
-    let overall_total: u64 = files.iter().map(|f| f.size).sum();
     let mut uploaded = 0u32;
     let mut skipped = 0u32;
     let mut failed = 0u32;
@@ -307,8 +517,7 @@ pub async fn sync_host_software(
             remote_path: remote_root.clone(),
         };
 
-        let same = remote_unchanged(&sftp, &remote, file).await;
-        if same {
+        if skip.contains(&file.rel) {
             skipped += 1;
             overall_done = overall_done.saturating_add(file.size);
             progress.action = "skip".into();
@@ -422,5 +631,52 @@ mod tests {
             join_remote("/opt/cangling-update/repo", "np4/version.txt"),
             "/opt/cangling-update/repo/np4/version.txt"
         );
+    }
+
+    #[test]
+    fn parse_remote_sizes_and_hashes() {
+        let sizes = parse_remote_sizes(
+            "CK_REPO\t/root/update/repo\n12\tnp4/version.txt\n100\tcangling-repo/a.rpm\nbad\n",
+        );
+        assert_eq!(sizes.get("np4/version.txt").copied(), Some(12));
+        assert_eq!(sizes.get("cangling-repo/a.rpm").copied(), Some(100));
+        assert_eq!(
+            parse_inventory_root(
+                "CK_REPO\t/root/update/repo\n12\tnp4/version.txt\n",
+                "/fallback"
+            ),
+            "/root/update/repo"
+        );
+        let hashes = parse_sha256_list(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  np4/version.txt\n",
+        );
+        assert_eq!(
+            hashes.get("np4/version.txt").map(String::as_str),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
+    }
+
+    #[test]
+    fn remote_repo_from_symlink_path() {
+        assert_eq!(
+            remote_repo_from_binary("/root/update/cangling-update"),
+            "/root/update/repo"
+        );
+        assert_eq!(
+            remote_repo_from_binary("/usr/local/bin/cangling-update"),
+            "/root/update/repo"
+        );
+        assert_eq!(
+            remote_repo_from_binary("/opt/cangling-update/cangling-update"),
+            "/opt/cangling-update/repo"
+        );
+    }
+
+    #[test]
+    fn large_same_size_skips_without_hash() {
+        assert!(HASH_MAX_BYTES < 1024 * 1024);
+        assert!(same_size(3_000_000_000, Some(&3_000_000_000)));
+        assert!(!same_size(3_000_000_000, Some(&2_999_999_999)));
+        assert!(!same_size(12, None));
     }
 }
