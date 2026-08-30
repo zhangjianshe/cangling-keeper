@@ -230,6 +230,10 @@ body {
   gap: 10px;
 }
 
+.app-body.sidebar-collapsed .sidebar {
+  display: none;
+}
+
 .sidebar-bottom-actions {
   display: flex;
   gap: 8px;
@@ -707,12 +711,56 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
+}
+
+.host-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.host-list-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--btn-default-bg);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.host-list-toggle:hover {
+  background: var(--btn-hover-bg);
+  color: var(--fg);
+}
+
+.host-list-toggle svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.app-body.sidebar-collapsed .host-list-toggle {
+  background: var(--accent-subtle);
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .detail-meta h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .detail-meta .conn {

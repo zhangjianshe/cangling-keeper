@@ -61,6 +61,8 @@ const repoViewEl = $("#repo-view");
 const proxySidebarEl = $("#proxy-sidebar");
 
 const hostNameEl = $("#host-name");
+const hostListToggleEl = $("#host-list-toggle");
+const HOST_LIST_COLLAPSED_KEY = "ck-host-list-collapsed";
 const hostConnEl = $("#host-conn");
 const termToggleBtnEl = $("#term-toggle-btn");
 const termStatusEl = $("#term-status");
@@ -1438,6 +1440,46 @@ function updateMainView() {
     return;
   }
   emptyStateEl.classList.remove("hidden");
+  applySidebarVisibility();
+}
+
+function preferredHostListCollapsed() {
+  try {
+    return localStorage.getItem(HOST_LIST_COLLAPSED_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
+function applySidebarVisibility() {
+  const hostOpen =
+    state.section === "hosts" &&
+    !!state.selectedHostId &&
+    !!hostById(state.selectedHostId);
+  const collapsed = hostOpen && preferredHostListCollapsed();
+  const body = document.querySelector(".app-body");
+  if (body) body.classList.toggle("sidebar-collapsed", collapsed);
+  if (hostListToggleEl) {
+    hostListToggleEl.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    const label = collapsed ? "显示主机列表" : "隐藏主机列表";
+    hostListToggleEl.title = label;
+    hostListToggleEl.setAttribute("aria-label", label);
+  }
+  if (fitAddon && terminalEl && terminalEl.offsetWidth > 0 && terminalEl.offsetHeight > 0) {
+    requestAnimationFrame(() => {
+      try {
+        fitAddon.fit();
+      } catch (_) {}
+    });
+  }
+}
+
+function toggleHostList() {
+  const next = !preferredHostListCollapsed();
+  try {
+    localStorage.setItem(HOST_LIST_COLLAPSED_KEY, next ? "1" : "0");
+  } catch (_) {}
+  applySidebarVisibility();
 }
 
 // ---- selection --------------------------------------------------------------
@@ -1462,6 +1504,7 @@ async function selectHost(id) {
   updateMainView();
   updateInjectUI();
   renderClusterMgrBtn();
+  applySidebarVisibility();
 }
 
 function selectTunnel(id) {
@@ -1527,6 +1570,7 @@ function switchSection(section) {
           : "+ 添加本地证书";
   updateSyncBtn();
   updateMainView();
+  applySidebarVisibility();
   if (section === "repo") {
     enterRepo();
   }
@@ -2479,6 +2523,7 @@ async function onClusterFrameExternal() {
 }
 
 toggleTunnelBtnEl.addEventListener("click", toggleTunnel);
+if (hostListToggleEl) hostListToggleEl.addEventListener("click", toggleHostList);
 termToggleBtnEl.addEventListener("click", toggleTerminal);
 checkEnvBtnEl.addEventListener("click", onCheckEnvClick);
 resourceMgrBtnEl.addEventListener("click", onResourceMgrClick);
@@ -2955,4 +3000,5 @@ document.addEventListener("keydown", (e) => {
   // If the user is already logged in, sync the public host list in the
   // background so shared hosts and deletions are reflected automatically.
   autoSyncIfLoggedIn();
+  applySidebarVisibility();
 })();
