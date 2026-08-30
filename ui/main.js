@@ -2476,7 +2476,7 @@ async function onSoftwareSyncClick() {
   const host = hostById(state.selectedHostId);
   if (!host || state.hostSyncing) return;
   const ok = await uiConfirm(
-    `将本地已拉取的软件同步到主机「${host.name}」的软件仓库目录（cangling-update 程序目录下的 repo/）。继续？`,
+    `将本地已拉取的全部软件集（含 np4、cangling-repo）同步到主机「${host.name}」上 cangling-update 程序目录下的 repo/<软件集>/。继续？`,
     "软件同步"
   );
   if (!ok) return;
@@ -2501,11 +2501,15 @@ async function onSoftwareSyncClick() {
         ? `上传 ${result.uploaded} · 跳过 ${result.skipped}` +
           (result.failed ? ` · 失败 ${result.failed}` : "")
         : "";
+    const sets =
+      result && result.sets && result.sets.length
+        ? `\n软件集：${result.sets.join("、")}`
+        : "";
     const path = result && result.remotePath ? `\n远端：${result.remotePath}` : "";
     if (result && result.error) {
-      uiAlert(`部分文件同步失败: ${result.error}${path}`);
+      uiAlert(`部分文件同步失败: ${result.error}${sets}${path}`);
     } else {
-      uiAlert(`软件已同步到 Master 软件仓库。${extra}${path}`, "软件同步");
+      uiAlert(`软件已同步到 Master 软件仓库。${extra}${sets}${path}`, "软件同步");
     }
   } catch (err) {
     hideHostSyncProgress();

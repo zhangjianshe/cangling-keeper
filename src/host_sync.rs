@@ -23,6 +23,7 @@ pub struct HostSoftwareSyncResult {
     pub skipped: u32,
     pub failed: u32,
     pub error: String,
+    pub sets: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -116,6 +117,22 @@ fn collect_local_software(data_dir: &Path) -> Result<Vec<LocalFile>, String> {
     }
     files.sort_by(|a, b| a.rel.cmp(&b.rel));
     Ok(files)
+}
+
+fn collect_set_names(files: &[LocalFile]) -> Vec<String> {
+    let mut names = Vec::new();
+    for f in files {
+        let Some(set) = f.rel.split('/').next() else {
+            continue;
+        };
+        if set.is_empty() {
+            continue;
+        }
+        if names.last().map(String::as_str) != Some(set) {
+            names.push(set.to_string());
+        }
+    }
+    names
 }
 
 fn emit_progress(app: &AppHandle, p: &SyncProgress) {
@@ -240,17 +257,14 @@ fn remote_inventory_cmd(preferred: &str) -> String {
     format!(
         r#"home="${{HOME:-/root}}"
 pref={preferred}
-best=""
-bestn=0
-for d in "$pref" "$home/update/repo" /usr/local/bin/repo; do
-  [ -n "$d" ] || continue
-  [ -d "$d" ] || continue
-  n=$(find "$d" -type f ! -name '*.part' 2>/dev/null | wc -l | tr -d ' ')
-  n=${{n:-0}}
-  if [ "$n" -gt "$bestn" ]; then bestn=$n; best=$d; fi
-done
-if [ -z "$best" ]; then
-  if [ -n "$pref" ]; then best="$pref"; else best="$home/update/repo"; fi
+# Use the repo next to the real cangling-update binary. install-service
+# also drops a symlink at /usr/local/bin/cangling-update; dirname of that
+# path (/usr/local/bin/repo) is not the software repo and must not win
+# just because it happens to contain leftover files.
+if [ -n "$pref" ]; then
+  best="$pref"
+else
+  best="$home/update/repo"
 fi
 printf 'CK_REPO\t%s\n' "$best"
 if [ -d "$best" ]; then
@@ -404,6 +418,7 @@ pub async fn sync_host_software(
     if files.is_empty() {
         return Err("本地没有已拉取的软件，请先在「软件仓库」同步软件集".into());
     }
+    let sets = collect_set_names(&files);
 
     let (host, auth) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -478,6 +493,7 @@ pub async fn sync_host_software(
             skipped: total,
             failed: 0,
             error: String::new(),
+            sets,
         });
     }
 
@@ -575,6 +591,7 @@ pub async fn sync_host_software(
         skipped,
         failed,
         error: last_error,
+        sets,
     })
 }
 
@@ -607,7 +624,47 @@ mod tests {
                 "np4/version.txt",
             ]
         );
+        assert_eq!(
+            collect_set_names(&files),
+            ["cangling-repo".to_string(), "np4".to_string()]
+        );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn collect_local_software_includes_np4_and_git_set() {
+        let tmp = std::env::temp_dir().join(format!("ck-sets-{}", uuid::Uuid::new_v4()));
+        let root = tmp.join("software-sets");
+        std::fs::create_dir_all(root.join("np4/np4-jars/latest/all platform")).unwrap();
+        std::fs::create_dir_all(root.join("cangling-repo/linux-x86")).unwrap();
+        std::fs::write(
+            root.join("np4/np4-jars/latest/all platform/app.jar"),
+            b"jar",
+        )
+        .unwrap();
+        std::fs::write(root.join("cangling-repo/linux-x86/pkg.rpm"), b"rpm").unwrap();
+        let files = collect_local_software(&tmp).unwrap();
+        let rels: Vec<_> = files.iter().map(|f| f.rel.as_str()).collect();
+        assert_eq!(
+            rels,
+            [
+                "cangling-repo/linux-x86/pkg.rpm",
+                "np4/np4-jars/latest/all platform/app.jar",
+            ]
+        );
+        assert_eq!(
+            collect_set_names(&files),
+            ["cangling-repo".to_string(), "np4".to_string()]
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn inventory_stays_on_preferred_repo() {
+        let cmd = remote_inventory_cmd("/root/update/repo");
+        assert!(cmd.contains("best=\"$pref\""));
+        assert!(!cmd.contains("for d in"));
+        assert!(cmd.contains("pref=/root/update/repo"));
     }
 
     #[test]
