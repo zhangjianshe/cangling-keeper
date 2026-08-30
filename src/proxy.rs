@@ -1,7 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Hosts that must never go through HTTP_PROXY / Clash (SSH console forwards
-/// bind here; a system proxy often answers those CONNECT requests with 502).
+/// Hosts that must never go through HTTP_PROXY / Clash (loopback and local
+/// services; a system proxy often answers those CONNECT requests with 502).
 const LOOPBACK_NO_PROXY: &[&str] = &["localhost", "127.0.0.1", "::1", "[::1]"];
 
 use serde::{Deserialize, Serialize};

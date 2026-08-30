@@ -35,10 +35,7 @@ const state = {
   hostSyncing: false,
   clusterPorts: {}, // hostId -> cangling-update listen port
   clusterFrameUrl: "",
-  clusterForwardHostId: "",
-  clusterLocalPort: 0,
-  clusterConnecting: false,
-  clusterConnectGen: 0,
+  clusterFrameHostId: "",
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -544,15 +541,14 @@ function clusterMgrPort(hostId) {
     return Number(p.port);
   }
   const cached = hostId ? Number(state.clusterPorts[hostId] || 0) : 0;
-  return cached > 0 ? cached : 0;
+  return cached > 0 ? cached : 5400;
 }
 
 function clusterMgrUrl(host) {
   if (!host || !host.hostname) return "";
   const hostPart = hostHttpHost(host.hostname);
   const port = clusterMgrPort(host.id);
-  const base = port > 0 ? `http://${hostPart}:${port}` : `http://${hostPart}`;
-  return `${base}/console`;
+  return `http://${hostPart}:${port}/console`;
 }
 
 function renderClusterMgrBtn() {
@@ -560,25 +556,20 @@ function renderClusterMgrBtn() {
   const host = hostById(state.selectedHostId);
   const url = state.clusterFrameUrl || clusterMgrUrl(host);
   const open = clusterFrameEl && !clusterFrameEl.classList.contains("hidden");
-  resourceMgrBtnEl.disabled = !host || state.clusterConnecting;
+  resourceMgrBtnEl.disabled = !host;
   resourceMgrBtnEl.classList.toggle("active", !!open);
-  if (state.clusterConnecting) {
-    resourceMgrBtnEl.title = "正在通过 SSH 连接 cangling-update 控制台…";
-  } else if (open && url) {
-    resourceMgrBtnEl.title = `已连接 ${url}`;
+  if (open && url) {
+    resourceMgrBtnEl.title = `已打开 ${url}`;
+  } else if (url) {
+    resourceMgrBtnEl.title = `打开 ${url}`;
   } else {
-    resourceMgrBtnEl.title = "通过 SSH 打开该主机 cangling-update 控制台";
+    resourceMgrBtnEl.title = "打开该主机 cangling-update 控制台";
   }
 }
 
 function hideClusterFrame() {
-  state.clusterConnectGen += 1;
-  const hostId = state.clusterForwardHostId;
-  state.clusterForwardHostId = "";
-  state.clusterLocalPort = 0;
-  state.clusterConnecting = false;
+  state.clusterFrameHostId = "";
   if (!clusterFrameEl) {
-    if (hostId) invoke("disconnect_update_console", { hostId }).catch(() => {});
     return;
   }
   clusterFrameEl.classList.add("hidden");
@@ -586,24 +577,18 @@ function hideClusterFrame() {
   if (clusterIframeEl) clusterIframeEl.src = "about:blank";
   state.clusterFrameUrl = "";
   if (clusterFrameUrlEl) clusterFrameUrlEl.textContent = "";
-  if (hostId) invoke("disconnect_update_console", { hostId }).catch(() => {});
   if (fitAddon && terminalEl && terminalEl.offsetWidth > 0 && terminalEl.offsetHeight > 0) {
     fitAddon.fit();
   }
   renderClusterMgrBtn();
 }
 
-function showClusterFrame(url, remotePort) {
+function showClusterFrame(url) {
   if (!clusterFrameEl || !clusterIframeEl || !url) return;
   state.clusterFrameUrl = url;
   if (clusterFrameUrlEl) {
-    const rp = Number(remotePort) || 0;
-    const label =
-      rp > 0 && !url.includes(`:${rp}/`) && !url.endsWith(`:${rp}`)
-        ? `${url}  （远端 :${rp}）`
-        : url;
-    clusterFrameUrlEl.textContent = label;
-    clusterFrameUrlEl.title = label;
+    clusterFrameUrlEl.textContent = url;
+    clusterFrameUrlEl.title = url;
   }
   if (terminalFrameEl) terminalFrameEl.classList.add("hidden");
   clusterFrameEl.classList.remove("hidden");
@@ -2390,36 +2375,25 @@ async function onSoftwareSyncClick() {
 
 async function onResourceMgrClick() {
   const host = hostById(state.selectedHostId);
-  if (!host || state.clusterConnecting) return;
+  if (!host) return;
   const open =
     clusterFrameEl &&
     !clusterFrameEl.classList.contains("hidden") &&
-    state.clusterForwardHostId === host.id;
+    state.clusterFrameHostId === host.id;
   if (open) {
     hideClusterFrame();
     return;
   }
-  const gen = ++state.clusterConnectGen;
-  state.clusterConnecting = true;
-  renderClusterMgrBtn();
   try {
-    const info = await invoke("connect_update_console", { hostId: host.id });
-    if (gen !== state.clusterConnectGen || state.selectedHostId !== host.id) {
-      invoke("disconnect_update_console", { hostId: host.id }).catch(() => {});
-      return;
-    }
-    const remotePort = Number(info && info.remotePort) || 0;
-    if (remotePort > 0) state.clusterPorts[host.id] = remotePort;
-    state.clusterForwardHostId = host.id;
-    state.clusterLocalPort = Number(info.localPort) || 0;
-    state.clusterConnecting = false;
-    showClusterFrame(info.url, remotePort);
+    const url = await invoke("cluster_console_url", {
+      hostId: host.id,
+      port: clusterMgrPort(host.id),
+    });
+    if (!url || state.selectedHostId !== host.id) return;
+    state.clusterFrameHostId = host.id;
+    showClusterFrame(url);
   } catch (err) {
-    if (gen === state.clusterConnectGen) {
-      state.clusterConnecting = false;
-      renderClusterMgrBtn();
-      uiAlert(`连接集群控制台失败: ${err}`);
-    }
+    uiAlert(`打开集群控制台失败: ${err}`);
   }
 }
 
@@ -2606,15 +2580,6 @@ listen("proxy-injection", (e) => {
     updateInjectUI();
     if (state.termId) probeCanglingUpdate();
   }
-});
-
-listen("update-console", (e) => {
-  const info = e.payload;
-  if (!info || info.active || !info.hostId) return;
-  if (state.clusterForwardHostId !== info.hostId) return;
-  const localPort = Number(info.localPort) || 0;
-  if (localPort && state.clusterLocalPort && localPort !== state.clusterLocalPort) return;
-  hideClusterFrame();
 });
 
 function selectedProxyMode() {

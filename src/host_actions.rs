@@ -175,8 +175,19 @@ pub fn console_remote_port(probe_port: u16) -> u16 {
     }
 }
 
-pub fn console_url(local_port: u16) -> String {
-    format!("http://127.0.0.1:{local_port}/console")
+fn http_host(hostname: &str) -> String {
+    let h = hostname.trim();
+    if h.contains(':') && !h.starts_with('[') {
+        format!("[{h}]")
+    } else {
+        h.to_string()
+    }
+}
+
+pub fn console_url(hostname: &str, port: u16) -> String {
+    let host = http_host(hostname);
+    let port = console_remote_port(port);
+    format!("http://{host}:{port}/console")
 }
 
 pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
@@ -402,7 +413,22 @@ mod tests {
 
     #[test]
     fn console_url_goes_to_cangling_update_console() {
-        assert_eq!(console_url(15400), "http://127.0.0.1:15400/console");
+        assert_eq!(
+            console_url("10.1.2.3", 15400),
+            "http://10.1.2.3:15400/console"
+        );
+        assert_eq!(
+            console_url("10.1.2.3", 0),
+            "http://10.1.2.3:5400/console"
+        );
+        assert_eq!(
+            console_url("2001:db8::1", 5400),
+            "http://[2001:db8::1]:5400/console"
+        );
+        assert_eq!(
+            console_url("[2001:db8::1]", 80),
+            "http://[2001:db8::1]:80/console"
+        );
         assert_eq!(console_remote_port(5400), 5400);
         assert_eq!(console_remote_port(0), 5400);
         assert_eq!(console_remote_port(80), 80);
