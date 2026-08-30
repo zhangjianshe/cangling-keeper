@@ -137,6 +137,72 @@ pub fn wrap_apply_command(action: &str, arch: &str, proxy: &str) -> String {
     bash_c(APPLY_SCRIPT, &[action, arch, proxy])
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyProgress {
+    pub phase: String,
+    pub pct: u8,
+    pub message: String,
+}
+
+pub fn parse_apply_progress_line(line: &str) -> Option<ApplyProgress> {
+    let line = line.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if let Some(rest) = line.strip_prefix("CK_APPLY|") {
+        let mut phase = String::new();
+        let mut pct = 0u8;
+        let mut message = String::new();
+        for part in rest.split('|') {
+            let Some((k, v)) = part.split_once('=') else {
+                continue;
+            };
+            match k {
+                "phase" => phase = v.trim().to_string(),
+                "pct" => pct = v.trim().parse::<u8>().unwrap_or(0).min(100),
+                "msg" => message = v.trim().to_string(),
+                _ => {}
+            }
+        }
+        if phase.is_empty() && message.is_empty() {
+            return None;
+        }
+        if message.is_empty() {
+            message = match phase.as_str() {
+                "download" => "正在下载".into(),
+                "install" => "正在安装".into(),
+                "replace" => "正在替换程序".into(),
+                "restart" => "正在重启服务".into(),
+                "done" => "完成".into(),
+                "error" => "失败".into(),
+                other => other.to_string(),
+            };
+        }
+        return Some(ApplyProgress { phase, pct, message });
+    }
+    parse_percent(line).map(|pct| ApplyProgress {
+        phase: "download".into(),
+        pct,
+        message: format!("下载中 {pct}%"),
+    })
+}
+
+fn parse_percent(line: &str) -> Option<u8> {
+    let i = line.rfind('%')?;
+    let prefix = line[..i].trim_end();
+    let num = prefix
+        .rsplit(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .next()?;
+    if num.is_empty() {
+        return None;
+    }
+    let v: f64 = num.parse().ok()?;
+    if !(0.0..=100.0).contains(&v) {
+        return None;
+    }
+    Some(v as u8)
+}
+
 pub fn wrap_set_role_command(role: &str, token: &str, master: &str) -> String {
     bash_c(SET_ROLE_SCRIPT, &[role, token, master])
 }
@@ -519,6 +585,18 @@ mod tests {
         assert_eq!(s.username, "admin");
         assert_eq!(s.token, "abc|def");
         assert!(parse_console_session("CK_SESSION|ok=0|error=needs_setup\n").is_err());
+    }
+
+    #[test]
+    fn parses_apply_progress_lines() {
+        let p = parse_apply_progress_line("CK_APPLY|phase=download|pct=12|msg=下载中 12%").unwrap();
+        assert_eq!(p.phase, "download");
+        assert_eq!(p.pct, 12);
+        assert_eq!(p.message, "下载中 12%");
+        let bar = parse_apply_progress_line("##############               42.8%").unwrap();
+        assert_eq!(bar.phase, "download");
+        assert_eq!(bar.pct, 42);
+        assert!(parse_apply_progress_line("download ok").is_none());
     }
 
     #[test]

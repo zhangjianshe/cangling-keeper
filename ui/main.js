@@ -733,23 +733,46 @@ function writeActionLog(title, text) {
   term.write(`\r\n\x1b[90m[${title}]\x1b[0m\r\n${body}\r\n`);
 }
 
+function shortUpdateError(err) {
+  const line = String(err || "")
+    .split("\n")
+    .map((s) => s.trim())
+    .find(Boolean) || "更新失败";
+  return line.length > 36 ? line.slice(0, 34) + "…" : line;
+}
+
 async function applyCanglingUpdate({ busy, status }) {
   const hostId = state.selectedHostId;
   state.updateBusy = true;
-  setUpdateButton({ disabled: true, text: busy, title: status });
+  setUpdateButton({ disabled: true, text: busy, title: status, cls: "primary" });
   renderRoleSwitch();
+  let failed = false;
   try {
     const result = await invoke("run_cangling_update", { hostId });
     writeActionLog(
       result.action === "install" ? "安装更新程序" : "更新程序",
       [result.stdout, result.stderr].filter(Boolean).join("\n")
     );
+    setUpdateButton({
+      disabled: true,
+      text: result.action === "install" ? "安装完成" : "更新完成",
+      title: status,
+      cls: "up-to-date",
+    });
   } catch (err) {
-    writeActionLog("更新程序失败", String(err));
-    uiAlert(`Error: ${err}`);
+    failed = true;
+    const msg = String(err);
+    writeActionLog("更新程序失败", msg);
+    setUpdateButton({
+      disabled: false,
+      text: shortUpdateError(msg),
+      title: msg,
+      cls: "error",
+    });
+    uiAlert(`更新失败: ${msg}`);
   } finally {
     state.updateBusy = false;
-    await probeCanglingUpdate();
+    if (!failed) await probeCanglingUpdate();
   }
 }
 
@@ -848,7 +871,12 @@ async function onCanglingUpdateClick() {
     return;
   }
 
-  // Refresh the probe so the install/update decision uses the current version.
+  setUpdateButton({
+    disabled: true,
+    text: "检测中…",
+    title: "正在检查当前版本…",
+    cls: "primary",
+  });
   await probeCanglingUpdate();
   const p = state.updateProbe;
   if (!p) return;
@@ -2676,6 +2704,33 @@ certFormEl.addEventListener("submit", async (e) => {
 listen("tunnel-stopped", async () => {
   await loadTunnels();
   renderTunnelDetail();
+});
+
+listen("cangling-update-progress", (e) => {
+  const p = e.payload || {};
+  if (p.hostId && state.selectedHostId && p.hostId !== state.selectedHostId) return;
+  if (!state.updateBusy && p.phase !== "error" && p.phase !== "done") return;
+  const pct = Number(p.pct);
+  const msg = String(p.message || "").trim();
+  if (p.phase === "error") {
+    setUpdateButton({
+      disabled: false,
+      text: shortUpdateError(msg || "更新失败"),
+      title: msg || "更新失败",
+      cls: "error",
+    });
+    return;
+  }
+  const label =
+    Number.isFinite(pct) && pct > 0 && pct < 100 && msg
+      ? `${msg}`
+      : msg || "更新中…";
+  setUpdateButton({
+    disabled: true,
+    text: label,
+    title: Number.isFinite(pct) && pct > 0 ? `${msg} ${pct}%` : msg,
+    cls: p.phase === "done" ? "up-to-date" : "primary",
+  });
 });
 
 listen("host-software-sync-progress", (e) => {

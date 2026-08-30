@@ -154,6 +154,85 @@ pub async fn execute(
     })
 }
 
+/// Like [`execute`], but invokes `on_line` for each stdout/stderr line as it arrives
+/// (`\\r` is treated as a line break so curl progress meters stream).
+pub async fn execute_streaming(
+    host: &Host,
+    command: &str,
+    auth: &ResolvedAuth,
+    mut on_line: impl FnMut(&str),
+) -> Result<ExecOutput, String> {
+    if command.trim().is_empty() {
+        return Err("Command is empty".into());
+    }
+
+    let mut session = connect(&host.hostname, host.port).await?;
+    authenticate(&mut session, &host.username, auth).await?;
+
+    let mut channel = session
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("Failed to open session: {e}"))?;
+
+    channel
+        .exec(true, command)
+        .await
+        .map_err(|e| format!("Failed to execute command: {e}"))?;
+
+    let mut stdout = String::new();
+    let mut stderr = String::new();
+    let mut exit_status: i32 = -1;
+    let mut out_buf = String::new();
+    let mut err_buf = String::new();
+
+    loop {
+        let Some(msg) = channel.wait().await else {
+            break;
+        };
+        match msg {
+            ChannelMsg::Data { data } => {
+                let chunk = String::from_utf8_lossy(&data);
+                stdout.push_str(&chunk);
+                flush_lines(&mut out_buf, &chunk, &mut on_line);
+            }
+            ChannelMsg::ExtendedData { data, ext } if ext == 1 => {
+                let chunk = String::from_utf8_lossy(&data);
+                stderr.push_str(&chunk);
+                flush_lines(&mut err_buf, &chunk, &mut on_line);
+            }
+            ChannelMsg::ExitStatus { exit_status: code } => {
+                exit_status = code as i32;
+            }
+            _ => {}
+        }
+    }
+    if !out_buf.is_empty() {
+        on_line(&out_buf);
+    }
+    if !err_buf.is_empty() {
+        on_line(&err_buf);
+    }
+
+    Ok(ExecOutput {
+        stdout,
+        stderr,
+        exit_status,
+    })
+}
+
+fn flush_lines(buf: &mut String, chunk: &str, on_line: &mut impl FnMut(&str)) {
+    for ch in chunk.chars() {
+        if ch == '\n' || ch == '\r' {
+            if !buf.is_empty() {
+                on_line(buf);
+                buf.clear();
+            }
+        } else {
+            buf.push(ch);
+        }
+    }
+}
+
 // ---- local port-forwarding tunnels -----------------------------------------
 
 pub struct EstablishedTunnel {

@@ -691,6 +691,13 @@ body {
   cursor: not-allowed;
 }
 
+.update-btn {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .update-btn.up-to-date {
   background: var(--success-subtle);
   border-color: transparent;

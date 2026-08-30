@@ -47,34 +47,40 @@ replace_bin() {
 }
 
 download() {
+  echo "CK_APPLY|phase=download|pct=0|msg=正在下载"
   echo "downloading $URL"
   echo "      via   $PROXY"
   echo "      to    $DEST (via $TMP)"
   if command -v curl >/dev/null 2>&1; then
     curl -fL --retry 3 --connect-timeout 20 --max-time 300 -k \
-      --proxy "$PROXY" -o "$TMP" "$URL"
+      --proxy "$PROXY" --progress-bar -o "$TMP" "$URL"
   elif command -v wget >/dev/null 2>&1; then
-    wget -O "$TMP" --no-check-certificate --timeout=20 \
+    wget -O "$TMP" --no-check-certificate --timeout=20 --progress=bar:force \
       -e use_proxy=yes -e "https_proxy=$PROXY" -e "http_proxy=$PROXY" \
       "$URL"
   else
+    echo "CK_APPLY|phase=error|pct=0|msg=未找到 curl/wget" >&2
     echo "curl/wget not found" >&2
     exit 1
   fi
   chmod +x "$TMP"
   if [ ! -s "$TMP" ]; then
+    echo "CK_APPLY|phase=error|pct=0|msg=下载文件为空" >&2
     echo "downloaded file is empty" >&2
     exit 1
   fi
   mv -f "$TMP" "$DEST"
+  echo "CK_APPLY|phase=download|pct=80|msg=下载完成"
   echo "download ok ($(wc -c < "$DEST") bytes)"
 }
 
 download
 
 if [ "$ACTION" = install ]; then
+  echo "CK_APPLY|phase=install|pct=85|msg=正在安装服务"
   echo "installing service: $DEST --port=80 install-service"
   (cd "$DEST_DIR" && ./cangling-update --port=80 install-service)
+  echo "CK_APPLY|phase=done|pct=100|msg=安装完成"
   echo "CK_APPLY_OK install"
   exit 0
 fi
@@ -86,12 +92,16 @@ if command -v cangling-update >/dev/null 2>&1; then
   LIVE=$(command -v cangling-update)
 fi
 if [ -n "$LIVE" ]; then
+  echo "CK_APPLY|phase=replace|pct=90|msg=正在替换程序"
   echo "replacing live binary $LIVE"
   replace_bin "$DEST" "$LIVE"
+  echo "CK_APPLY|phase=restart|pct=95|msg=正在重启服务"
   echo "restarting service"
   cangling-update restart
 else
+  echo "CK_APPLY|phase=restart|pct=95|msg=正在重启服务"
   echo "restarting via $DEST"
   "$DEST" restart
 fi
+echo "CK_APPLY|phase=done|pct=100|msg=更新完成"
 echo "CK_APPLY_OK update"

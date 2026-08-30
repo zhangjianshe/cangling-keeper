@@ -904,6 +904,56 @@ async fn ssh_run(
     ssh::execute(&host, &command, &auth).await
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateApplyProgress {
+    host_id: String,
+    phase: String,
+    message: String,
+    pct: u8,
+}
+
+async fn ssh_run_apply_progress(
+    app: &AppHandle,
+    state: &State<'_, AppState>,
+    host_id: &str,
+    command: String,
+) -> Result<ssh::ExecOutput, String> {
+    let data_dir = state.data_dir.clone();
+    let (host, auth) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let host = store.get_host(host_id)?;
+        let auth = resolve_auth(&store, &host.auth, &data_dir)?;
+        (host, auth)
+    };
+    let app = app.clone();
+    let hid = host_id.to_string();
+    let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    ssh::execute_streaming(&host, &command, &auth, move |line| {
+        let Some(p) = host_actions::parse_apply_progress_line(line) else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        if p.phase == "download"
+            && p.pct < 100
+            && now.duration_since(last_emit) < std::time::Duration::from_millis(200)
+        {
+            return;
+        }
+        last_emit = now;
+        let _ = app.emit(
+            "cangling-update-progress",
+            UpdateApplyProgress {
+                host_id: hid.clone(),
+                phase: p.phase,
+                message: p.message,
+                pct: p.pct,
+            },
+        );
+    })
+    .await
+}
+
 async fn run_probe(
     state: &State<'_, AppState>,
     host_id: &str,
@@ -961,6 +1011,7 @@ async fn probe_cangling_update(
 
 #[tauri::command]
 async fn run_cangling_update(
+    app: AppHandle,
     state: State<'_, AppState>,
     host_id: String,
 ) -> Result<host_actions::UpdateApplyResult, String> {
@@ -975,15 +1026,51 @@ async fn run_cangling_update(
         &probe.arch,
         &host_actions::inject_proxy_url(remote_port),
     );
-    let out = ssh_run(&state, &host_id, cmd).await?;
+    let _ = app.emit(
+        "cangling-update-progress",
+        UpdateApplyProgress {
+            host_id: host_id.clone(),
+            phase: "download".into(),
+            message: if action == "install" {
+                "正在下载并安装…".into()
+            } else {
+                "正在下载更新…".into()
+            },
+            pct: 0,
+        },
+    );
+    let out = ssh_run_apply_progress(&app, &state, &host_id, cmd).await?;
     if out.exit_status != 0 {
-        return Err(format!(
+        let err = format!(
             "{action} failed (exit {}): {}\n{}",
             out.exit_status,
             out.stderr.trim(),
             out.stdout.trim()
-        ));
+        );
+        let _ = app.emit(
+            "cangling-update-progress",
+            UpdateApplyProgress {
+                host_id: host_id.clone(),
+                phase: "error".into(),
+                message: "更新失败".into(),
+                pct: 0,
+            },
+        );
+        return Err(err);
     }
+    let _ = app.emit(
+        "cangling-update-progress",
+        UpdateApplyProgress {
+            host_id,
+            phase: "done".into(),
+            message: if action == "install" {
+                "安装完成".into()
+            } else {
+                "更新完成".into()
+            },
+            pct: 100,
+        },
+    );
     Ok(host_actions::UpdateApplyResult {
         action: action.to_string(),
         stdout: out.stdout,
