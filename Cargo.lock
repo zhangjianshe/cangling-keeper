@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "cangling-keeper"
-version = "0.0.42"
+version = "0.0.43"
 dependencies = [
  "futures-util",
  "rand",
