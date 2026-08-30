@@ -69,10 +69,21 @@ if [ -f "$UNIT" ] \
   installed=1
 fi
 
+resolve_binary() {
+  local p="$1"
+  [ -n "$p" ] || return 0
+  if command -v readlink >/dev/null 2>&1; then
+    local r
+    r=$(readlink -f "$p" 2>/dev/null || true)
+    r=${r%" (deleted)"}
+    [ -n "$r" ] && p=$r
+  fi
+  printf '%s' "$p"
+}
+
 if command -v cangling-update >/dev/null 2>&1; then
   installed=1
   binary=$(command -v cangling-update)
-  version=$("$binary" version 2>/dev/null | head -n 1 | tr -d '\r' | tr '|' '/')
 fi
 
 if [ -z "$binary" ] && [ -x "$HOME/update/cangling-update" ]; then
@@ -114,6 +125,24 @@ fi
 
 pid=$(printf '%s' "${pid:-}" | tr -cd '0-9')
 [ -n "$pid" ] || pid=0
+
+# Prefer the running service binary so repo/ is next to the process.
+# install-service also installs a symlink at /usr/local/bin/cangling-update;
+# dirname of that symlink is the wrong repo location.
+if [ "$pid" != 0 ] && [ -r "/proc/$pid/exe" ]; then
+  exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)
+  exe=${exe%" (deleted)"}
+  if [ -n "$exe" ]; then
+    binary=$exe
+    installed=1
+  fi
+fi
+if [ -n "$binary" ]; then
+  binary=$(resolve_binary "$binary")
+fi
+if [ -n "$binary" ] && [ -x "$binary" ]; then
+  version=$("$binary" version 2>/dev/null | head -n 1 | tr -d '\r' | tr '|' '/')
+fi
 
 # Running process cmdline is the live listen port (overrides a stale unit).
 if [ "$pid" != 0 ] && [ -r "/proc/$pid/cmdline" ]; then
