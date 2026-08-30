@@ -492,6 +492,14 @@ function hideHostSyncProgress() {
   hostSyncProgressDetailEl.textContent = "";
 }
 
+function fileTransferHint(bytesDone, bytesTotal) {
+  const done = Number(bytesDone) || 0;
+  const total = Number(bytesTotal) || 0;
+  if (total > 0) return `${formatBytes(done)} / ${formatBytes(total)}`;
+  if (done > 0) return formatBytes(done);
+  return "";
+}
+
 function renderHostSyncProgress(p) {
   if (!hostSyncProgressEl) return;
   hostSyncProgressEl.classList.remove("hidden");
@@ -515,19 +523,18 @@ function renderHostSyncProgress(p) {
         : p.action === "fail"
           ? "失败"
           : p.action || "同步";
-  hostSyncProgressLabelEl.textContent =
-    total > 0 ? `软件同步 ${current}/${total} · ${action}` : `软件同步 · ${action}`;
-  hostSyncProgressPctEl.textContent = `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
-  hostSyncProgressBarEl.style.width = `${pct}%`;
-  const sizePart =
-    p.action === "upload" && (bytesDone > 0 || bytesTotal > 0)
-      ? bytesTotal
-        ? `${formatBytes(bytesDone)} / ${formatBytes(bytesTotal)}`
-        : formatBytes(bytesDone)
-      : "";
-  hostSyncProgressDetailEl.textContent = [p.file || "", sizePart, p.remotePath || ""]
+  const fileSize = fileTransferHint(bytesDone, bytesTotal);
+  const countPart = total > 0 ? `${current}/${total}` : "";
+  hostSyncProgressLabelEl.textContent = ["软件同步", countPart, action, fileSize]
     .filter(Boolean)
     .join(" · ");
+  hostSyncProgressPctEl.textContent = `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;
+  hostSyncProgressBarEl.style.width = `${pct}%`;
+  const overall =
+    overallTotal > 0
+      ? `合计 ${formatBytes(overallDone)} / ${formatBytes(overallTotal)}`
+      : "";
+  hostSyncProgressDetailEl.textContent = [p.file || "", overall].filter(Boolean).join(" · ");
 }
 
 function hostHttpHost(hostname) {
