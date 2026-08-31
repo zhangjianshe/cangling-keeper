@@ -87,6 +87,7 @@ const updateBtnEl = $("#btn-cangling-update");
 const roleSwitchEl = $("#role-switch");
 const updateRowEl = updateBtnEl ? updateBtnEl.closest(".header-update-row") : null;
 const clusterTokenRowEl = $("#cluster-token-row");
+const clusterTokenUrlTitleEl = $("#cluster-token-url-title");
 const clusterTokenValueEl = $("#cluster-token-value");
 const clusterTokenCopyEl = $("#cluster-token-copy");
 const appUpdateBtnEl = $("#app-update-btn");
@@ -402,28 +403,67 @@ function clusterToken() {
   return (p && (p.clusterToken || p.token) ? String(p.clusterToken || p.token) : "").trim();
 }
 
+function clusterMasterUrl() {
+  const p = state.updateProbe;
+  return (p && p.masterUrl ? String(p.masterUrl) : "").trim();
+}
+
+function getDefaultMasterUrlFromGroup() {
+  const hostId = state.selectedHostId;
+  const host = (state.hosts || []).find(h => h.id === hostId);
+  if (!host || !host.catalog) return "";
+  const mastersInGroup = (state.hosts || []).filter(h =>
+    h.id !== hostId && h.catalog === host.catalog
+  );
+  for (const m of mastersInGroup) {
+    if (m.hostname) {
+      return `http://${m.hostname}:80`;
+    }
+  }
+  return "";
+}
+
 function renderClusterToken() {
-  const show = !!state.termId && currentRole() === "master";
+  const connected = !!state.termId;
+  const role = currentRole();
+  const show = connected && (role === "master" || role === "worker");
+  const p = state.updateProbe;
+  const masterUrl = (p && p.masterUrl) || "";
   const token = clusterToken();
   clusterTokenRowEl.classList.toggle("hidden", !show);
-  clusterTokenValueEl.textContent = show ? token || "未设置" : "";
-  clusterTokenValueEl.title = token;
-  clusterTokenCopyEl.disabled = !token;
+  if (show) {
+    if (role === "master") {
+      clusterTokenUrlTitleEl.textContent = masterUrl || "主节点（未配置凭证）";
+    } else if (role === "worker") {
+      clusterTokenUrlTitleEl.textContent = "工作节点" + (masterUrl ? ` · ${masterUrl}` : "");
+    }
+    clusterTokenValueEl.textContent = token || "未设置";
+    clusterTokenValueEl.title = masterUrl ? `${masterUrl} · 令牌: ${token}` : token;
+    clusterTokenCopyEl.disabled = !token;
+  } else {
+    clusterTokenUrlTitleEl.textContent = "";
+    clusterTokenValueEl.textContent = "";
+    clusterTokenValueEl.title = "";
+    clusterTokenCopyEl.disabled = true;
+  }
 }
 
 async function copyClusterToken() {
+  const masterUrl = clusterMasterUrl();
   const token = clusterToken();
   if (!token) return;
+  // Full URL + token when available, otherwise just the token.
+  const copyText = masterUrl || token;
   let ok = false;
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(token);
+      await navigator.clipboard.writeText(copyText);
       ok = true;
     }
   } catch (_) {}
   if (!ok) {
     const ta = document.createElement("textarea");
-    ta.value = token;
+    ta.value = copyText;
     ta.setAttribute("readonly", "");
     ta.style.position = "fixed";
     ta.style.left = "-9999px";
@@ -437,7 +477,7 @@ async function copyClusterToken() {
   setTimeout(() => {
     clusterTokenCopyEl.textContent = prev;
   }, 1500);
-  if (!ok) uiAlert("复制 cluster token 失败");
+  if (!ok) uiAlert("复制集群凭证失败");
 }
 
 function renderRoleSwitch() {
@@ -795,12 +835,30 @@ async function onRoleSwitchClick(role) {
   const current = currentRole();
   let token = "";
   let master = p.master || "";
+  // hoisted so both branches can use them
+  let clipMaster = "", clipToken = "";
 
   if (role === "master" || role === "worker") {
     if (!p.tokenSet) {
+      // Read clipboard and parse URL+token when switching to worker
+      if (role === "worker") {
+        try {
+          const clip = await navigator.clipboard.readText();
+          if (clip) {
+            // expected format: http://host:port/token?THETOKEN
+            let m = clip.match(/^(https?:\/\/[^\/]+(?:\:\d+)?)\/token\?(.+)$/);
+            if (m) { clipMaster = m[1]; clipToken = m[2].trim(); }
+            else {
+              // fallback: /?token= or ?token= pattern
+              m = clip.match(/^(https?:\/\/[^\/]+(?:\:\d+)?)\/?\?token=(.+)$/);
+              if (m) { clipMaster = m[1]; clipToken = m[2].trim(); }
+            }
+          }
+        } catch (_) {/* clipboard read requires permission */}
+      }
       const entered = await uiPrompt(
         "集群共享令牌（master / worker 必须一致）",
-        "",
+        clipToken || "",
         "集群令牌"
       );
       if (entered == null) return;
@@ -811,10 +869,11 @@ async function onRoleSwitchClick(role) {
       }
     }
     if (role === "worker") {
+      const defaultMaster = clipMaster || master || getDefaultMasterUrlFromGroup();
       const entered = await uiPrompt(
         "主节点地址，例如 http://10.0.0.1:80（留空则 UDP 自动发现）",
-        master,
-        "主节点"
+        defaultMaster,
+        "主节点 URL + 集群令牌"
       );
       if (entered == null) return;
       master = String(entered).trim();
@@ -858,6 +917,7 @@ async function onRoleSwitchClick(role) {
       state.updateProbe.tokenSet = result.tokenSet;
       state.updateProbe.master = result.master || "";
       if (token) state.updateProbe.clusterToken = token;
+      if (result.masterUrl) state.updateProbe.masterUrl = result.masterUrl;
     }
   } catch (err) {
     writeActionLog("切换运行模式失败", String(err));

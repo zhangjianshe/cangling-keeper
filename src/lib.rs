@@ -1001,10 +1001,24 @@ async fn probe_cangling_update(
                 }
                 Err(e) => probe.version_error = e,
             },
-            // Without an injected proxy the remote host cannot reach the
-            // update server; keep the probe result and let the UI ask for one.
             Err(_) => {}
         }
+    }
+    // Populate master_url for display:
+    if probe.role == "master" && !probe.cluster_token.is_empty() {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        if let Ok(host) = store.get_host(&host_id) {
+            let port = host_actions::console_remote_port(probe.port);
+            if !host.hostname.is_empty() {
+                probe.master_url = format!(
+                    "http://{}:{}/token?{}",
+                    host.hostname, port, probe.cluster_token
+                );
+            }
+        }
+    } else if probe.role == "worker" && !probe.master.is_empty() && !probe.cluster_token.is_empty()
+    {
+        probe.master_url = format!("{}/token?{}", probe.master, probe.cluster_token);
     }
     Ok(probe)
 }
@@ -1102,11 +1116,36 @@ async fn set_cangling_role(
     }
     let (parsed_role, active, token_set, parsed_master) =
         host_actions::parse_set_role(&out.stdout)?;
+    // Build master_url for display:
+    // - master role: host's own URL + token
+    // - worker role: master URL + token
+    let master_url = if parsed_role == "master" {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        if let Ok(host) = store.get_host(&host_id) {
+            if !host.hostname.is_empty() && !token.is_empty() {
+                format!("http://{}/?token={}", host.hostname, token)
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        }
+    } else if parsed_role == "worker" && !parsed_master.is_empty() {
+        let token = token.trim();
+        if !token.is_empty() {
+            format!("{}/token?{}", parsed_master, token)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
     Ok(host_actions::SetRoleResult {
         role: parsed_role,
         active,
         token_set,
         master: parsed_master,
+        master_url,
         stdout: out.stdout,
         stderr: out.stderr,
         exit_status: out.exit_status,

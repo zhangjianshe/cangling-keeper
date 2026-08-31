@@ -149,9 +149,12 @@
                 </div>
                 <div class="header-update-row">
                   <div id="cluster-token-row" class="cluster-token-row hidden">
-                    <span class="cluster-token-label">Cluster token</span>
-                    <span id="cluster-token-value" class="cluster-token-value mono"></span>
-                    <button id="cluster-token-copy" class="btn cluster-token-copy" type="button" title="复制 cluster token">复制</button>
+                    <span class="cluster-token-label">集群凭证</span>
+                    <span id="cluster-token-url-title" class="cluster-token-url-title"></span>
+                    <div class="cluster-token-combo">
+                      <span id="cluster-token-value" class="cluster-token-value mono"></span>
+                      <button id="cluster-token-copy" class="btn cluster-token-copy" type="button" title="复制集群凭证">复制</button>
+                    </div>
                   </div>
                   <div id="role-switch" class="seg-switch hidden" role="radiogroup" aria-label="运行模式">
                     <button type="button" class="seg-opt" data-role="standalone" role="radio" aria-checked="false" title="独立模式（standalone）">独立模式</button>

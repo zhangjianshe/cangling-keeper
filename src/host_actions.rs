@@ -25,6 +25,10 @@ pub struct UpdateProbe {
     pub master: String,
     /// Listen port of the remote `cangling-update` service. `0` if unknown.
     pub port: u16,
+    /// Master URL + cluster token for display (e.g., "http://10.x.x.x:80/token").
+    /// For master nodes, shows own URL + token.
+    /// For worker nodes, shows the group master's URL + token.
+    pub master_url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -55,6 +59,10 @@ pub struct SetRoleResult {
     pub stdout: String,
     pub stderr: String,
     pub exit_status: i32,
+    /// Master URL + cluster token for display (e.g., "http://10.x.x.x:80/token").
+    /// For master nodes, shows own URL + token.
+    /// For worker nodes, shows the group master URL + token.
+    pub master_url: String,
 }
 
 pub fn normalize_role(role: &str) -> Result<&'static str, String> {
@@ -412,6 +420,7 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
         cluster_token,
         master,
         port,
+        master_url: String::new(),
     })
 }
 
