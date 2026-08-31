@@ -29,6 +29,8 @@ const MAX_PREVIEW_SIZE: u64 = 1024 * 1024;
 const DOWNLOAD_ATTEMPTS: u32 = 8;
 const DOWNLOAD_IDLE: Duration = Duration::from_secs(45);
 const GIT_ATTEMPTS: u32 = 5;
+/// 浅克隆深度：软件仓库含大量二进制，只拉最新快照，避免下载全部历史。
+const GIT_SHALLOW_DEPTH: &str = "1";
 const GIT_HTTP_CFG: [&str; 8] = [
     "-c",
     "http.version=HTTP/1.1",
@@ -1285,6 +1287,8 @@ fn git_fetch_update(
     let branch = rec.git_branch.trim().to_string();
     let mut fetch_args = vec![
         "fetch".to_string(),
+        "--depth".to_string(),
+        GIT_SHALLOW_DEPTH.to_string(),
         "--progress".to_string(),
         "--prune".to_string(),
         "origin".to_string(),
@@ -1297,9 +1301,10 @@ fn git_fetch_update(
     if !branch.is_empty() {
         let _ = run_git(dest, &["checkout", &branch]);
     }
-    emit_git_progress(app, &rec.name, "git-fetch", "正在合并远端更新…", &mut 100);
-    run_git(dest, &["merge", "--ff-only", "FETCH_HEAD"])
-        .or_else(|_| run_git(dest, &["merge", "--ff-only"]))?;
+    emit_git_progress(app, &rec.name, "git-fetch", "正在切换到最新版本…", &mut 100);
+    // 浅克隆只有 depth=1 的历史，跨浅边界无法做 ff 合并；仓库只读（仅同步），
+    // 直接重置到 FETCH_HEAD 即是最新快照。
+    run_git(dest, &["reset", "--hard", "FETCH_HEAD"])?;
     Ok(())
 }
 
@@ -1324,7 +1329,12 @@ fn git_clone_once(
     }
     let dest_s = dest.to_string_lossy().into_owned();
     let branch = rec.git_branch.trim().to_string();
-    let mut args = vec!["clone".to_string(), "--progress".to_string()];
+    let mut args = vec![
+        "clone".to_string(),
+        "--depth".to_string(),
+        GIT_SHALLOW_DEPTH.to_string(),
+        "--progress".to_string(),
+    ];
     if !branch.is_empty() {
         args.push("--branch".into());
         args.push(branch);
