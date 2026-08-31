@@ -2613,8 +2613,11 @@ async function onCheckEnvClick() {
   btn.textContent = "检查中…";
   try {
     const result = await invoke("check_host_env", { hostId: host.id });
-    btn.textContent = result.changed ? "已开启转发" : "环境正常";
-    btn.title = result.message || `AllowTcpForwarding: ${result.allowTcpForwarding}`;
+    const changed = !!(result.sshChanged || result.firewallChanged);
+    btn.textContent = changed ? "已修复" : "环境正常";
+    btn.title =
+      result.message ||
+      `AllowTcpForwarding: ${result.allowTcpForwarding} · 端口: ${result.port}`;
   } catch (err) {
     btn.textContent = "检查失败";
     btn.title = String(err);
@@ -2624,7 +2627,7 @@ async function onCheckEnvClick() {
     setTimeout(() => {
       if (!btn.disabled) {
         btn.textContent = "检查环境";
-        btn.title = "检查并修改 sshd 允许 TCP Forward";
+        btn.title = "检查并修复 sshd TCP Forward 与防火墙端口";
       }
     }, 3000);
   }

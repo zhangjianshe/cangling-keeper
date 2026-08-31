@@ -5,6 +5,7 @@ const APPLY_SCRIPT: &str = include_str!("scripts/apply-cangling-update.sh");
 const SET_ROLE_SCRIPT: &str = include_str!("scripts/set-cangling-role.sh");
 const CHECK_SCRIPT: &str = include_str!("scripts/check-cangling-version.sh");
 const CHECK_SSH_ENV_SCRIPT: &str = include_str!("scripts/check-ssh-env.sh");
+const FIX_FIREWALL_SCRIPT: &str = include_str!("scripts/fix-firewall.sh");
 const ISSUE_SESSION_SCRIPT: &str = include_str!("scripts/issue-console-session.sh");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -46,6 +47,16 @@ pub struct SshEnvCheck {
     pub status: String,
     pub changed: bool,
     pub allow_tcp_forwarding: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FirewallFix {
+    pub status: String,
+    pub changed: bool,
+    pub firewall: String,
+    pub port: u16,
     pub message: String,
 }
 
@@ -139,6 +150,11 @@ pub fn parse_console_session(stdout: &str) -> Result<ConsoleSession, String> {
 
 pub fn wrap_check_ssh_env_command() -> String {
     bash_c(CHECK_SSH_ENV_SCRIPT, &[])
+}
+
+pub fn wrap_fix_firewall_command(port: u16) -> String {
+    let port = console_remote_port(port);
+    bash_c(FIX_FIREWALL_SCRIPT, &[&port.to_string()])
 }
 
 pub fn wrap_apply_command(action: &str, arch: &str, proxy: &str) -> String {
@@ -503,6 +519,56 @@ pub fn parse_check_ssh_env(stdout: &str) -> Result<SshEnvCheck, String> {
     })
 }
 
+pub fn parse_fix_firewall(stdout: &str) -> Result<FirewallFix, String> {
+    let line = stdout
+        .lines()
+        .rev()
+        .find(|l| l.starts_with("CK_FIREWALL|"))
+        .ok_or_else(|| {
+            let tail = stdout.trim();
+            let tail = if tail.len() > 400 {
+                &tail[tail.len() - 400..]
+            } else {
+                tail
+            };
+            format!("端口开放检查未返回 CK_FIREWALL 行: {tail}")
+        })?;
+
+    let mut status = String::new();
+    let mut changed = false;
+    let mut firewall = String::new();
+    let mut port = 0u16;
+    let mut message = String::new();
+
+    for part in line.split('|').skip(1) {
+        let Some((k, v)) = part.split_once('=') else {
+            continue;
+        };
+        match k {
+            "status" => status = v.to_string(),
+            "changed" => changed = v == "1" || v.eq_ignore_ascii_case("true"),
+            "firewall" => firewall = v.to_string(),
+            "port" => {
+                port = v
+                    .parse()
+                    .ok()
+                    .filter(|n| (1..=65535).contains(n))
+                    .unwrap_or(0);
+            }
+            "message" => message = v.to_string(),
+            _ => {}
+        }
+    }
+
+    Ok(FirewallFix {
+        status,
+        changed,
+        firewall,
+        port,
+        message,
+    })
+}
+
 fn bash_c(script: &str, args: &[&str]) -> String {
     // The shell scripts are embedded with include_str!(). On Windows checkouts
     // git may rewrite them to CRLF, which makes the remote Linux shell choke on
@@ -700,6 +766,35 @@ mod tests {
     fn parses_latest_version() {
         let out = "noise\nCK_VERSION|latest=v0.1.52\n";
         assert_eq!(parse_latest_version(out).unwrap(), "v0.1.52");
+    }
+
+    #[test]
+    fn wraps_fix_firewall_with_port() {
+        let cmd = wrap_fix_firewall_command(80);
+        assert!(cmd.contains("CK_FIREWALL"));
+        assert!(cmd.ends_with("ck 80"));
+        // A zero/unknown probe port falls back to the console default.
+        assert!(wrap_fix_firewall_command(0).ends_with("ck 5400"));
+    }
+
+    #[test]
+    fn parses_firewall_line() {
+        let f = parse_fix_firewall(
+            "noise\nCK_FIREWALL|status=ok|changed=1|firewall=firewalld|port=80|message=已开放端口 80/tcp\n",
+        )
+        .unwrap();
+        assert_eq!(f.status, "ok");
+        assert!(f.changed);
+        assert_eq!(f.firewall, "firewalld");
+        assert_eq!(f.port, 80);
+        assert_eq!(f.message, "已开放端口 80/tcp");
+        let skip = parse_fix_firewall(
+            "CK_FIREWALL|status=skip|changed=0|firewall=none|port=80|message=未检测到防火墙\n",
+        )
+        .unwrap();
+        assert_eq!(skip.status, "skip");
+        assert!(!skip.changed);
+        assert!(parse_fix_firewall("no marker").is_err());
     }
 
     #[test]

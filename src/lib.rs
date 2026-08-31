@@ -221,23 +221,63 @@ async fn ssh_execute(
     ssh::execute(&host, &command, &auth).await
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HostEnvCheck {
+    allow_tcp_forwarding: String,
+    ssh_changed: bool,
+    ssh_message: String,
+    port: u16,
+    firewall: String,
+    firewall_changed: bool,
+    firewall_message: String,
+    /// Combined summary shown in the button title.
+    message: String,
+}
+
 #[tauri::command]
 async fn check_host_env(
     state: State<'_, AppState>,
     host_id: String,
-) -> Result<host_actions::SshEnvCheck, String> {
+) -> Result<HostEnvCheck, String> {
+    // 1) Fix sshd TCP forwarding (existing behaviour).
     let out = ssh_run(&state, &host_id, host_actions::wrap_check_ssh_env_command()).await?;
     // The script restarts sshd in the background, so the channel may be
     // dropped before an exit status is reported; rely on the marker line.
-    let check = host_actions::parse_check_ssh_env(&out.stdout)?;
-    if check.status != "ok" {
-        return Err(if check.message.is_empty() {
+    let ssh = host_actions::parse_check_ssh_env(&out.stdout)?;
+    if ssh.status != "ok" {
+        return Err(if ssh.message.is_empty() {
             "环境检查失败".to_string()
         } else {
-            check.message.clone()
+            ssh.message.clone()
         });
     }
-    Ok(check)
+
+    // 2) Open the cangling-update listen port in the host firewall so the
+    //    master can reach this node over HTTP (check cluster / account sync).
+    let probe = run_probe(&state, &host_id).await?;
+    let port = host_actions::console_remote_port(probe.port);
+    let out = ssh_run(&state, &host_id, host_actions::wrap_fix_firewall_command(port)).await?;
+    let fw = host_actions::parse_fix_firewall(&out.stdout)?;
+    if fw.status == "error" {
+        return Err(if fw.message.is_empty() {
+            "端口开放失败".to_string()
+        } else {
+            fw.message.clone()
+        });
+    }
+
+    let message = format!("{}；{}", ssh.message, fw.message);
+    Ok(HostEnvCheck {
+        allow_tcp_forwarding: ssh.allow_tcp_forwarding,
+        ssh_changed: ssh.changed,
+        ssh_message: ssh.message,
+        port: fw.port,
+        firewall: fw.firewall,
+        firewall_changed: fw.changed,
+        firewall_message: fw.message,
+        message,
+    })
 }
 
 // ---- external links -------------------------------------------------------
