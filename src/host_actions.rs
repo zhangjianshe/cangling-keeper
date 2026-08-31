@@ -702,6 +702,8 @@ mod tests {
         assert!(is_newer("v0.1.52", "v0.1.52-beta"));
         assert!(!is_newer("v0.1.51", "v0.1.52"));
         assert!(!is_newer("v0.1.52", "v0.1.52"));
+        assert!(!is_newer("v0.1.52", "0.1.52"));
+        assert!(!is_newer("0.1.52", "v0.1.52"));
         assert!(!is_newer("v0.1.52-beta", "v0.1.52"));
     }
 }

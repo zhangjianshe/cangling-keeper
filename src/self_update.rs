@@ -81,9 +81,35 @@ fn bundle_url() -> Result<String, String> {
     ))
 }
 
+fn no_cache() -> reqwest::header::HeaderMap {
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(
+        reqwest::header::CACHE_CONTROL,
+        reqwest::header::HeaderValue::from_static("no-cache"),
+    );
+    headers.insert(
+        reqwest::header::PRAGMA,
+        reqwest::header::HeaderValue::from_static("no-cache"),
+    );
+    headers
+}
+
+fn cache_bust(url: &str, version: &str) -> String {
+    let v: String = version
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(*c, '.' | '-'))
+        .collect();
+    if v.is_empty() {
+        url.to_string()
+    } else {
+        format!("{url}?v={v}")
+    }
+}
+
 async fn fetch_latest() -> Result<String, String> {
     let resp = client()?
         .get(version_url())
+        .headers(no_cache())
         .send()
         .await
         .map_err(|e| format!("网络错误: {e}"))?;
@@ -92,7 +118,14 @@ async fn fetch_latest() -> Result<String, String> {
     if !status.is_success() {
         return Err(format!("服务器返回 {status}: {}", body.trim()));
     }
-    let v = body.trim().to_string();
+    // The update server may wrap extra lines; the published tag is the first one.
+    let v = body
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .trim_start_matches('\u{feff}')
+        .to_string();
     if v.is_empty() {
         return Err("服务器返回空版本".into());
     }
@@ -120,12 +153,14 @@ pub async fn check_app_update(app: AppHandle) -> Result<AppUpdateStatus, String>
 
 #[tauri::command]
 pub async fn apply_app_update(app: AppHandle) -> Result<(), String> {
-    let url = bundle_url()?;
+    let latest = fetch_latest().await.unwrap_or_default();
+    let url = cache_bust(&bundle_url()?, &latest);
     let filename = bundle_file()?;
     let dest = std::env::temp_dir().join(filename);
 
     let resp = client()?
         .get(&url)
+        .headers(no_cache())
         .send()
         .await
         .map_err(|e| format!("下载失败: {e}"))?
@@ -157,6 +192,9 @@ pub async fn apply_app_update(app: AppHandle) -> Result<(), String> {
     if received == 0 {
         return Err("下载到的文件为空".into());
     }
+    if total > 0 && received != total {
+        return Err(format!("下载不完整: {received}/{total} 字节"));
+    }
     emit_progress(&app, "download", received, total.max(received));
     emit_progress(&app, "install", received, total.max(received));
 
@@ -175,29 +213,32 @@ fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
     let pid = std::process::id();
     let setup = dest.to_path_buf();
     let exe = std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {e}"))?;
-    let instdir = exe
-        .parent()
-        .ok_or_else(|| "无法确定安装目录".to_string())?
-        .to_path_buf();
-    let uninst = instdir.join("uninstall.exe");
 
     let script_path = std::env::temp_dir().join("cangling-keeper-update.ps1");
+    // Tauri NSIS flags:
+    //   /S      silent (default install location / previous location)
+    //   /UPDATE in-place update, do not run uninstall.exe first
+    //   /R      relaunch the app after a silent install
+    // Running uninstall.exe before the new installer was wiping the current
+    // install and then restarting the old binary, so the next launch still
+    // looked like an update was available.
     let script = format!(
         r#"$ErrorActionPreference = 'SilentlyContinue'
 Wait-Process -Id {pid} -ErrorAction SilentlyContinue
-$uninst = {uninst}
-$instdir = {instdir}
+Get-Process -Name 'cangling-keeper' -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 800
 $setup = {setup}
-if (Test-Path -LiteralPath $uninst) {{
-  $p = Start-Process -FilePath $uninst -ArgumentList @('/S', "_?=$instdir") -PassThru -WindowStyle Hidden
-  if ($p) {{ $p.WaitForExit() }}
+$exe = {exe}
+$p = Start-Process -FilePath $setup -ArgumentList @('/S', '/UPDATE', '/R') -PassThru -WindowStyle Hidden
+if ($p) {{ $p.WaitForExit() }}
+Start-Sleep -Milliseconds 800
+if (-not (Get-Process -Name 'cangling-keeper' -ErrorAction SilentlyContinue)) {{
+  if (Test-Path -LiteralPath $exe) {{ Start-Process -FilePath $exe }}
 }}
-Start-Process -FilePath $setup -ArgumentList @('/S', '/R') -WindowStyle Hidden
 Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
 "#,
-        uninst = powershell_literal(&uninst),
-        instdir = powershell_literal(&instdir),
         setup = powershell_literal(&setup),
+        exe = powershell_literal(&exe),
     );
     std::fs::write(&script_path, script).map_err(|e| format!("写入更新脚本失败: {e}"))?;
 
