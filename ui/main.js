@@ -964,6 +964,35 @@ async function checkAppUpdate() {
   renderAppUpdate();
 }
 
+function applyAppUpdateProgress(p) {
+  if (!appUpdateBtnEl) return;
+  const pct = Number(p && p.pct);
+  const received = Number(p && p.received) || 0;
+  const total = Number(p && p.total) || 0;
+  const size = total
+    ? `${formatBytes(received)} / ${formatBytes(total)}`
+    : received
+      ? formatBytes(received)
+      : "";
+  let text = "下载更新中…";
+  let title = "正在下载更新";
+  if (p && p.phase === "install") {
+    text = "正在安装…";
+    title = "下载完成，正在安装并重启";
+  } else if (Number.isFinite(pct) && total > 0) {
+    text = `下载中 ${pct}%`;
+    title = size;
+  } else if (received > 0) {
+    text = `下载中 ${formatBytes(received)}`;
+    title = size || "正在下载更新";
+  }
+  appUpdateBtnEl.disabled = true;
+  appUpdateBtnEl.textContent = text;
+  appUpdateBtnEl.title = title;
+  appUpdateBtnEl.className = "btn app-update-btn primary";
+  appUpdateBtnEl.classList.remove("hidden");
+}
+
 async function onAppUpdateClick() {
   if (state.appUpdateBusy) return;
   const s = state.appUpdate;
@@ -975,8 +1004,7 @@ async function onAppUpdateClick() {
     return;
   }
   state.appUpdateBusy = true;
-  appUpdateBtnEl.disabled = true;
-  appUpdateBtnEl.textContent = "下载更新中…";
+  applyAppUpdateProgress({ phase: "download", received: 0, total: 0, pct: 0 });
   try {
     await invoke("apply_app_update");
   } catch (err) {
@@ -2804,6 +2832,11 @@ certFormEl.addEventListener("submit", async (e) => {
 listen("tunnel-stopped", async () => {
   await loadTunnels();
   renderTunnelDetail();
+});
+
+listen("app-update-progress", (e) => {
+  if (!state.appUpdateBusy) return;
+  applyAppUpdateProgress(e.payload || {});
 });
 
 listen("cangling-update-progress", (e) => {

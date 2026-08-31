@@ -1,5 +1,9 @@
+use std::io::Write;
+use std::time::{Duration, Instant};
+
+use futures_util::StreamExt;
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 /// Update server base URL (same server the GitHub workflow pushes bundles to).
 const UPDATE_BASE_URL: &str = "https://soft.cangling.cn:22002";
@@ -14,6 +18,32 @@ pub struct AppUpdateStatus {
     pub latest: String,
     pub update_available: bool,
     pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AppUpdateProgress {
+    phase: String,
+    received: u64,
+    total: u64,
+    pct: u32,
+}
+
+fn emit_progress(app: &AppHandle, phase: &str, received: u64, total: u64) {
+    let pct = if total > 0 {
+        ((received.min(total) as f64 / total as f64) * 100.0).round() as u32
+    } else {
+        0
+    };
+    let _ = app.emit(
+        "app-update-progress",
+        AppUpdateProgress {
+            phase: phase.to_string(),
+            received,
+            total,
+            pct,
+        },
+    );
 }
 
 fn client() -> Result<reqwest::Client, String> {
@@ -94,21 +124,41 @@ pub async fn apply_app_update(app: AppHandle) -> Result<(), String> {
     let filename = bundle_file()?;
     let dest = std::env::temp_dir().join(filename);
 
-    let bytes = client()?
+    let resp = client()?
         .get(&url)
         .send()
         .await
         .map_err(|e| format!("下载失败: {e}"))?
         .error_for_status()
-        .map_err(|e| e.to_string())?
-        .bytes()
-        .await
         .map_err(|e| e.to_string())?;
 
-    if bytes.is_empty() {
+    let total = resp.content_length().unwrap_or(0);
+    emit_progress(&app, "download", 0, total);
+
+    let mut file =
+        std::fs::File::create(&dest).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    let mut stream = resp.bytes_stream();
+    let mut received = 0u64;
+    let mut last_emit = Instant::now();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| format!("下载中断: {e}"))?;
+        file.write_all(&chunk)
+            .map_err(|e| format!("写入临时文件失败: {e}"))?;
+        received += chunk.len() as u64;
+        if last_emit.elapsed() >= Duration::from_millis(200) {
+            emit_progress(&app, "download", received, total);
+            last_emit = Instant::now();
+        }
+    }
+    file.flush()
+        .map_err(|e| format!("写入临时文件失败: {e}"))?;
+    drop(file);
+
+    if received == 0 {
         return Err("下载到的文件为空".into());
     }
-    std::fs::write(&dest, &bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    emit_progress(&app, "download", received, total.max(received));
+    emit_progress(&app, "install", received, total.max(received));
 
     launch_installer(&dest)?;
     app.exit(0);
@@ -117,10 +167,60 @@ pub async fn apply_app_update(app: AppHandle) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
-    std::process::Command::new(dest)
+    use std::os::windows::process::CommandExt;
+
+    // Hide the helper console. The NSIS installer itself is launched with `/S`.
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let pid = std::process::id();
+    let setup = dest.to_path_buf();
+    let exe = std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {e}"))?;
+    let instdir = exe
+        .parent()
+        .ok_or_else(|| "无法确定安装目录".to_string())?
+        .to_path_buf();
+    let uninst = instdir.join("uninstall.exe");
+
+    let script_path = std::env::temp_dir().join("cangling-keeper-update.ps1");
+    let script = format!(
+        r#"$ErrorActionPreference = 'SilentlyContinue'
+Wait-Process -Id {pid} -ErrorAction SilentlyContinue
+$uninst = {uninst}
+$instdir = {instdir}
+$setup = {setup}
+if (Test-Path -LiteralPath $uninst) {{
+  $p = Start-Process -FilePath $uninst -ArgumentList @('/S', "_?=$instdir") -PassThru -WindowStyle Hidden
+  if ($p) {{ $p.WaitForExit() }}
+}}
+Start-Process -FilePath $setup -ArgumentList @('/S', '/R') -WindowStyle Hidden
+Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
+"#,
+        uninst = powershell_literal(&uninst),
+        instdir = powershell_literal(&instdir),
+        setup = powershell_literal(&setup),
+    );
+    std::fs::write(&script_path, script).map_err(|e| format!("写入更新脚本失败: {e}"))?;
+
+    std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&script_path)
+        .creation_flags(CREATE_NO_WINDOW)
         .spawn()
         .map_err(|e| format!("启动安装程序失败: {e}"))?;
     Ok(())
+}
+
+/// Single-quoted PowerShell string literal. Paths are wrapped so spaces and
+/// most special characters in usernames do not break the helper script.
+#[cfg(target_os = "windows")]
+fn powershell_literal(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy().replace('\'', "''");
+    format!("'{s}'")
 }
 
 #[cfg(target_os = "linux")]
