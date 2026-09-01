@@ -15,10 +15,12 @@ use crate::sync::SETTING_SERVER_URL;
 const SETTING_SOFTWARE_SET: &str = "software_set";
 const SETTING_SOFTWARE_SETS: &str = "software_sets";
 const SETTING_SOFTWARE_SETS_SEED: &str = "software_sets_seed";
-const SOFTWARE_SETS_SEED: &str = "2";
+const SOFTWARE_SETS_SEED: &str = "3";
 const DEFAULT_SET_NAME: &str = "np4";
 const DEFAULT_GIT_SET_NAME: &str = "cangling-repo";
 const DEFAULT_GIT_URL: &str = "https://code.cangling.cn:22002/operation/cangling-repo.git";
+const DEFAULT_GIT_NP4_SET_NAME: &str = "cangling-np4";
+const DEFAULT_GIT_NP4_URL: &str = "https://git.cangling.cn/operation/cangling-np4.git";
 const DEFAULT_GIT_USER: &str = "cangling-update";
 const DEFAULT_GIT_TOKEN: &str = "94894bb4dbedb33707c868872081bd6e8c02bc8b";
 const KIND_MANIFEST: &str = "manifest";
@@ -177,8 +179,19 @@ fn default_git_repo() -> SoftwareSetRecord {
     }
 }
 
+fn default_git_np4() -> SoftwareSetRecord {
+    SoftwareSetRecord {
+        name: DEFAULT_GIT_NP4_SET_NAME.to_string(),
+        kind: KIND_GIT.to_string(),
+        git_url: DEFAULT_GIT_NP4_URL.to_string(),
+        git_username: DEFAULT_GIT_USER.to_string(),
+        git_token: DEFAULT_GIT_TOKEN.to_string(),
+        git_branch: String::new(),
+    }
+}
+
 fn default_sets() -> Vec<SoftwareSetRecord> {
-    vec![default_np4(), default_git_repo()]
+    vec![default_np4(), default_git_repo(), default_git_np4()]
 }
 
 fn ensure_named(records: &mut Vec<SoftwareSetRecord>, rec: SoftwareSetRecord, index: usize) {
@@ -212,6 +225,7 @@ fn apply_default_sets(records: &mut Vec<SoftwareSetRecord>) {
         0
     };
     ensure_named(records, default_git_repo(), git_index);
+    ensure_named(records, default_git_np4(), git_index + 1);
 }
 
 #[derive(Debug, Clone, Serialize)]
