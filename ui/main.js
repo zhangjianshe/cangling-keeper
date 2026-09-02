@@ -2966,7 +2966,9 @@ listen("cangling-update-progress", (e) => {
 listen("host-software-sync-progress", (e) => {
   const p = e.payload || {};
   if (p.hostId && state.selectedHostId && p.hostId !== state.selectedHostId) return;
-  state.hostSyncing = true;
+  // Tauri events can arrive after the command promise has resolved.  Ignore
+  // those stale progress events so they cannot reopen a completed sync panel.
+  if (!state.hostSyncing) return;
   renderHostSyncProgress(p);
   renderSoftwareSyncBtn();
 });
