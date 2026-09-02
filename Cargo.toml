@@ -28,7 +28,7 @@ tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "time",
 rand = "0.10"
 tun = { version = "0.8.14", features = ["async"] }
 sha2 = "0.10"
-arboard = { version = "3", default-features = false, features = ["wayland-data-control"] }
+arboard = { version = "3", default-features = false }
 
 [profile.release]
 codegen-units = 1
