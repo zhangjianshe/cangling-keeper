@@ -230,6 +230,40 @@ function initTerminal() {
       invoke("terminal_resize", { termId: state.termId, cols, rows }).catch(() => {});
     }
   });
+
+  terminalEl.addEventListener("contextmenu", async (e) => {
+    const selected = term.getSelection();
+    if (!selected) return;
+    e.preventDefault();
+
+    let copied = false;
+    try {
+      await invoke("write_clipboard_text", { text: selected });
+      copied = true;
+    } catch (_) {}
+
+    if (!copied) {
+      const ta = document.createElement("textarea");
+      ta.value = selected;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      copied = document.execCommand("copy");
+      ta.remove();
+    }
+
+    if (copied) {
+      termStatusEl.textContent = "已复制";
+      setTimeout(() => {
+        termStatusEl.textContent = state.termId ? "Connected" : "Disconnected";
+      }, 1500);
+    } else {
+      uiAlert("复制终端选中内容失败");
+    }
+    term.focus();
+  });
 }
 
 function updateTerminalUI() {

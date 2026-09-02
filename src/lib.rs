@@ -30,6 +30,7 @@ use uuid::Uuid;
 
 pub(crate) struct AppState {
     pub(crate) store: Mutex<Store>,
+    clipboard: Mutex<Option<arboard::Clipboard>>,
     active_tunnels: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     active_terminals: Mutex<HashMap<String, TerminalHandle>>,
     proxy: Mutex<ProxyRuntime>,
@@ -98,6 +99,21 @@ fn create_certificate(keys_dir: &Path, name: &str) -> Result<Certificate, String
 
 fn err_box(e: String) -> Box<dyn std::error::Error> {
     e.into()
+}
+
+#[tauri::command]
+fn write_clipboard_text(state: State<'_, AppState>, text: String) -> Result<(), String> {
+    let mut clipboard = state.clipboard.lock().map_err(|e| e.to_string())?;
+    if clipboard.is_none() {
+        *clipboard = Some(
+            arboard::Clipboard::new().map_err(|e| format!("无法访问系统剪贴板：{e}"))?,
+        );
+    }
+    clipboard
+        .as_mut()
+        .expect("clipboard was initialized")
+        .set_text(text)
+        .map_err(|e| format!("无法写入系统剪贴板：{e}"))
 }
 
 /// Resolve the per-user data directory for the app and make sure it exists.
@@ -1520,6 +1536,7 @@ pub fn run() {
             let proxy_settings = store.get_proxy_settings().unwrap_or_default();
             app.manage(AppState {
                 store: Mutex::new(store),
+                clipboard: Mutex::new(None),
                 active_tunnels: Mutex::new(HashMap::new()),
                 active_terminals: Mutex::new(HashMap::new()),
                 proxy: Mutex::new(ProxyRuntime {
@@ -1532,6 +1549,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            write_clipboard_text,
             list_hosts,
             add_host,
             update_host,
