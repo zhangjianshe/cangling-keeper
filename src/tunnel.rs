@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth::Auth;
 
-/// An SSH local port-forward tunnel (`ssh -N -L ...`).
+/// An SSH tunnel parsed from `ssh -N -L ...` or `ssh -N -R ...`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Tunnel {
@@ -61,6 +61,7 @@ pub struct TunnelInfo {
 
 /// Parse an SSH command such as:
 ///   `ssh -N -L 12345:10.1.1.1:22 root@123.12.3.1`
+///   `ssh -p 22001 -N -R 12345:localhost:12345 root@lc.cangling.cn`
 ///   `ssh -N -L 12345:10.1.1.1:22 -p 2222 -i ~/.ssh/id_ed25519 root@123.12.3.1`
 ///
 /// Returns a `Tunnel` with empty id/name that the caller can fill in.
@@ -70,7 +71,7 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
         return Err("Command is empty".into());
     }
 
-    let mut local_forward: Option<(u16, String, u16)> = None;
+    let mut forward: Option<(u16, String, u16)> = None;
     let mut ssh_port: u16 = 22;
     let mut destination: Option<String> = None;
 
@@ -83,10 +84,22 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
             if i >= tokens.len() {
                 return Err("Missing value after -L".into());
             }
-            local_forward = Some(parse_local_forward(tokens[i])?);
+            forward = Some(parse_forward(tokens[i], "-L")?);
         } else if token.starts_with("-L") && token.len() > 2 {
             let spec = token[2..].trim_start_matches('=').to_string();
-            local_forward = Some(parse_local_forward(&spec)?);
+            forward = Some(parse_forward(&spec, "-L")?);
+        } else if token == "-R" {
+            i += 1;
+            if i >= tokens.len() {
+                return Err("Missing value after -R".into());
+            }
+            // The form stores a port, target host, and target port.  Those
+            // fields map directly to a reverse-forward specification too:
+            // remote-listen-port:local-host:local-port.
+            forward = Some(parse_forward(tokens[i], "-R")?);
+        } else if token.starts_with("-R") && token.len() > 2 {
+            let spec = token[2..].trim_start_matches('=').to_string();
+            forward = Some(parse_forward(&spec, "-R")?);
         } else if token == "-p" {
             i += 1;
             if i >= tokens.len() {
@@ -111,8 +124,8 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
         i += 1;
     }
 
-    let (local_port, remote_host, remote_port) = local_forward
-        .ok_or("No -L local forward found (expected -L local_port:remote_host:remote_port)")?;
+    let (local_port, remote_host, remote_port) = forward
+        .ok_or("No SSH forward found (expected -L or -R port:host:port)")?;
 
     let destination = destination.ok_or("No SSH destination found (expected user@host)")?;
     let (username, ssh_host, dest_port) = parse_destination(&destination);
@@ -133,14 +146,14 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
     })
 }
 
-fn parse_local_forward(spec: &str) -> Result<(u16, String, u16), String> {
+fn parse_forward(spec: &str, kind: &str) -> Result<(u16, String, u16), String> {
     let parts: Vec<&str> = spec.split(':').collect();
     let (local, remote_host, remote_port) = match parts.len() {
         3 => (parts[0], parts[1], parts[2]),
         4 => (parts[1], parts[2], parts[3]), // [bind_address:]local:host:port
         _ => {
             return Err(format!(
-                "Invalid -L spec '{spec}' (expected local_port:remote_host:remote_port)"
+                "Invalid {kind} spec '{spec}' (expected port:host:port)"
             ));
         }
     };
@@ -194,5 +207,19 @@ mod tests {
         assert_eq!(t.ssh_port, 2222);
         assert_eq!(t.username, "admin");
         assert!(matches!(t.auth, Auth::Password { .. }));
+    }
+
+    #[test]
+    fn parses_reverse_forward_with_ssh_port() {
+        let t = parse_ssh_command(
+            "ssh -p 22001 -N -R 12345:localhost:12345 root@lc.cangling.cn",
+        )
+        .unwrap();
+        assert_eq!(t.local_port, 12345);
+        assert_eq!(t.remote_host, "localhost");
+        assert_eq!(t.remote_port, 12345);
+        assert_eq!(t.ssh_host, "lc.cangling.cn");
+        assert_eq!(t.ssh_port, 22001);
+        assert_eq!(t.username, "root");
     }
 }
