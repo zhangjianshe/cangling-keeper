@@ -396,6 +396,8 @@
           <label>分组 <input name="catalog" type="text" placeholder="e.g. 河南" /></label>
           <label>Hostname / IP <input name="hostname" type="text" required placeholder="e.g. 10.0.0.5" /></label>
           <label>Port <input name="port" type="number" min="1" max="65535" value="22" /></label>
+          <label>更新端口 <input name="update_port" type="number" min="1" max="65535" value="5400" /></label>
+          <p class="hint">该主机 cangling-update 服务的 HTTP 端口（缺省 5400）。</p>
           <label>Username <input name="username" type="text" required placeholder="e.g. root" /></label>
           <label>远端代理端口 <input name="inject_remote_port" type="number" min="1" max="65535" value="7890" /></label>
           <p class="hint">连接时自动检测本地代理，并反向注入到该主机 127.0.0.1 的此端口（缺省 7890）。</p>

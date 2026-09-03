@@ -632,7 +632,9 @@ function clusterMgrPort(hostId) {
     return Number(p.port);
   }
   const cached = hostId ? Number(state.clusterPorts[hostId] || 0) : 0;
-  return cached > 0 ? cached : 5400;
+  if (cached > 0) return cached;
+  const host = hostById(hostId);
+  return Number(host && host.update_port) > 0 ? Number(host.update_port) : 5400;
 }
 
 function clusterMgrUrl(host) {
@@ -803,7 +805,16 @@ async function probeCanglingUpdate() {
     return;
   }
   const port = Number(state.updateProbe && state.updateProbe.port) || 0;
-  if (port > 0) state.clusterPorts[hostId] = port;
+  if (port > 0) {
+    state.clusterPorts[hostId] = port;
+    const host = hostById(hostId);
+    if (host && host.owned && Number(host.update_port) !== port) {
+      host.update_port = port;
+      invoke("update_host", { host }).catch((err) => {
+        console.warn("注册 cangling-update 端口失败", err);
+      });
+    }
+  }
   updateHostActionsUI();
 }
 
@@ -2218,6 +2229,7 @@ function openHostModal(host) {
   f.catalog.value = host ? host.catalog || "" : "";
   f.hostname.value = host ? host.hostname : "";
   f.port.value = host ? host.port : 22;
+  f.update_port.value = host ? host.update_port || 5400 : 5400;
   f.username.value = host ? host.username : "";
   f.inject_remote_port.value = host ? hostInjectRemotePort(host) : 7890;
   f.is_public.checked = host ? !!host.is_public : false;
@@ -2249,6 +2261,7 @@ function openCopyHostModal(host) {
   f.catalog.value = host.catalog || "";
   f.hostname.value = host.hostname;
   f.port.value = host.port;
+  f.update_port.value = host.update_port || 5400;
   f.username.value = host.username;
   f.inject_remote_port.value = hostInjectRemotePort(host);
   f.is_public.checked = false;
@@ -2852,6 +2865,7 @@ hostFormEl.addEventListener("submit", async (e) => {
     name: f.name.value.trim(),
     hostname: f.hostname.value.trim(),
     port: parseInt(f.port.value, 10) || 22,
+    update_port: parseInt(f.update_port.value, 10) || 5400,
     username: f.username.value.trim(),
     inject_remote_port: parseInt(f.inject_remote_port.value, 10) || 7890,
     catalog: f.catalog.value.trim(),

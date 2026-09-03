@@ -11,6 +11,9 @@ pub struct Host {
     pub hostname: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// cangling-update HTTP service port on this host.
+    #[serde(default = "default_update_port")]
+    pub update_port: u16,
     pub username: String,
     /// Remote listen port for `ssh -N -R <port>:<local-proxy>`. Default 7890.
     #[serde(default = "default_inject_remote_port")]
@@ -37,11 +40,23 @@ fn default_port() -> u16 {
     22
 }
 
+fn default_update_port() -> u16 {
+    5400
+}
+
 fn default_inject_remote_port() -> u16 {
     7890
 }
 
 impl Host {
+    pub fn update_port_or_default(&self) -> u16 {
+        if self.update_port == 0 {
+            default_update_port()
+        } else {
+            self.update_port
+        }
+    }
+
     pub fn inject_remote_port_or_default(&self) -> u16 {
         if self.inject_remote_port == 0 {
             default_inject_remote_port()
@@ -62,6 +77,9 @@ impl Host {
         }
         if self.port == 0 {
             return Err("Port must be between 1 and 65535".into());
+        }
+        if self.update_port == 0 {
+            return Err("cangling-update port must be between 1 and 65535".into());
         }
         if self.inject_remote_port == 0 {
             return Err("Remote proxy port must be between 1 and 65535".into());

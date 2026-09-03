@@ -39,6 +39,8 @@ pub struct SyncHost {
     #[serde(default)]
     pub port: u16,
     #[serde(default)]
+    pub update_port: u16,
+    #[serde(default)]
     pub username: String,
     #[serde(default)]
     pub auth_method: String,
@@ -197,6 +199,7 @@ pub fn host_to_sync(store: &Store, data_dir: &Path, host: &Host) -> Result<SyncH
         name: host.name.clone(),
         hostname: host.hostname.clone(),
         port: host.port,
+        update_port: host.update_port_or_default(),
         username: host.username.clone(),
         auth_method,
         password,
@@ -237,6 +240,7 @@ pub fn sync_to_host(store: &Store, keys_dir: &Path, s: &SyncHost) -> Result<Host
         name: s.name.clone(),
         hostname: s.hostname.clone(),
         port: if s.port == 0 { 22 } else { s.port },
+        update_port: if s.update_port == 0 { 5400 } else { s.update_port },
         username: s.username.clone(),
         inject_remote_port: if s.inject_remote_port == 0 {
             7890

@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS hosts (
     catalog             TEXT NOT NULL DEFAULT '',
     remote_id           TEXT NOT NULL DEFAULT '',
     is_public           INTEGER NOT NULL DEFAULT 0,
-    owned               INTEGER NOT NULL DEFAULT 0
+    owned               INTEGER NOT NULL DEFAULT 0,
+    update_port         INTEGER NOT NULL DEFAULT 5400
 );
 
 CREATE TABLE IF NOT EXISTS tunnels (
@@ -88,7 +89,7 @@ impl Store {
             .conn
             .prepare(
                 "SELECT id, name, hostname, port, username, auth_method, password, certificate_id,
-                        inject_remote_port, catalog, remote_id, is_public, owned
+                        inject_remote_port, catalog, remote_id, is_public, owned, update_port
                  FROM hosts ORDER BY name COLLATE NOCASE",
             )
             .map_err(|e| e.to_string())?;
@@ -106,7 +107,7 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id, name, hostname, port, username, auth_method, password, certificate_id,
-                        inject_remote_port, catalog, remote_id, is_public, owned
+                        inject_remote_port, catalog, remote_id, is_public, owned, update_port
                  FROM hosts WHERE id = ?1",
                 params![id],
                 host_from_row,
@@ -122,8 +123,8 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO hosts (id, name, hostname, port, username, auth_method, password, certificate_id,
-                                    inject_remote_port, catalog, remote_id, is_public, owned)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                                    inject_remote_port, catalog, remote_id, is_public, owned, update_port)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     host.id,
                     host.name,
@@ -137,7 +138,8 @@ impl Store {
                     host.catalog,
                     host.remote_id,
                     host.is_public as i64,
-                    host.owned as i64
+                    host.owned as i64,
+                    host.update_port_or_default() as i64
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -151,8 +153,8 @@ impl Store {
             .execute(
                 "UPDATE hosts SET name=?1, hostname=?2, port=?3, username=?4,
                         auth_method=?5, password=?6, certificate_id=?7,
-                        inject_remote_port=?8, catalog=?9, remote_id=?10, is_public=?11, owned=?12
-                 WHERE id=?13",
+                        inject_remote_port=?8, catalog=?9, remote_id=?10, is_public=?11, owned=?12,
+                        update_port=?13 WHERE id=?14",
                 params![
                     host.name,
                     host.hostname,
@@ -166,6 +168,7 @@ impl Store {
                     host.remote_id,
                     host.is_public as i64,
                     host.owned as i64,
+                    host.update_port_or_default() as i64,
                     host.id
                 ],
             )
@@ -483,6 +486,12 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     ensure_column(
         conn,
         "hosts",
+        "update_port",
+        "ALTER TABLE hosts ADD COLUMN update_port INTEGER NOT NULL DEFAULT 5400",
+    )?;
+    ensure_column(
+        conn,
+        "hosts",
         "catalog",
         "ALTER TABLE hosts ADD COLUMN catalog TEXT NOT NULL DEFAULT ''",
     )?;
@@ -555,11 +564,13 @@ fn host_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Host> {
     let remote_id: String = row.get(10)?;
     let is_public: i64 = row.get(11)?;
     let owned: i64 = row.get(12)?;
+    let update_port: i64 = row.get(13)?;
     Ok(Host {
         id: row.get(0)?,
         name: row.get(1)?,
         hostname: row.get(2)?,
         port: row.get(3)?,
+        update_port: update_port.clamp(0, 65535) as u16,
         username: row.get(4)?,
         inject_remote_port: inject_remote_port.clamp(0, 65535) as u16,
         auth,
