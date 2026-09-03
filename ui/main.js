@@ -1241,6 +1241,7 @@ loginFormEl.addEventListener("submit", async (e) => {
     await loadHosts();
     await loadCertificates();
     updateMainView();
+    closeLoginModal();
   } catch (err) {
     loginStatusEl.textContent = `登录失败: ${err}`;
   }

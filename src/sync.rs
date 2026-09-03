@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::auth::Auth;
 use crate::certificate::Certificate;
@@ -38,7 +38,7 @@ pub struct SyncHost {
     pub hostname: String,
     #[serde(default)]
     pub port: u16,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default_u16")]
     pub update_port: u16,
     #[serde(default)]
     pub update_role: String,
@@ -72,6 +72,15 @@ pub struct LoginData {
     pub user_name: String,
     #[serde(default)]
     pub nick_name: String,
+}
+
+/// Newer server fields may be NULL on rows created before the schema change.
+/// Treat null exactly like a missing port so old records remain synchronizable.
+fn null_to_default_u16<'de, D>(deserializer: D) -> Result<u16, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Ok(Option::<u16>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Deserialize)]
@@ -306,4 +315,18 @@ fn import_certificate(
     };
     store.add_certificate(&cert)?;
     Ok(cert)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SyncHost;
+
+    #[test]
+    fn old_remote_host_with_null_update_port_uses_default() {
+        let host: SyncHost = serde_json::from_str(
+            r#"{"id":"h1","name":"host","hostname":"10.0.0.1","updatePort":null}"#,
+        )
+        .unwrap();
+        assert_eq!(host.update_port, 0);
+    }
 }
