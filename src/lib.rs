@@ -1172,6 +1172,21 @@ async fn set_cangling_role(
     }
     let (parsed_role, active, token_set, parsed_master) =
         host_actions::parse_set_role(&out.stdout)?;
+    let host_for_sync = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let mut host = store.get_host(&host_id)?;
+        host.update_role = parsed_role.clone();
+        store.update_host(&host)?;
+        host
+    };
+    // Persist the changed runtime role to the remote host catalogue as well.
+    // A missing login/temporary server error must not undo a successful role
+    // change on the host itself; the normal sync will retry it later.
+    if host_for_sync.owned {
+        if let Err(err) = push_host_to_server(&state, &host_for_sync).await {
+            eprintln!("同步主机类型到服务器失败（{}）: {err}", host_for_sync.name);
+        }
+    }
     // Build master_url for display:
     // - master role: host's own URL + token
     // - worker role: master URL + token

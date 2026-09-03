@@ -14,6 +14,9 @@ pub struct Host {
     /// cangling-update HTTP service port on this host.
     #[serde(default = "default_update_port")]
     pub update_port: u16,
+    /// cangling-update runtime role: standalone, master, or worker.
+    #[serde(default = "default_update_role")]
+    pub update_role: String,
     pub username: String,
     /// Remote listen port for `ssh -N -R <port>:<local-proxy>`. Default 7890.
     #[serde(default = "default_inject_remote_port")]
@@ -42,6 +45,10 @@ fn default_port() -> u16 {
 
 fn default_update_port() -> u16 {
     5400
+}
+
+fn default_update_role() -> String {
+    "standalone".into()
 }
 
 fn default_inject_remote_port() -> u16 {
