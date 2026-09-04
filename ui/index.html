@@ -463,6 +463,7 @@
             <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" /></label>
             <label>Username <input name="username" type="text" required placeholder="root" /></label>
           </div>
+          <p class="hint">Remote (-R) 模式：Remote host 是远端监听 IP（可填 0.0.0.0），Local host / IP 是本地目标地址。远端公开监听需 sshd 允许 GatewayPorts。</p>
 
           <fieldset class="auth-fieldset">
             <legend>Authentication</legend>

@@ -1562,8 +1562,8 @@ function renderTunnelList() {
         selected: t.id === state.selectedTunnelId,
         name: t.name,
         sub: t.direction === "remote"
-          ? `Remote :${t.localPort} ← ${t.localHost}:${t.remotePort}`
-          : `Local :${t.localPort} → ${t.remoteHost}:${t.remotePort}`,
+          ? `Remote ${t.remoteHost}:${t.localPort} ← ${t.localHost}:${t.remotePort}`
+          : `Local ${t.localHost}:${t.localPort} → ${t.remoteHost}:${t.remotePort}`,
         active: t.active,
         onClick: () => selectTunnel(t.id),
       })
@@ -1712,7 +1712,7 @@ function renderTunnelDetail() {
   const reverse = t.direction === "remote";
   tLocalLabelEl.textContent = reverse ? "Remote listen" : "Local listen";
   tRemoteLabelEl.textContent = reverse ? "Local target" : "Remote target";
-  tLocalEl.textContent = `${reverse ? "localhost" : "127.0.0.1"}:${t.localPort}`;
+  tLocalEl.textContent = `${reverse ? t.remoteHost : t.localHost}:${t.localPort}`;
   tRemoteEl.textContent = `${reverse ? t.localHost : t.remoteHost}:${t.remotePort}`;
   tSshEl.textContent = `${t.username}@${t.sshHost}:${t.sshPort}`;
   tAuthEl.textContent =

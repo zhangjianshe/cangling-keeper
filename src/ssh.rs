@@ -394,6 +394,7 @@ impl client::Handler for ReverseSshClient {
 
 pub struct InjectedProxy {
     session: client::Handle<ReverseSshClient>,
+    remote_host: String,
     remote_port: u16,
 }
 
@@ -412,7 +413,7 @@ pub async fn establish_inject(
     let mut session = connect_with(&host.hostname, host.port, handler).await?;
     authenticate(&mut session, &host.username, auth).await?;
 
-    if session
+    let remote_host = if session
         .tcpip_forward("localhost", remote_port as u32)
         .await
         .is_err()
@@ -423,10 +424,14 @@ pub async fn establish_inject(
             .map_err(|e| {
                 format!("Remote forward -R {remote_port} rejected (is the port in use?): {e:?}")
             })?;
-    }
+        "127.0.0.1"
+    } else {
+        "localhost"
+    };
 
     Ok(InjectedProxy {
         session,
+        remote_host: remote_host.to_string(),
         remote_port,
     })
 }
@@ -442,23 +447,24 @@ pub async fn establish_reverse_tunnel(
     };
     let mut session = connect_with(&tunnel.ssh_host, tunnel.ssh_port, handler).await?;
     authenticate(&mut session, &tunnel.username, auth).await?;
-    if session
-        .tcpip_forward("localhost", tunnel.local_port as u32)
+    let remote_host = tunnel.remote_host.trim();
+    session
+        .tcpip_forward(remote_host, tunnel.local_port as u32)
         .await
-        .is_err()
-    {
-        session
-            .tcpip_forward("127.0.0.1", tunnel.local_port as u32)
-            .await
-            .map_err(|e| {
-                format!(
-                    "Remote forward -R {}:{}:{} rejected: {e:?}",
-                    tunnel.local_port, tunnel.remote_host, tunnel.remote_port
-                )
-            })?;
-    }
+        .map_err(|e| {
+            let gateway_ports_hint = if remote_host == "0.0.0.0" {
+                "; 请检查远端 sshd 是否已启用 GatewayPorts clientspecified（或 yes）"
+            } else {
+                ""
+            };
+            format!(
+                "远端监听 {remote_host}:{} 失败: {e:?}{gateway_ports_hint}",
+                tunnel.local_port
+            )
+        })?;
     Ok(InjectedProxy {
         session,
+        remote_host: remote_host.to_string(),
         remote_port: tunnel.local_port,
     })
 }
@@ -467,6 +473,7 @@ pub async fn establish_reverse_tunnel(
 pub async fn hold_inject(injected: InjectedProxy, mut cancel: tokio::sync::oneshot::Receiver<()>) {
     let InjectedProxy {
         session,
+        remote_host,
         remote_port,
     } = injected;
 
@@ -483,10 +490,7 @@ pub async fn hold_inject(injected: InjectedProxy, mut cancel: tokio::sync::onesh
     }
 
     let _ = session
-        .cancel_tcpip_forward("localhost", remote_port as u32)
-        .await;
-    let _ = session
-        .cancel_tcpip_forward("127.0.0.1", remote_port as u32)
+        .cancel_tcpip_forward(&remote_host, remote_port as u32)
         .await;
     let _ = session
         .disconnect(Disconnect::ByApplication, "inject stopped", "en")

@@ -89,7 +89,8 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
         return Err("Command is empty".into());
     }
 
-    let mut forward: Option<(u16, String, u16)> = None;
+    // Optional bind address, listening port, target host, target port.
+    let mut forward: Option<(Option<String>, u16, String, u16)> = None;
     let mut direction = "local".to_string();
     let mut ssh_port: u16 = 22;
     let mut destination: Option<String> = None;
@@ -145,7 +146,7 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
         i += 1;
     }
 
-    let (local_port, remote_host, remote_port) =
+    let (bind_host, local_port, target_host, remote_port) =
         forward.ok_or("No SSH forward found (expected -L or -R port:host:port)")?;
 
     let destination = destination.ok_or("No SSH destination found (expected user@host)")?;
@@ -153,10 +154,16 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
     if dest_port != 22 {
         ssh_port = dest_port;
     }
-    let local_host = if direction == "remote" {
-        remote_host.clone()
+    let (local_host, remote_host) = if direction == "remote" {
+        // -R [bind_address:]port:host:hostport: remote_host is the address
+        // listened on by the SSH server, while local_host is the local target.
+        (
+            target_host,
+            bind_host.unwrap_or_else(|| "localhost".to_string()),
+        )
     } else {
-        default_local_host()
+        // -L [bind_address:]port:host:hostport.
+        (bind_host.unwrap_or_else(default_local_host), target_host)
     };
 
     Ok(Tunnel {
@@ -174,11 +181,11 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
     })
 }
 
-fn parse_forward(spec: &str, kind: &str) -> Result<(u16, String, u16), String> {
+fn parse_forward(spec: &str, kind: &str) -> Result<(Option<String>, u16, String, u16), String> {
     let parts: Vec<&str> = spec.split(':').collect();
-    let (local, remote_host, remote_port) = match parts.len() {
-        3 => (parts[0], parts[1], parts[2]),
-        4 => (parts[1], parts[2], parts[3]), // [bind_address:]local:host:port
+    let (bind_host, local, remote_host, remote_port) = match parts.len() {
+        3 => (None, parts[0], parts[1], parts[2]),
+        4 => (Some(parts[0].to_string()), parts[1], parts[2], parts[3]),
         _ => {
             return Err(format!(
                 "Invalid {kind} spec '{spec}' (expected port:host:port)"
@@ -191,7 +198,7 @@ fn parse_forward(spec: &str, kind: &str) -> Result<(u16, String, u16), String> {
     let remote_port = remote_port
         .parse::<u16>()
         .map_err(|_| format!("Invalid remote port: {remote_port}"))?;
-    Ok((local_port, remote_host.to_string(), remote_port))
+    Ok((bind_host, local_port, remote_host.to_string(), remote_port))
 }
 
 fn parse_destination(dest: &str) -> (String, String, u16) {
@@ -251,5 +258,28 @@ mod tests {
         assert_eq!(t.ssh_port, 22001);
         assert_eq!(t.username, "root");
         assert_eq!(t.direction, "remote");
+    }
+
+    #[test]
+    fn parses_reverse_forward_with_remote_bind_address() {
+        let t = parse_ssh_command(
+            "ssh -p 22001 -N -R 0.0.0.0:12345:localhost:12345 root@lc.cangling.cn",
+        )
+        .unwrap();
+        assert_eq!(t.direction, "remote");
+        assert_eq!(t.remote_host, "0.0.0.0");
+        assert_eq!(t.local_port, 12345);
+        assert_eq!(t.local_host, "localhost");
+        assert_eq!(t.remote_port, 12345);
+    }
+
+    #[test]
+    fn parses_local_forward_with_bind_address() {
+        let t = parse_ssh_command("ssh -N -L 0.0.0.0:8080:db:3306 root@gateway").unwrap();
+        assert_eq!(t.direction, "local");
+        assert_eq!(t.local_host, "0.0.0.0");
+        assert_eq!(t.local_port, 8080);
+        assert_eq!(t.remote_host, "db");
+        assert_eq!(t.remote_port, 3306);
     }
 }
