@@ -9,6 +9,8 @@ pub struct Tunnel {
     #[serde(default)]
     pub id: String,
     pub name: String,
+    #[serde(default = "default_direction")]
+    pub direction: String,
     pub local_port: u16,
     pub remote_host: String,
     pub remote_port: u16,
@@ -24,10 +26,17 @@ fn default_ssh_port() -> u16 {
     22
 }
 
+fn default_direction() -> String {
+    "local".into()
+}
+
 impl Tunnel {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
             return Err("Name is required".into());
+        }
+        if !matches!(self.direction.as_str(), "local" | "remote") {
+            return Err("Tunnel direction must be local or remote".into());
         }
         if self.local_port == 0 {
             return Err("Local port must be between 1 and 65535".into());
@@ -72,6 +81,7 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
     }
 
     let mut forward: Option<(u16, String, u16)> = None;
+    let mut direction = "local".to_string();
     let mut ssh_port: u16 = 22;
     let mut destination: Option<String> = None;
 
@@ -89,6 +99,7 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
             let spec = token[2..].trim_start_matches('=').to_string();
             forward = Some(parse_forward(&spec, "-L")?);
         } else if token == "-R" {
+            direction = "remote".into();
             i += 1;
             if i >= tokens.len() {
                 return Err("Missing value after -R".into());
@@ -98,6 +109,7 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
             // remote-listen-port:local-host:local-port.
             forward = Some(parse_forward(tokens[i], "-R")?);
         } else if token.starts_with("-R") && token.len() > 2 {
+            direction = "remote".into();
             let spec = token[2..].trim_start_matches('=').to_string();
             forward = Some(parse_forward(&spec, "-R")?);
         } else if token == "-p" {
@@ -124,8 +136,8 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
         i += 1;
     }
 
-    let (local_port, remote_host, remote_port) = forward
-        .ok_or("No SSH forward found (expected -L or -R port:host:port)")?;
+    let (local_port, remote_host, remote_port) =
+        forward.ok_or("No SSH forward found (expected -L or -R port:host:port)")?;
 
     let destination = destination.ok_or("No SSH destination found (expected user@host)")?;
     let (username, ssh_host, dest_port) = parse_destination(&destination);
@@ -136,6 +148,7 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
     Ok(Tunnel {
         id: String::new(),
         name: String::new(),
+        direction,
         local_port,
         remote_host,
         remote_port,
@@ -191,6 +204,7 @@ mod tests {
         assert_eq!(t.ssh_host, "123.12.3.1");
         assert_eq!(t.ssh_port, 22);
         assert_eq!(t.username, "root");
+        assert_eq!(t.direction, "local");
         assert!(matches!(t.auth, Auth::Password { .. }));
     }
 
@@ -211,15 +225,14 @@ mod tests {
 
     #[test]
     fn parses_reverse_forward_with_ssh_port() {
-        let t = parse_ssh_command(
-            "ssh -p 22001 -N -R 12345:localhost:12345 root@lc.cangling.cn",
-        )
-        .unwrap();
+        let t = parse_ssh_command("ssh -p 22001 -N -R 12345:localhost:12345 root@lc.cangling.cn")
+            .unwrap();
         assert_eq!(t.local_port, 12345);
         assert_eq!(t.remote_host, "localhost");
         assert_eq!(t.remote_port, 12345);
         assert_eq!(t.ssh_host, "lc.cangling.cn");
         assert_eq!(t.ssh_port, 22001);
         assert_eq!(t.username, "root");
+        assert_eq!(t.direction, "remote");
     }
 }

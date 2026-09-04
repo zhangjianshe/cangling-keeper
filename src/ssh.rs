@@ -426,6 +426,38 @@ pub async fn establish_inject(
     })
 }
 
+/// Open a configured `ssh -N -R remote_port:local_host:local_port` tunnel.
+pub async fn establish_reverse_tunnel(
+    tunnel: &Tunnel,
+    auth: &ResolvedAuth,
+) -> Result<InjectedProxy, String> {
+    let handler = ReverseSshClient {
+        local_host: tunnel.remote_host.clone(),
+        local_port: tunnel.remote_port,
+    };
+    let mut session = connect_with(&tunnel.ssh_host, tunnel.ssh_port, handler).await?;
+    authenticate(&mut session, &tunnel.username, auth).await?;
+    if session
+        .tcpip_forward("localhost", tunnel.local_port as u32)
+        .await
+        .is_err()
+    {
+        session
+            .tcpip_forward("127.0.0.1", tunnel.local_port as u32)
+            .await
+            .map_err(|e| {
+                format!(
+                    "Remote forward -R {}:{}:{} rejected: {e:?}",
+                    tunnel.local_port, tunnel.remote_host, tunnel.remote_port
+                )
+            })?;
+    }
+    Ok(InjectedProxy {
+        session,
+        remote_port: tunnel.local_port,
+    })
+}
+
 /// Hold the reverse forward until `cancel` or the SSH session dies.
 pub async fn hold_inject(injected: InjectedProxy, mut cancel: tokio::sync::oneshot::Receiver<()>) {
     let InjectedProxy {

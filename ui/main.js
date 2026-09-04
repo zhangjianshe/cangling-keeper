@@ -102,7 +102,9 @@ const terminalEl = $("#terminal");
 const tunnelNameEl = $("#tunnel-name");
 const tunnelStatusEl = $("#tunnel-status");
 const tLocalEl = $("#t-local");
+const tLocalLabelEl = $("#t-local-label");
 const tRemoteEl = $("#t-remote");
+const tRemoteLabelEl = $("#t-remote-label");
 const tSshEl = $("#t-ssh");
 const tAuthEl = $("#t-auth");
 const toggleTunnelBtnEl = $("#toggle-tunnel-btn");
@@ -1559,7 +1561,9 @@ function renderTunnelList() {
       makeItem({
         selected: t.id === state.selectedTunnelId,
         name: t.name,
-        sub: `${t.localPort} → ${t.remoteHost}:${t.remotePort}`,
+        sub: t.direction === "remote"
+          ? `Remote :${t.localPort} ← ${t.remoteHost}:${t.remotePort}`
+          : `Local :${t.localPort} → ${t.remoteHost}:${t.remotePort}`,
         active: t.active,
         onClick: () => selectTunnel(t.id),
       })
@@ -1705,7 +1709,10 @@ function renderTunnelDetail() {
   tunnelNameEl.textContent = t.name;
   tunnelStatusEl.textContent = t.active ? "Connected" : "Disconnected";
   tunnelStatusEl.className = "status " + (t.active ? "on" : "off");
-  tLocalEl.textContent = `127.0.0.1:${t.localPort}`;
+  const reverse = t.direction === "remote";
+  tLocalLabelEl.textContent = reverse ? "Remote listen" : "Local listen";
+  tRemoteLabelEl.textContent = reverse ? "Local target" : "Remote target";
+  tLocalEl.textContent = `${reverse ? "localhost" : "127.0.0.1"}:${t.localPort}`;
   tRemoteEl.textContent = `${t.remoteHost}:${t.remotePort}`;
   tSshEl.textContent = `${t.username}@${t.sshHost}:${t.sshPort}`;
   tAuthEl.textContent =
@@ -2295,6 +2302,7 @@ function openTunnelModal(tunnel) {
 
   const f = tunnelFormEl.elements;
   f.name.value = tunnel ? tunnel.name : "";
+  f.direction.value = tunnel ? tunnel.direction || "local" : "local";
   f.local_port.value = tunnel ? tunnel.localPort : "";
   f.remote_host.value = tunnel ? tunnel.remoteHost : "";
   f.remote_port.value = tunnel ? tunnel.remotePort : "";
@@ -2418,6 +2426,7 @@ async function parseSshCommand() {
   try {
     const t = await invoke("parse_ssh_command", { command: cmd });
     const f = tunnelFormEl.elements;
+    f.direction.value = t.direction || "local";
     f.local_port.value = t.localPort;
     f.remote_host.value = t.remoteHost;
     f.remote_port.value = t.remotePort;
@@ -2899,6 +2908,7 @@ tunnelFormEl.addEventListener("submit", async (e) => {
   const method = f.auth_method.value;
   const tunnel = {
     name: f.name.value.trim(),
+    direction: f.direction.value || "local",
     localPort: parseInt(f.local_port.value, 10) || 0,
     remoteHost: f.remote_host.value.trim(),
     remotePort: parseInt(f.remote_port.value, 10) || 0,

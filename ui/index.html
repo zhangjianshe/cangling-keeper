@@ -219,11 +219,11 @@
             <div class="detail-body">
               <div class="info-grid">
                 <div class="info-item">
-                  <span class="info-label">Local</span>
+                  <span id="t-local-label" class="info-label">Local</span>
                   <span id="t-local" class="info-value mono"></span>
                 </div>
                 <div class="info-item">
-                  <span class="info-label">Remote</span>
+                  <span id="t-remote-label" class="info-label">Remote</span>
                   <span id="t-remote" class="info-value mono"></span>
                 </div>
                 <div class="info-item">
@@ -449,6 +449,12 @@
           </div>
 
           <div class="grid-2">
+            <label>转发方式
+              <select name="direction">
+                <option value="local">Local (-L)</option>
+                <option value="remote">Remote (-R)</option>
+              </select>
+            </label>
             <label>Local port <input name="local_port" type="number" min="1" max="65535" required /></label>
             <label>Remote host <input name="remote_host" type="text" required placeholder="10.1.1.1" /></label>
             <label>Remote port <input name="remote_port" type="number" min="1" max="65535" required /></label>

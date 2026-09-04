@@ -414,6 +414,30 @@ async fn tunnel_connect(
         (tunnel, auth)
     };
 
+    if tunnel.direction == "remote" {
+        let established = ssh::establish_reverse_tunnel(&tunnel, &auth).await?;
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let mut active = state.active_tunnels.lock().map_err(|e| e.to_string())?;
+            if active.contains_key(&tunnel_id) {
+                return Err("Tunnel is already connected".into());
+            }
+            active.insert(tunnel_id.clone(), tx);
+        }
+        let app2 = app.clone();
+        let id = tunnel_id.clone();
+        tauri::async_runtime::spawn(async move {
+            ssh::hold_inject(established, rx).await;
+            if let Some(st) = app2.try_state::<AppState>() {
+                if let Ok(mut active) = st.active_tunnels.lock() {
+                    active.remove(&id);
+                }
+            }
+            let _ = app2.emit("tunnel-stopped", &id);
+        });
+        return Ok(());
+    }
+
     let established = ssh::establish_tunnel(&tunnel, &auth).await?;
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();

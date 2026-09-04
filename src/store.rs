@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS tunnels (
     username       TEXT NOT NULL,
     auth_method    TEXT NOT NULL DEFAULT 'password',
     password       TEXT NOT NULL DEFAULT '',
-    certificate_id TEXT NOT NULL DEFAULT ''
+    certificate_id TEXT NOT NULL DEFAULT '',
+    direction      TEXT NOT NULL DEFAULT 'local'
 );
 
 CREATE TABLE IF NOT EXISTS certificates (
@@ -200,7 +201,7 @@ impl Store {
             .conn
             .prepare(
                 "SELECT id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
-                        username, auth_method, password, certificate_id
+                        username, auth_method, password, certificate_id, direction
                  FROM tunnels ORDER BY name COLLATE NOCASE",
             )
             .map_err(|e| e.to_string())?;
@@ -218,7 +219,7 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
-                        username, auth_method, password, certificate_id
+                        username, auth_method, password, certificate_id, direction
                  FROM tunnels WHERE id = ?1",
                 params![id],
                 tunnel_from_row,
@@ -235,8 +236,8 @@ impl Store {
             .execute(
                 "INSERT INTO tunnels
                     (id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
-                     username, auth_method, password, certificate_id)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                     username, auth_method, password, certificate_id, direction)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
                 params![
                     tunnel.id,
                     tunnel.name,
@@ -248,7 +249,8 @@ impl Store {
                     tunnel.username,
                     method,
                     password,
-                    certificate_id
+                    certificate_id,
+                    tunnel.direction
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -262,8 +264,8 @@ impl Store {
             .execute(
                 "UPDATE tunnels SET name=?1, local_port=?2, remote_host=?3, remote_port=?4,
                         ssh_host=?5, ssh_port=?6, username=?7, auth_method=?8, password=?9,
-                        certificate_id=?10
-                 WHERE id=?11",
+                        certificate_id=?10, direction=?11
+                 WHERE id=?12",
                 params![
                     tunnel.name,
                     tunnel.local_port,
@@ -275,6 +277,7 @@ impl Store {
                     method,
                     password,
                     certificate_id,
+                    tunnel.direction,
                     tunnel.id
                 ],
             )
@@ -482,6 +485,12 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     )?;
     ensure_column(
         conn,
+        "tunnels",
+        "direction",
+        "ALTER TABLE tunnels ADD COLUMN direction TEXT NOT NULL DEFAULT 'local'",
+    )?;
+    ensure_column(
+        conn,
         "hosts",
         "inject_remote_port",
         "ALTER TABLE hosts ADD COLUMN inject_remote_port INTEGER NOT NULL DEFAULT 7890",
@@ -605,6 +614,7 @@ fn tunnel_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tunnel> {
     Ok(Tunnel {
         id: row.get(0)?,
         name: row.get(1)?,
+        direction: row.get(11)?,
         local_port: row.get(2)?,
         remote_host: row.get(3)?,
         remote_port: row.get(4)?,
