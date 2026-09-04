@@ -290,9 +290,14 @@ pub async fn establish_tunnel(
     let mut session = connect(&tunnel.ssh_host, tunnel.ssh_port).await?;
     authenticate(&mut session, &tunnel.username, auth).await?;
 
-    let listener = TcpListener::bind(("127.0.0.1", tunnel.local_port))
+    let listener = TcpListener::bind((tunnel.local_host.as_str(), tunnel.local_port))
         .await
-        .map_err(|e| format!("Failed to bind local port {}: {e}", tunnel.local_port))?;
+        .map_err(|e| {
+            format!(
+                "Failed to bind local address {}:{}: {e}",
+                tunnel.local_host, tunnel.local_port
+            )
+        })?;
 
     Ok(EstablishedTunnel { session, listener })
 }
@@ -432,7 +437,7 @@ pub async fn establish_reverse_tunnel(
     auth: &ResolvedAuth,
 ) -> Result<InjectedProxy, String> {
     let handler = ReverseSshClient {
-        local_host: tunnel.remote_host.clone(),
+        local_host: tunnel.local_host.clone(),
         local_port: tunnel.remote_port,
     };
     let mut session = connect_with(&tunnel.ssh_host, tunnel.ssh_port, handler).await?;

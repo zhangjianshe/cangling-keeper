@@ -11,6 +11,8 @@ pub struct Tunnel {
     pub name: String,
     #[serde(default = "default_direction")]
     pub direction: String,
+    #[serde(default = "default_local_host")]
+    pub local_host: String,
     pub local_port: u16,
     pub remote_host: String,
     pub remote_port: u16,
@@ -30,6 +32,10 @@ fn default_direction() -> String {
     "local".into()
 }
 
+fn default_local_host() -> String {
+    "127.0.0.1".into()
+}
+
 impl Tunnel {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
@@ -37,6 +43,9 @@ impl Tunnel {
         }
         if !matches!(self.direction.as_str(), "local" | "remote") {
             return Err("Tunnel direction must be local or remote".into());
+        }
+        if self.local_host.trim().is_empty() {
+            return Err("Local host / IP is required".into());
         }
         if self.local_port == 0 {
             return Err("Local port must be between 1 and 65535".into());
@@ -144,11 +153,17 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
     if dest_port != 22 {
         ssh_port = dest_port;
     }
+    let local_host = if direction == "remote" {
+        remote_host.clone()
+    } else {
+        default_local_host()
+    };
 
     Ok(Tunnel {
         id: String::new(),
         name: String::new(),
         direction,
+        local_host,
         local_port,
         remote_host,
         remote_port,
@@ -199,6 +214,7 @@ mod tests {
     fn parses_basic_forward() {
         let t = parse_ssh_command("ssh -N -L 12345:10.1.1.1:22 root@123.12.3.1").unwrap();
         assert_eq!(t.local_port, 12345);
+        assert_eq!(t.local_host, "127.0.0.1");
         assert_eq!(t.remote_host, "10.1.1.1");
         assert_eq!(t.remote_port, 22);
         assert_eq!(t.ssh_host, "123.12.3.1");
@@ -228,6 +244,7 @@ mod tests {
         let t = parse_ssh_command("ssh -p 22001 -N -R 12345:localhost:12345 root@lc.cangling.cn")
             .unwrap();
         assert_eq!(t.local_port, 12345);
+        assert_eq!(t.local_host, "localhost");
         assert_eq!(t.remote_host, "localhost");
         assert_eq!(t.remote_port, 12345);
         assert_eq!(t.ssh_host, "lc.cangling.cn");

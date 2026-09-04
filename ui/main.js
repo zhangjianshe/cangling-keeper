@@ -1562,7 +1562,7 @@ function renderTunnelList() {
         selected: t.id === state.selectedTunnelId,
         name: t.name,
         sub: t.direction === "remote"
-          ? `Remote :${t.localPort} ← ${t.remoteHost}:${t.remotePort}`
+          ? `Remote :${t.localPort} ← ${t.localHost}:${t.remotePort}`
           : `Local :${t.localPort} → ${t.remoteHost}:${t.remotePort}`,
         active: t.active,
         onClick: () => selectTunnel(t.id),
@@ -1713,7 +1713,7 @@ function renderTunnelDetail() {
   tLocalLabelEl.textContent = reverse ? "Remote listen" : "Local listen";
   tRemoteLabelEl.textContent = reverse ? "Local target" : "Remote target";
   tLocalEl.textContent = `${reverse ? "localhost" : "127.0.0.1"}:${t.localPort}`;
-  tRemoteEl.textContent = `${t.remoteHost}:${t.remotePort}`;
+  tRemoteEl.textContent = `${reverse ? t.localHost : t.remoteHost}:${t.remotePort}`;
   tSshEl.textContent = `${t.username}@${t.sshHost}:${t.sshPort}`;
   tAuthEl.textContent =
     t.auth.method === "certificate"
@@ -2303,6 +2303,7 @@ function openTunnelModal(tunnel) {
   const f = tunnelFormEl.elements;
   f.name.value = tunnel ? tunnel.name : "";
   f.direction.value = tunnel ? tunnel.direction || "local" : "local";
+  f.local_host.value = tunnel ? tunnel.localHost || "127.0.0.1" : "127.0.0.1";
   f.local_port.value = tunnel ? tunnel.localPort : "";
   f.remote_host.value = tunnel ? tunnel.remoteHost : "";
   f.remote_port.value = tunnel ? tunnel.remotePort : "";
@@ -2427,6 +2428,7 @@ async function parseSshCommand() {
     const t = await invoke("parse_ssh_command", { command: cmd });
     const f = tunnelFormEl.elements;
     f.direction.value = t.direction || "local";
+    f.local_host.value = t.localHost || "127.0.0.1";
     f.local_port.value = t.localPort;
     f.remote_host.value = t.remoteHost;
     f.remote_port.value = t.remotePort;
@@ -2909,6 +2911,7 @@ tunnelFormEl.addEventListener("submit", async (e) => {
   const tunnel = {
     name: f.name.value.trim(),
     direction: f.direction.value || "local",
+    localHost: f.local_host.value.trim() || "127.0.0.1",
     localPort: parseInt(f.local_port.value, 10) || 0,
     remoteHost: f.remote_host.value.trim(),
     remotePort: parseInt(f.remote_port.value, 10) || 0,
