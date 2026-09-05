@@ -38,10 +38,6 @@ const state = {
   clusterFrameHostId: "",
   clusterConnecting: false,
   clusterConnectGen: 0,
-  hostWorkTab: "terminal",
-  projectFileRoot: "/opt/cangling-np4",
-  projectFilePath: "",
-  projectFileSelected: "",
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -85,20 +81,6 @@ const hostSyncProgressLabelEl = $("#host-sync-progress-label");
 const hostSyncProgressPctEl = $("#host-sync-progress-pct");
 const hostSyncProgressBarEl = $("#host-sync-progress-bar");
 const hostSyncProgressDetailEl = $("#host-sync-progress-detail");
-const hostTabTerminalEl = $("#host-tab-terminal");
-const hostTabFilesEl = $("#host-tab-files");
-const projectFilesFrameEl = $("#project-files-frame");
-const projectFilesRootEl = $("#project-files-root");
-const projectFilesOpenRootEl = $("#project-files-open-root");
-const projectFilesRefreshEl = $("#project-files-refresh");
-const projectFilesUpEl = $("#project-files-up");
-const projectFilesCurrentPathEl = $("#project-files-current-path");
-const projectFilesTreeEl = $("#project-files-tree");
-const projectFileTitleEl = $("#project-file-title");
-const projectFileReadonlyEl = $("#project-file-readonly");
-const projectFileSaveEl = $("#project-file-save");
-const projectFileEditorEl = $("#project-file-editor");
-const projectFilePreviewEl = $("#project-file-preview");
 const injectBtnEl = $("#inject-proxy-btn");
 const injectStatusEl = $("#inject-status");
 const updateBtnEl = $("#btn-cangling-update");
@@ -181,7 +163,6 @@ const ctxDeleteSetBtnEl = $("#ctx-delete-set");
 
 let term = null;
 let fitAddon = null;
-let projectEditor = null;
 
 async function ensureTerminalFont() {
   try {
@@ -725,7 +706,6 @@ function consoleUrlForDisplay(url) {
 
 function showClusterFrame(url, { reload = false } = {}) {
   if (!clusterFrameEl || !clusterIframeEl || !url) return;
-  setHostWorkTab("terminal");
   state.clusterFrameUrl = url;
   if (clusterFrameUrlEl) {
     const shown = consoleUrlForDisplay(url);
@@ -1688,188 +1668,6 @@ function toggleHostList() {
   applySidebarVisibility();
 }
 
-// ---- remote project files --------------------------------------------------
-
-function ensureProjectEditor() {
-  if (projectEditor || !window.ace || !projectFileEditorEl) return projectEditor;
-  window.ace.config.set("basePath", "vendor/ace");
-  projectEditor = window.ace.edit(projectFileEditorEl);
-  projectEditor.setTheme("ace/theme/github");
-  projectEditor.setOptions({
-    fontSize: "14px",
-    showPrintMargin: false,
-    useSoftTabs: true,
-    tabSize: 2,
-  });
-  projectEditor.commands.addCommand({
-    name: "saveProjectFile",
-    bindKey: { win: "Ctrl-S", mac: "Command-S" },
-    exec: saveProjectFile,
-  });
-  return projectEditor;
-}
-
-function projectEditorMode(path) {
-  const name = String(path || "").toLowerCase();
-  if (name.endsWith(".yaml") || name.endsWith(".yml")) return "ace/mode/yaml";
-  if (
-    name.endsWith(".ini") ||
-    name.endsWith(".conf") ||
-    name.endsWith(".cfg") ||
-    name === ".env" ||
-    name.includes("/.env")
-  ) return "ace/mode/ini";
-  return "ace/mode/text";
-}
-
-function projectPathDisplay() {
-  return "/" + String(state.projectFilePath || "").replace(/^\/+|\/+$/g, "");
-}
-
-function resetProjectFilePanel(message = "选择文件查看内容") {
-  state.projectFileSelected = "";
-  projectFileTitleEl.textContent = message;
-  projectFileReadonlyEl.textContent = "";
-  projectFileSaveEl.classList.add("hidden");
-  projectFileEditorEl.classList.add("hidden");
-  projectFilePreviewEl.classList.remove("hidden");
-  projectFilePreviewEl.textContent = "";
-}
-
-function setHostWorkTab(tab) {
-  state.hostWorkTab = tab === "files" ? "files" : "terminal";
-  const files = state.hostWorkTab === "files";
-  hostTabTerminalEl.classList.toggle("active", !files);
-  hostTabFilesEl.classList.toggle("active", files);
-  hostTabTerminalEl.setAttribute("aria-selected", files ? "false" : "true");
-  hostTabFilesEl.setAttribute("aria-selected", files ? "true" : "false");
-  if (files) {
-    hideClusterFrame();
-    terminalFrameEl.classList.add("hidden");
-    projectFilesFrameEl.classList.remove("hidden");
-    if (!projectFilesTreeEl.children.length) loadProjectFiles();
-  } else {
-    projectFilesFrameEl.classList.add("hidden");
-    if (clusterFrameEl.classList.contains("hidden")) terminalFrameEl.classList.remove("hidden");
-    if (fitAddon && terminalEl.offsetWidth > 0 && terminalEl.offsetHeight > 0) {
-      requestAnimationFrame(() => fitAddon.fit());
-    }
-  }
-}
-
-async function loadProjectFiles() {
-  const host = hostById(state.selectedHostId);
-  if (!host) return;
-  const root = (projectFilesRootEl.value || "").trim();
-  if (!root) return;
-  state.projectFileRoot = root;
-  projectFilesCurrentPathEl.textContent = projectPathDisplay();
-  projectFilesUpEl.disabled = !state.projectFilePath;
-  replaceListChildren(projectFilesTreeEl, [makeEmptyItem("加载中…")]);
-  try {
-    const entries = await invoke("list_project_files", {
-      hostId: host.id,
-      root,
-      path: state.projectFilePath,
-    });
-    renderProjectFiles(entries || []);
-  } catch (err) {
-    replaceListChildren(projectFilesTreeEl, [makeEmptyItem(`加载失败: ${err}`)]);
-  }
-}
-
-function renderProjectFiles(entries) {
-  if (!entries.length) {
-    replaceListChildren(projectFilesTreeEl, [makeEmptyItem("空目录")]);
-    return;
-  }
-  const nodes = entries.map((entry) => {
-    const li = document.createElement("li");
-    const btn = document.createElement("button");
-    btn.className = "repo-item";
-    btn.type = "button";
-    btn.title = entry.path;
-    const icon = document.createElement("span");
-    icon.className = "repo-item-icon";
-    icon.innerHTML = entry.isDir ? REPO_ICON_DIR : REPO_ICON_FILE;
-    const name = document.createElement("span");
-    name.className = "repo-item-name";
-    name.textContent = entry.name;
-    const size = document.createElement("span");
-    size.className = "repo-item-size";
-    size.textContent = entry.isDir ? "" : formatSize(entry.size);
-    btn.append(icon, name, size);
-    btn.addEventListener("click", () => {
-      if (entry.isDir) {
-        state.projectFilePath = entry.path;
-        resetProjectFilePanel();
-        loadProjectFiles();
-      } else {
-        openProjectFile(entry.path);
-      }
-    });
-    li.appendChild(btn);
-    return li;
-  });
-  replaceListChildren(projectFilesTreeEl, nodes);
-}
-
-async function openProjectFile(path) {
-  const host = hostById(state.selectedHostId);
-  if (!host) return;
-  projectFileTitleEl.textContent = `/${path} · 加载中…`;
-  try {
-    const file = await invoke("read_project_file", {
-      hostId: host.id,
-      root: state.projectFileRoot,
-      path,
-    });
-    state.projectFileSelected = file.path;
-    projectFileTitleEl.textContent = `/${file.path} · ${formatSize(file.size)}`;
-    projectFileReadonlyEl.textContent = file.editable ? "" : "只读预览";
-    projectFileSaveEl.classList.toggle("hidden", !file.editable);
-    if (file.editable) {
-      const editor = ensureProjectEditor();
-      editor.session.setMode(projectEditorMode(file.path));
-      editor.setValue(file.content, -1);
-      editor.session.getUndoManager().markClean();
-      projectFilePreviewEl.classList.add("hidden");
-      projectFileEditorEl.classList.remove("hidden");
-      requestAnimationFrame(() => editor.resize());
-    } else {
-      projectFileEditorEl.classList.add("hidden");
-      projectFilePreviewEl.classList.remove("hidden");
-      projectFilePreviewEl.textContent = file.content;
-    }
-  } catch (err) {
-    resetProjectFilePanel(`/${path}`);
-    projectFilePreviewEl.textContent = `无法预览: ${err}`;
-  }
-}
-
-async function saveProjectFile() {
-  const host = hostById(state.selectedHostId);
-  if (!host || !state.projectFileSelected || !projectEditor) return;
-  projectFileSaveEl.disabled = true;
-  projectFileSaveEl.textContent = "保存中…";
-  try {
-    await invoke("save_project_file", {
-      hostId: host.id,
-      root: state.projectFileRoot,
-      path: state.projectFileSelected,
-      content: projectEditor.getValue(),
-    });
-    projectEditor.session.getUndoManager().markClean();
-    projectFileSaveEl.textContent = "已保存";
-    setTimeout(() => { projectFileSaveEl.textContent = "保存"; }, 1200);
-  } catch (err) {
-    projectFileSaveEl.textContent = "保存";
-    uiAlert(`保存失败: ${err}`);
-  } finally {
-    projectFileSaveEl.disabled = false;
-  }
-}
-
 // ---- selection --------------------------------------------------------------
 
 async function selectHost(id) {
@@ -1884,13 +1682,6 @@ async function selectHost(id) {
   }
   hideClusterFrame();
   hideHostMoreMenu();
-
-  state.projectFilePath = "";
-  state.projectFileSelected = "";
-  projectFilesTreeEl.replaceChildren();
-  projectFilesRootEl.value = state.projectFileRoot;
-  resetProjectFilePanel();
-  setHostWorkTab("terminal");
 
   state.selectedHostId = id;
   hostNameEl.textContent = host.name;
@@ -2710,28 +2501,6 @@ if ($("#cancel-set-btn")) {
   $("#cancel-set-btn").addEventListener("click", closeSetModal);
 }
 repoUpBtnEl.addEventListener("click", repoUp);
-hostTabTerminalEl.addEventListener("click", () => setHostWorkTab("terminal"));
-hostTabFilesEl.addEventListener("click", () => setHostWorkTab("files"));
-projectFilesOpenRootEl.addEventListener("click", () => {
-  state.projectFilePath = "";
-  resetProjectFilePanel();
-  loadProjectFiles();
-});
-projectFilesRefreshEl.addEventListener("click", loadProjectFiles);
-projectFilesUpEl.addEventListener("click", () => {
-  if (!state.projectFilePath) return;
-  const parts = state.projectFilePath.split("/").filter(Boolean);
-  parts.pop();
-  state.projectFilePath = parts.join("/");
-  resetProjectFilePanel();
-  loadProjectFiles();
-});
-projectFilesRootEl.addEventListener("keydown", (event) => {
-  if (event.key !== "Enter") return;
-  event.preventDefault();
-  projectFilesOpenRootEl.click();
-});
-projectFileSaveEl.addEventListener("click", saveProjectFile);
 
 addBtnEl.addEventListener("click", () => {
   if (state.section === "hosts") openHostModal(null);

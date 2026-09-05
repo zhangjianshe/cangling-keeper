@@ -5,7 +5,6 @@ mod host_actions;
 mod host_cmd;
 mod host_sync;
 mod proxy;
-mod project_files;
 mod repo;
 mod self_update;
 mod ssh;
@@ -1633,9 +1632,6 @@ pub fn run() {
             repo::sync_software_set,
             repo::list_repo_files,
             repo::read_repo_file,
-            project_files::list_project_files,
-            project_files::read_project_file,
-            project_files::save_project_file,
             host_sync::preview_host_software_sync,
             host_sync::sync_host_software,
             cluster_console_url,

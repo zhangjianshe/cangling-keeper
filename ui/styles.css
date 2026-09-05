@@ -918,30 +918,6 @@ body {
 
 /* ---- Terminal (host view) -------------------------------------------------- */
 
-.host-work-tabs {
-  display: flex;
-  gap: 2px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--card);
-}
-
-.host-work-tab {
-  padding: 8px 12px 7px;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  color: var(--fg-muted);
-  font: inherit;
-  cursor: pointer;
-}
-
-.host-work-tab.active {
-  border-bottom-color: var(--accent);
-  color: var(--fg);
-  font-weight: 600;
-}
-
 .terminal-wrap {
   flex: 1;
   display: flex;
@@ -1013,69 +989,6 @@ body {
   border: 0;
   outline: none;
   background: #ffffff;
-}
-
-.project-files-frame {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  background: var(--card);
-}
-
-.project-files-root-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.project-files-root-row label {
-  flex: none;
-  color: var(--fg-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.project-files-root-row input {
-  width: 350px;
-  max-width: 50vw;
-  padding: 5px 9px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--card);
-  color: var(--fg);
-  outline: none;
-}
-
-.project-files-root-row input:focus {
-  border-color: var(--accent);
-  box-shadow: var(--focus-ring);
-}
-
-.project-files-body {
-  min-height: 0;
-}
-
-.project-file-panel {
-  margin: 0;
-  border: 0;
-  border-radius: 0;
-}
-
-.project-file-panel .repo-file-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.project-file-editor {
-  flex: 1;
-  min-height: 0;
-  width: 100%;
-  font-size: 14px;
 }
 
 #resource-mgr-btn.active {
