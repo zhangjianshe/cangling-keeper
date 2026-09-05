@@ -175,9 +175,41 @@
               </div>
               <div id="host-sync-progress-detail" class="repo-progress-detail"></div>
             </div>
+            <div class="host-work-tabs" role="tablist" aria-label="主机工作区">
+              <button id="host-tab-terminal" class="host-work-tab active" type="button" role="tab" aria-selected="true">终端</button>
+              <button id="host-tab-files" class="host-work-tab" type="button" role="tab" aria-selected="false">文件浏览</button>
+            </div>
             <div class="terminal-wrap">
               <div class="terminal-frame" id="terminal-frame">
                 <div id="terminal"></div>
+              </div>
+              <div class="project-files-frame hidden" id="project-files-frame">
+                <div class="project-files-root-row">
+                  <label for="project-files-root">项目目录</label>
+                  <input id="project-files-root" class="mono" type="text" value="/opt/cangling-np4" autocomplete="off" spellcheck="false" />
+                  <button id="project-files-open-root" class="btn primary" type="button">浏览</button>
+                  <button id="project-files-refresh" class="btn" type="button">刷新</button>
+                </div>
+                <div class="repo-body project-files-body">
+                  <div class="repo-tree-panel">
+                    <div class="repo-tree-toolbar">
+                      <button id="project-files-up" class="btn" type="button" title="上级目录">↑ 上级</button>
+                      <span id="project-files-current-path" class="repo-path mono">/</span>
+                    </div>
+                    <ul id="project-files-tree" class="repo-tree-list list"></ul>
+                  </div>
+                  <div class="repo-file-panel project-file-panel">
+                    <div class="repo-file-head">
+                      <span id="project-file-title" class="repo-path mono">选择文件查看内容</span>
+                      <div class="actions">
+                        <span id="project-file-readonly" class="conn"></span>
+                        <button id="project-file-save" class="btn primary hidden" type="button">保存</button>
+                      </div>
+                    </div>
+                    <div id="project-file-editor" class="project-file-editor hidden"></div>
+                    <pre id="project-file-preview" class="repo-file-content"></pre>
+                  </div>
+                </div>
               </div>
               <div class="cluster-frame hidden" id="cluster-frame">
                 <div class="cluster-frame-bar">
@@ -583,6 +615,7 @@
 
     <script src="vendor/xterm.js"></script>
     <script src="vendor/xterm-addon-fit.js"></script>
+    <script src="vendor/ace/ace.js"></script>
     <script src="main.js"></script>
   </body>
 </html>
