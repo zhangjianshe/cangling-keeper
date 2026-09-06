@@ -7,6 +7,7 @@ mod host_sync;
 mod proxy;
 mod repo;
 mod self_update;
+mod single_instance;
 mod ssh;
 mod store;
 mod sync;
@@ -1530,6 +1531,13 @@ async fn sync_public_hosts(state: State<'_, AppState>) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let _instance_guard = match single_instance::acquire() {
+        Ok(guard) => guard,
+        Err(message) => {
+            eprintln!("{message}");
+            return;
+        }
+    };
     proxy::ensure_loopback_not_proxied();
     tauri::Builder::default()
         .setup(|app| {
