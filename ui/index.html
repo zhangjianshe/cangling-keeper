@@ -448,20 +448,29 @@
             </div>
           </div>
 
+          <label>转发方式
+            <select name="direction">
+              <option value="local">Local (-L)</option>
+              <option value="remote">Remote (-R)</option>
+            </select>
+          </label>
+
           <div class="grid-2">
-            <label>转发方式
-              <select name="direction">
-                <option value="local">Local (-L)</option>
-                <option value="remote">Remote (-R)</option>
-              </select>
-            </label>
             <label>Local host / IP <input name="local_host" type="text" value="127.0.0.1" required placeholder="127.0.0.1" /></label>
             <label>Local port <input name="local_port" type="number" min="1" max="65535" required /></label>
+          </div>
+          <div class="grid-2">
             <label>Remote host <input name="remote_host" type="text" required placeholder="10.1.1.1" /></label>
             <label>Remote port <input name="remote_port" type="number" min="1" max="65535" required /></label>
+          </div>
+
+          <div class="grid-2">
             <label>SSH host <input name="ssh_host" type="text" required placeholder="123.12.3.1" /></label>
             <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" /></label>
             <label>Username <input name="username" type="text" required placeholder="root" /></label>
+            <div class="tunnel-command-check">
+              <button id="check-tunnel-command-btn" class="btn" type="button">检查</button>
+            </div>
           </div>
           <p class="hint">Remote (-R) 模式：Remote host 是远端监听 IP（可填 0.0.0.0），Local host / IP 是本地目标地址。远端公开监听需 sshd 允许 GatewayPorts。</p>
 

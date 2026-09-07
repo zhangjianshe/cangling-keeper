@@ -1223,6 +1223,15 @@ body {
   gap: 12px;
 }
 
+.tunnel-command-check {
+  display: flex;
+  align-items: flex-end;
+}
+
+.tunnel-command-check .btn {
+  width: 100%;
+}
+
 .parse-box {
   border: 1px solid var(--border);
   border-radius: 6px;

@@ -2440,6 +2440,26 @@ async function parseSshCommand() {
   }
 }
 
+function showTunnelSshCommand() {
+  const f = tunnelFormEl.elements;
+  const direction = f.direction.value === "remote" ? "remote" : "local";
+  const localHost = f.local_host.value.trim() || "127.0.0.1";
+  const localPort = f.local_port.value.trim();
+  const remoteHost = f.remote_host.value.trim();
+  const remotePort = f.remote_port.value.trim();
+  const sshHost = f.ssh_host.value.trim();
+  const sshPort = f.ssh_port.value.trim() || "22";
+  const username = f.username.value.trim();
+  const forward = direction === "remote"
+    ? `-R ${remoteHost}:${localPort}:${localHost}:${remotePort}`
+    : `-L ${localHost}:${localPort}:${remoteHost}:${remotePort}`;
+  const destination = username ? `${username}@${sshHost}` : sshHost;
+  const portOption = sshPort === "22" ? "" : ` -p ${sshPort}`;
+  sshCmdInputEl.value = `ssh -N ${forward}${portOption} ${destination}`;
+  sshCmdInputEl.focus();
+  sshCmdInputEl.select();
+}
+
 // ---- events -----------------------------------------------------------------
 
 $("#nav-hosts").addEventListener("click", () => switchSection("hosts"));
@@ -2535,6 +2555,7 @@ document.querySelectorAll(".more-menu-panel").forEach((panel) => {
 });
 $("#cancel-tunnel-btn").addEventListener("click", closeTunnelModal);
 $("#parse-btn").addEventListener("click", parseSshCommand);
+$("#check-tunnel-command-btn").addEventListener("click", showTunnelSshCommand);
 
 $("#delete-cert-btn").addEventListener("click", deleteSelectedCert);
 $("#cancel-cert-btn").addEventListener("click", closeCertModal);
