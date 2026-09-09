@@ -16,11 +16,11 @@ pub const SETTING_USERNAME: &str = "login_username";
 /// Generic server response envelope: `{ code, message, success, data }`.
 #[derive(Debug, Deserialize)]
 struct ApiEnvelope {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     code: i32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     message: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     success: bool,
     #[serde(default)]
     data: Option<serde_json::Value>,
@@ -30,21 +30,21 @@ struct ApiEnvelope {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SyncHost {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub hostname: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub port: u16,
-    #[serde(default, deserialize_with = "null_to_default_u16")]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub update_port: u16,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub update_role: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub username: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub auth_method: String,
     #[serde(default)]
     pub password: Option<String>,
@@ -52,40 +52,41 @@ pub struct SyncHost {
     pub private_key: Option<String>,
     #[serde(default)]
     pub public_key: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub inject_remote_port: u16,
     #[serde(default)]
     pub catalog: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub is_public: u8,
     /// Whether this host belongs to the currently logged-in user.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub mine: bool,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginData {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub token: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub user_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     pub nick_name: String,
 }
 
-/// Newer server fields may be NULL on rows created before the schema change.
-/// Treat null exactly like a missing port so old records remain synchronizable.
-fn null_to_default_u16<'de, D>(deserializer: D) -> Result<u16, D::Error>
+/// Server rows created before a schema change may contain explicit NULLs.
+/// Serde's `default` handles missing fields but not NULL, so normalize both.
+fn null_to_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: Deserializer<'de>,
+    T: Deserialize<'de> + Default,
 {
-    Ok(Option::<u16>::deserialize(deserializer)?.unwrap_or_default())
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Deserialize)]
 struct HostListData {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_to_default")]
     hosts: Vec<SyncHost>,
 }
 
@@ -252,7 +253,11 @@ pub fn sync_to_host(store: &Store, keys_dir: &Path, s: &SyncHost) -> Result<Host
         name: s.name.clone(),
         hostname: s.hostname.clone(),
         port: if s.port == 0 { 22 } else { s.port },
-        update_port: if s.update_port == 0 { 5400 } else { s.update_port },
+        update_port: if s.update_port == 0 {
+            5400
+        } else {
+            s.update_port
+        },
         update_role: if s.update_role.trim().is_empty() {
             "standalone".into()
         } else {
@@ -319,7 +324,7 @@ fn import_certificate(
 
 #[cfg(test)]
 mod tests {
-    use super::SyncHost;
+    use super::{LoginData, SyncHost};
 
     #[test]
     fn old_remote_host_with_null_update_port_uses_default() {
@@ -328,5 +333,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(host.update_port, 0);
+    }
+
+    #[test]
+    fn old_remote_host_with_null_scalar_fields_uses_defaults() {
+        let host: SyncHost = serde_json::from_str(
+            r#"{
+                "id": null,
+                "name": null,
+                "hostname": null,
+                "port": null,
+                "updateRole": null,
+                "username": null,
+                "authMethod": null,
+                "injectRemotePort": null,
+                "isPublic": null,
+                "mine": null
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(host.id, "");
+        assert_eq!(host.name, "");
+        assert_eq!(host.hostname, "");
+        assert_eq!(host.port, 0);
+        assert_eq!(host.update_role, "");
+        assert_eq!(host.username, "");
+        assert_eq!(host.auth_method, "");
+        assert_eq!(host.inject_remote_port, 0);
+        assert_eq!(host.is_public, 0);
+        assert!(!host.mine);
+    }
+
+    #[test]
+    fn login_data_with_null_names_uses_defaults() {
+        let data: LoginData =
+            serde_json::from_str(r#"{"token":"token","userName":null,"nickName":null}"#).unwrap();
+
+        assert_eq!(data.token, "token");
+        assert_eq!(data.user_name, "");
+        assert_eq!(data.nick_name, "");
     }
 }
