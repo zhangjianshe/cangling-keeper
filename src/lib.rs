@@ -1414,7 +1414,9 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
 
     pull_sync(state, &url, &token).await?;
 
-    // Push local-only hosts (best effort).
+    // Push local-only hosts. Keep trying the remaining hosts after one fails,
+    // but report every failure so the UI never claims that an incomplete sync
+    // succeeded (public-host permission errors are especially important).
     let to_push: Vec<Host> = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         store
@@ -1423,6 +1425,7 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
             .filter(|h| h.remote_id.is_empty())
             .collect()
     };
+    let mut push_errors = Vec::new();
     for local in to_push {
         let sync_host = {
             let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -1435,12 +1438,19 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
                 updated.remote_id = remote.id;
                 store.update_host(&updated)?;
             }
-            Ok(_) => {}
-            Err(e) => eprintln!("推送主机 {} 失败: {e}", local.name),
+            Ok(_) => push_errors.push(format!("{}: 服务器未返回主机ID", local.name)),
+            Err(e) => push_errors.push(format!("{}: {e}", local.name)),
         }
     }
 
-    Ok(())
+    if push_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "部分本地主机上传失败：{}",
+            push_errors.join("；")
+        ))
+    }
 }
 
 async fn push_host_to_server(state: &AppState, host: &Host) -> Result<String, String> {
@@ -1522,11 +1532,10 @@ async fn sync_hosts(state: State<'_, AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn sync_public_hosts(state: State<'_, AppState>) -> Result<(), String> {
-    let (url, token) = {
-        let store = state.store.lock().map_err(|e| e.to_string())?;
-        login_credentials(&store).ok_or("未登录")?
-    };
-    pull_sync(&state, &url, &token).await
+    // Startup synchronization must be bidirectional too. A host may have been
+    // created while logged out, or its first best-effort upload may have failed;
+    // pull-only synchronization would otherwise leave it local forever.
+    sync_now(&state).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

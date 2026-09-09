@@ -3347,8 +3347,8 @@ document.addEventListener("keydown", (e) => {
     uiAlert(`Failed to load data: ${err}`);
   }
 
-  // If the user is already logged in, sync the public host list in the
-  // background so shared hosts and deletions are reflected automatically.
+  // If the user is already logged in, run a full background sync so shared
+  // hosts, deletions, and locally-created hosts waiting to upload are handled.
   autoSyncIfLoggedIn();
   applySidebarVisibility();
 })();
