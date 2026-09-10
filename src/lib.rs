@@ -40,7 +40,9 @@ pub(crate) struct AppState {
 }
 
 struct InjectedHandle {
-    stop_tx: tokio::sync::oneshot::Sender<()>,
+    /// `None` means the proxy was already present on the remote host and is
+    /// owned by another connection, so this process must not stop it.
+    stop_tx: Option<tokio::sync::oneshot::Sender<()>>,
     remote_port: u16,
     local_endpoint: String,
 }
@@ -210,7 +212,9 @@ async fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), Strin
         .map_err(|e| e.to_string())?
         .remove(&id)
     {
-        let _ = handle.stop_tx.send(());
+        if let Some(stop_tx) = handle.stop_tx {
+            let _ = stop_tx.send(());
+        }
     }
     {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -913,8 +917,48 @@ async fn inject_proxy(
     };
 
     let remote_port = host.inject_remote_port_or_default();
-    let established =
-        ssh::establish_inject(&host, &auth, &local_host, local_port, remote_port).await?;
+    let established = match ssh::establish_inject(
+        &host,
+        &auth,
+        &local_host,
+        local_port,
+        remote_port,
+    )
+    .await
+    {
+        Ok(established) => established,
+        Err(inject_error) => {
+            // The configured port can be owned by a previous app instance or
+            // another SSH tunnel. Verify the real remote endpoint before
+            // reporting that no proxy is injected.
+            if fetch_latest_version(&state, &host_id, remote_port)
+                .await
+                .is_ok()
+            {
+                let info = ProxyInjection {
+                    host_id: host_id.clone(),
+                    active: true,
+                    remote_port,
+                    local_endpoint: "远端现有代理".into(),
+                };
+                state
+                    .injected_proxies
+                    .lock()
+                    .map_err(|e| e.to_string())?
+                    .insert(
+                        host_id,
+                        InjectedHandle {
+                            stop_tx: None,
+                            remote_port,
+                            local_endpoint: info.local_endpoint.clone(),
+                        },
+                    );
+                let _ = app.emit("proxy-injection", &info);
+                return Ok(info);
+            }
+            return Err(inject_error);
+        }
+    };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     {
@@ -925,7 +969,7 @@ async fn inject_proxy(
         injected.insert(
             host_id.clone(),
             InjectedHandle {
-                stop_tx: tx,
+                stop_tx: Some(tx),
                 remote_port,
                 local_endpoint: local_endpoint.clone(),
             },
@@ -1251,9 +1295,17 @@ async fn set_cangling_role(
 #[tauri::command]
 fn uninject_proxy(state: State<'_, AppState>, host_id: String) -> Result<(), String> {
     let mut injected = state.injected_proxies.lock().map_err(|e| e.to_string())?;
+    if injected
+        .get(&host_id)
+        .is_some_and(|handle| handle.stop_tx.is_none())
+    {
+        return Err("该代理由外部连接注入，无法在此处关闭".into());
+    }
     match injected.remove(&host_id) {
         Some(handle) => {
-            let _ = handle.stop_tx.send(());
+            if let Some(stop_tx) = handle.stop_tx {
+                let _ = stop_tx.send(());
+            }
             Ok(())
         }
         None => Err("该主机未注入代理".into()),
