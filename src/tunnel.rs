@@ -8,6 +8,12 @@ use crate::auth::Auth;
 pub struct Tunnel {
     #[serde(default)]
     pub id: String,
+    /// Server-side row id. Empty for tunnels that have not been synced yet.
+    #[serde(default)]
+    pub remote_id: String,
+    /// Owning server user id. Zero for local-only tunnels.
+    #[serde(default)]
+    pub user_id: i64,
     pub name: String,
     #[serde(default = "default_direction")]
     pub direction: String,
@@ -168,6 +174,8 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
 
     Ok(Tunnel {
         id: String::new(),
+        remote_id: String::new(),
+        user_id: 0,
         name: String::new(),
         direction,
         local_host,

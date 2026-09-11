@@ -74,7 +74,10 @@
           <span id="proxy-indicator-dot" class="status-dot off"></span>
           <span id="proxy-indicator-text">代理未启用</span>
         </div>
-        <button id="login-btn" class="btn login-btn" type="button" title="登录到维护中心服务器">登录</button>
+        <div class="account-actions">
+          <button id="login-btn" class="btn login-btn" type="button" title="登录到维护中心服务器">登录</button>
+          <button id="sync-btn" class="btn sync-btn hidden" type="button" title="立即同步主机和隧道">同步</button>
+        </div>
         <button id="app-update-btn" class="btn app-update-btn hidden" type="button" title="检查应用更新">检查更新</button>
       </header>
 
@@ -85,6 +88,10 @@
           </div>
           <ul id="host-list" class="list"></ul>
           <ul id="tunnel-list" class="list hidden"></ul>
+          <div id="tunnel-more-menu" class="more-menu-panel list-more-menu hidden" role="menu">
+            <button id="edit-tunnel-btn" class="ctx-item" type="button" role="menuitem">Edit</button>
+            <button id="delete-tunnel-btn" class="ctx-item danger" type="button" role="menuitem">Delete</button>
+          </div>
           <ul id="cert-list" class="list hidden"></ul>
           <ul id="set-list" class="list hidden"></ul>
           <div id="proxy-sidebar" class="proxy-sidebar hidden">
@@ -97,7 +104,6 @@
 
           <div id="sidebar-add-row" class="sidebar-bottom-actions">
             <button id="add-btn" class="btn primary full" type="button">+ 添加主机</button>
-            <button id="sync-btn" class="btn sync-btn hidden" type="button" title="立即同步主机">同步</button>
           </div>
         </aside>
 
@@ -201,19 +207,6 @@
               </div>
               <div class="actions">
                 <button id="toggle-tunnel-btn" class="btn primary" type="button">Connect</button>
-                <div class="more-menu">
-                  <button id="tunnel-more-btn" class="icon-btn" type="button" title="更多" aria-label="更多" aria-haspopup="menu" aria-expanded="false" aria-controls="tunnel-more-menu">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                      <circle cx="12" cy="5" r="2"/>
-                      <circle cx="12" cy="12" r="2"/>
-                      <circle cx="12" cy="19" r="2"/>
-                    </svg>
-                  </button>
-                  <div id="tunnel-more-menu" class="more-menu-panel hidden" role="menu">
-                    <button id="edit-tunnel-btn" class="ctx-item" type="button" role="menuitem">Edit</button>
-                    <button id="delete-tunnel-btn" class="ctx-item danger" type="button" role="menuitem">Delete</button>
-                  </div>
-                </div>
               </div>
             </div>
             <div class="detail-body">
@@ -348,6 +341,7 @@
                   <span class="repo-local-path">
                     <span class="repo-local-label">本地路径</span>
                     <span id="repo-path" class="repo-path mono"></span>
+                    <button id="repo-open-path-btn" class="btn repo-open-path-btn" type="button" title="在文件管理器中打开" disabled>打开</button>
                   </span>
                 </div>
                 <span id="repo-status-line" class="conn">未同步</span>

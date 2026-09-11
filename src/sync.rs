@@ -6,12 +6,14 @@ use crate::auth::Auth;
 use crate::certificate::Certificate;
 use crate::host::Host;
 use crate::store::Store;
+use crate::tunnel::Tunnel;
 use uuid::Uuid;
 
 pub const SETTING_SERVER_URL: &str = "server_url";
 pub const SETTING_TOKEN: &str = "login_token";
 pub const SETTING_NICKNAME: &str = "login_nickname";
 pub const SETTING_USERNAME: &str = "login_username";
+pub const SETTING_USER_ID: &str = "login_user_id";
 
 /// Generic server response envelope: `{ code, message, success, data }`.
 #[derive(Debug, Deserialize)]
@@ -63,6 +65,42 @@ pub struct SyncHost {
     pub mine: bool,
 }
 
+/// A tunnel as stored by the synchronization service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncTunnel {
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub id: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub user_id: i64,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub name: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub direction: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub local_host: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub local_port: u16,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub remote_host: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub remote_port: u16,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub ssh_host: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub ssh_port: u16,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub username: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub auth_method: String,
+    #[serde(default)]
+    pub password: Option<String>,
+    #[serde(default)]
+    pub private_key: Option<String>,
+    #[serde(default)]
+    pub public_key: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoginData {
@@ -72,6 +110,8 @@ pub struct LoginData {
     pub user_name: String,
     #[serde(default, deserialize_with = "null_to_default")]
     pub nick_name: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub user_id: i64,
 }
 
 /// Server rows created before a schema change may contain explicit NULLs.
@@ -94,6 +134,18 @@ struct HostListData {
 struct SaveHostData {
     #[serde(default)]
     host: Option<SyncHost>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TunnelListData {
+    #[serde(default, deserialize_with = "null_to_default")]
+    tunnels: Vec<SyncTunnel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveTunnelData {
+    #[serde(default)]
+    tunnel: Option<SyncTunnel>,
 }
 
 fn base_url(server_url: &str) -> String {
@@ -183,6 +235,54 @@ pub async fn delete_remote(server_url: &str, token: &str, id: &str) -> Result<()
         .map_err(|e| format!("删除服务器主机失败: {e}"))?;
     let text = resp.text().await.map_err(|e| e.to_string())?;
     // delete returns an empty object as data
+    unwrap_envelope::<serde_json::Value>(text).await?;
+    Ok(())
+}
+
+pub async fn pull_tunnels(server_url: &str, token: &str) -> Result<Vec<SyncTunnel>, String> {
+    let url = format!("{}/api/v1/tunnel/list", base_url(server_url));
+    let resp = client()?
+        .get(&url)
+        .header("API-TOKEN", token)
+        .send()
+        .await
+        .map_err(|e| format!("拉取隧道列表失败: {e}"))?;
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let data: TunnelListData = unwrap_envelope(text).await?;
+    Ok(data.tunnels)
+}
+
+pub async fn push_tunnel(
+    server_url: &str,
+    token: &str,
+    tunnel: &SyncTunnel,
+) -> Result<SyncTunnel, String> {
+    let url = format!("{}/api/v1/tunnel/save", base_url(server_url));
+    let body = serde_json::json!({ "tunnel": tunnel });
+    let resp = client()?
+        .post(&url)
+        .header("API-TOKEN", token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("保存隧道到服务器失败: {e}"))?;
+    let text = resp.text().await.map_err(|e| e.to_string())?;
+    let data: SaveTunnelData = unwrap_envelope(text).await?;
+    data.tunnel
+        .ok_or_else(|| "服务器未返回保存后的隧道".to_string())
+}
+
+pub async fn delete_remote_tunnel(server_url: &str, token: &str, id: &str) -> Result<(), String> {
+    let url = format!("{}/api/v1/tunnel/delete", base_url(server_url));
+    let body = serde_json::json!({ "id": id });
+    let resp = client()?
+        .post(&url)
+        .header("API-TOKEN", token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("删除服务器隧道失败: {e}"))?;
+    let text = resp.text().await.map_err(|e| e.to_string())?;
     unwrap_envelope::<serde_json::Value>(text).await?;
     Ok(())
 }
@@ -277,6 +377,86 @@ pub fn sync_to_host(store: &Store, keys_dir: &Path, s: &SyncHost) -> Result<Host
     })
 }
 
+pub fn tunnel_to_sync(
+    store: &Store,
+    data_dir: &Path,
+    tunnel: &Tunnel,
+) -> Result<SyncTunnel, String> {
+    let (auth_method, password, private_key, public_key) = match &tunnel.auth {
+        Auth::Password { password } => ("password".to_string(), Some(password.clone()), None, None),
+        Auth::Certificate { certificate_id } => {
+            let cert = store.get_certificate(certificate_id)?;
+            let key_path = crate::resolve_key_path(data_dir, &cert.private_key_path);
+            let private = std::fs::read_to_string(&key_path)
+                .map_err(|e| format!("读取私钥失败 {}: {e}", key_path.display()))?;
+            (
+                "certificate".to_string(),
+                None,
+                Some(private),
+                Some(cert.public_key),
+            )
+        }
+    };
+    Ok(SyncTunnel {
+        id: tunnel.remote_id.clone(),
+        user_id: tunnel.user_id,
+        name: tunnel.name.clone(),
+        direction: tunnel.direction.clone(),
+        local_host: tunnel.local_host.clone(),
+        local_port: tunnel.local_port,
+        remote_host: tunnel.remote_host.clone(),
+        remote_port: tunnel.remote_port,
+        ssh_host: tunnel.ssh_host.clone(),
+        ssh_port: tunnel.ssh_port,
+        username: tunnel.username.clone(),
+        auth_method,
+        password,
+        private_key,
+        public_key,
+    })
+}
+
+pub fn sync_to_tunnel(store: &Store, keys_dir: &Path, s: &SyncTunnel) -> Result<Tunnel, String> {
+    let auth = if s.auth_method == "certificate" {
+        let cert = import_certificate(
+            store,
+            keys_dir,
+            s.public_key.clone().unwrap_or_default(),
+            s.private_key.clone().unwrap_or_default(),
+        )?;
+        Auth::Certificate {
+            certificate_id: cert.id,
+        }
+    } else {
+        Auth::Password {
+            password: s.password.clone().unwrap_or_default(),
+        }
+    };
+    Ok(Tunnel {
+        id: Uuid::new_v4().to_string(),
+        remote_id: s.id.clone(),
+        user_id: s.user_id,
+        name: s.name.clone(),
+        direction: if s.direction.trim().is_empty() {
+            "local".into()
+        } else {
+            s.direction.clone()
+        },
+        local_host: if s.local_host.trim().is_empty() {
+            "127.0.0.1".into()
+        } else {
+            s.local_host.clone()
+        },
+        local_port: s.local_port,
+        remote_host: s.remote_host.clone(),
+        remote_port: s.remote_port,
+        ssh_host: s.ssh_host.clone(),
+        ssh_port: if s.ssh_port == 0 { 22 } else { s.ssh_port },
+        username: s.username.clone(),
+        auth,
+    })
+}
+
 /// Import a synced certificate: reuse an existing one with the same public key,
 /// otherwise write the key files and register a new certificate.
 fn import_certificate(
@@ -367,11 +547,14 @@ mod tests {
 
     #[test]
     fn login_data_with_null_names_uses_defaults() {
-        let data: LoginData =
-            serde_json::from_str(r#"{"token":"token","userName":null,"nickName":null}"#).unwrap();
+        let data: LoginData = serde_json::from_str(
+            r#"{"token":"token","userName":null,"nickName":null,"userId":null}"#,
+        )
+        .unwrap();
 
         assert_eq!(data.token, "token");
         assert_eq!(data.user_name, "");
         assert_eq!(data.nick_name, "");
+        assert_eq!(data.user_id, 0);
     }
 }

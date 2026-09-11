@@ -108,6 +108,12 @@ body {
   flex-shrink: 0;
 }
 
+.account-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .brand-name {
   font-size: 18px;
   font-weight: 600;
@@ -228,6 +234,11 @@ body {
   border-right: 1px solid var(--border);
   padding: 16px 12px;
   gap: 10px;
+}
+
+.app-body.tunnel-sidebar-wide .sidebar {
+  width: 360px;
+  min-width: 360px;
 }
 
 .app-body.sidebar-collapsed .sidebar {
@@ -916,6 +927,12 @@ body {
   box-shadow: 0 8px 24px rgba(31, 35, 40, 0.18);
 }
 
+.more-menu-panel.list-more-menu {
+  position: fixed;
+  top: auto;
+  right: auto;
+}
+
 /* ---- Terminal (host view) -------------------------------------------------- */
 
 .terminal-wrap {
@@ -1479,6 +1496,13 @@ body {
 .repo-local-path .repo-path {
   max-width: none;
   flex: 1;
+}
+
+.repo-open-path-btn {
+  flex: none;
+  padding: 2px 9px;
+  min-height: 26px;
+  font-size: 12px;
 }
 
 .repo-tree-list {

@@ -316,6 +316,44 @@ fn open_url(url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Open a local directory in the operating system's default file manager.
+#[tauri::command]
+fn open_local_path(path: String) -> Result<(), String> {
+    let path = PathBuf::from(path);
+    if !path.is_dir() {
+        return Err(format!("目录不存在：{}", path.display()));
+    }
+    let status = open_path_with_command(&path)?;
+    if !status.success() {
+        return Err("文件管理器未能打开该目录".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_path_with_command(path: &Path) -> Result<std::process::ExitStatus, String> {
+    std::process::Command::new("explorer")
+        .arg(path)
+        .status()
+        .map_err(|e| format!("无法打开文件管理器：{e}"))
+}
+
+#[cfg(target_os = "macos")]
+fn open_path_with_command(path: &Path) -> Result<std::process::ExitStatus, String> {
+    std::process::Command::new("open")
+        .arg(path)
+        .status()
+        .map_err(|e| format!("无法打开文件管理器：{e}"))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn open_path_with_command(path: &Path) -> Result<std::process::ExitStatus, String> {
+    host_cmd::command("xdg-open")
+        .arg(path)
+        .status()
+        .map_err(|e| format!("无法打开文件管理器：{e}"))
+}
+
 #[cfg(target_os = "windows")]
 fn open_with_command(url: &str) -> Result<std::process::ExitStatus, String> {
     std::process::Command::new("cmd")
@@ -362,25 +400,46 @@ fn list_tunnels(state: State<'_, AppState>) -> Result<Vec<TunnelInfo>, String> {
 }
 
 #[tauri::command]
-fn add_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result<Tunnel, String> {
+async fn add_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result<Tunnel, String> {
     if tunnel.id.is_empty() {
         tunnel.id = Uuid::new_v4().to_string();
     }
     tunnel.validate()?;
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    store.add_tunnel(&tunnel)?;
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        tunnel.user_id = store
+            .get_setting(sync::SETTING_USER_ID)?
+            .and_then(|value| value.parse().ok())
+            .unwrap_or_default();
+        store.add_tunnel(&tunnel)?;
+    }
+    if let Ok((remote_id, user_id)) = push_tunnel_to_server(&state, &tunnel).await {
+        tunnel.remote_id = remote_id;
+        tunnel.user_id = user_id;
+    }
     Ok(tunnel)
 }
 
 #[tauri::command]
-fn update_tunnel(state: State<'_, AppState>, tunnel: Tunnel) -> Result<(), String> {
+async fn update_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result<(), String> {
     tunnel.validate()?;
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    store.update_tunnel(&tunnel)
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let existing = store.get_tunnel(&tunnel.id)?;
+        tunnel.remote_id = existing.remote_id;
+        tunnel.user_id = existing.user_id;
+        store.update_tunnel(&tunnel)?;
+    }
+    let _ = push_tunnel_to_server(&state, &tunnel).await;
+    Ok(())
 }
 
 #[tauri::command]
-fn delete_tunnel(state: State<'_, AppState>, id: String) -> Result<(), String> {
+async fn delete_tunnel(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let tunnel = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store.get_tunnel(&id)?
+    };
     if let Some(tx) = state
         .active_tunnels
         .lock()
@@ -389,8 +448,14 @@ fn delete_tunnel(state: State<'_, AppState>, id: String) -> Result<(), String> {
     {
         let _ = tx.send(());
     }
-    let store = state.store.lock().map_err(|e| e.to_string())?;
-    store.delete_tunnel(&id)
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store.delete_tunnel(&id)?;
+    }
+    if !tunnel.remote_id.is_empty() {
+        let _ = delete_remote_tunnel(&state, &tunnel.remote_id).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1345,13 +1410,14 @@ async fn cluster_console_url(
     Ok(ClusterConsole { url, port })
 }
 
-// ---- login & host sync -----------------------------------------------------
+// ---- login, host & tunnel sync --------------------------------------------
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LoginStatus {
     logged_in: bool,
     server_url: String,
+    user_id: i64,
     username: String,
     nickname: String,
 }
@@ -1368,6 +1434,12 @@ fn read_login_status(store: &Store) -> LoginStatus {
             .get_setting(sync::SETTING_SERVER_URL)
             .ok()
             .flatten()
+            .unwrap_or_default(),
+        user_id: store
+            .get_setting(sync::SETTING_USER_ID)
+            .ok()
+            .flatten()
+            .and_then(|value| value.parse().ok())
             .unwrap_or_default(),
         username: store
             .get_setting(sync::SETTING_USERNAME)
@@ -1392,11 +1464,10 @@ fn login_credentials(store: &Store) -> Option<(String, String)> {
     }
 }
 
-/// Pull the server host list and reconcile it with the local store: update
-/// hosts that still exist on the server, insert new ones, and delete local
-/// copies (including synced public hosts) that are no longer returned.
+/// Pull server hosts and tunnels and reconcile them with the local store.
 async fn pull_sync(state: &AppState, url: &str, token: &str) -> Result<(), String> {
     let server_hosts = sync::pull_hosts(url, token).await?;
+    let server_tunnels = sync::pull_tunnels(url, token).await?;
     let keys_dir = state.data_dir.join("keys");
     let server_by_id: HashMap<String, sync::SyncHost> = server_hosts
         .into_iter()
@@ -1454,10 +1525,55 @@ async fn pull_sync(state: &AppState, url: &str, token: &str) -> Result<(), Strin
         }
     }
 
+    let tunnel_by_id: HashMap<String, sync::SyncTunnel> = server_tunnels
+        .into_iter()
+        .filter(|t| !t.id.is_empty())
+        .map(|t| (t.id.clone(), t))
+        .collect();
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let local_tunnels = store.list_tunnels()?;
+        for local in &local_tunnels {
+            if local.remote_id.is_empty() {
+                continue;
+            }
+            if let Some(remote) = tunnel_by_id.get(&local.remote_id) {
+                match sync::sync_to_tunnel(&store, &keys_dir, remote) {
+                    Ok(mut updated) => {
+                        updated.id = local.id.clone();
+                        if let Err(e) = store.update_tunnel(&updated) {
+                            eprintln!("更新隧道 {} 失败: {e}", local.name);
+                        }
+                    }
+                    Err(e) => eprintln!("同步隧道 {} 失败: {e}", local.name),
+                }
+            } else {
+                let _ = store.delete_tunnel(&local.id);
+            }
+        }
+        let existing: HashSet<String> = store
+            .list_tunnels()?
+            .into_iter()
+            .filter_map(|t| (!t.remote_id.is_empty()).then_some(t.remote_id))
+            .collect();
+        for (remote_id, remote) in &tunnel_by_id {
+            if !existing.contains(remote_id) {
+                match sync::sync_to_tunnel(&store, &keys_dir, remote) {
+                    Ok(tunnel) => {
+                        if let Err(e) = store.add_tunnel(&tunnel) {
+                            eprintln!("导入隧道 {remote_id} 失败: {e}");
+                        }
+                    }
+                    Err(e) => eprintln!("导入隧道 {remote_id} 失败: {e}"),
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
-/// Full sync: pull + reconcile, then push any local-only hosts to the server.
+/// Full sync: pull + reconcile, then push local-only hosts and tunnels.
 async fn sync_now(state: &AppState) -> Result<(), String> {
     let (url, token) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -1495,13 +1611,36 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
         }
     }
 
+    let tunnels_to_push: Vec<Tunnel> = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        store
+            .list_tunnels()?
+            .into_iter()
+            .filter(|t| t.remote_id.is_empty())
+            .collect()
+    };
+    for local in tunnels_to_push {
+        let sync_tunnel = {
+            let store = state.store.lock().map_err(|e| e.to_string())?;
+            sync::tunnel_to_sync(&store, &state.data_dir, &local)?
+        };
+        match sync::push_tunnel(&url, &token, &sync_tunnel).await {
+            Ok(remote) if !remote.id.is_empty() => {
+                let store = state.store.lock().map_err(|e| e.to_string())?;
+                let mut updated = local.clone();
+                updated.remote_id = remote.id;
+                updated.user_id = remote.user_id;
+                store.update_tunnel(&updated)?;
+            }
+            Ok(_) => push_errors.push(format!("{}: 服务器未返回隧道ID", local.name)),
+            Err(e) => push_errors.push(format!("{}: {e}", local.name)),
+        }
+    }
+
     if push_errors.is_empty() {
         Ok(())
     } else {
-        Err(format!(
-            "部分本地主机上传失败：{}",
-            push_errors.join("；")
-        ))
+        Err(format!("部分本地数据上传失败：{}", push_errors.join("；")))
     }
 }
 
@@ -1535,6 +1674,37 @@ async fn delete_remote_host(state: &AppState, remote_id: &str) -> Result<(), Str
     sync::delete_remote(&url, &token, remote_id).await
 }
 
+async fn push_tunnel_to_server(state: &AppState, tunnel: &Tunnel) -> Result<(String, i64), String> {
+    let (url, token) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        login_credentials(&store).ok_or("未登录")?
+    };
+    let sync_tunnel = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        sync::tunnel_to_sync(&store, &state.data_dir, tunnel)?
+    };
+    let remote = sync::push_tunnel(&url, &token, &sync_tunnel).await?;
+    if remote.id.is_empty() {
+        return Err("服务器未返回隧道ID".into());
+    }
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let mut updated = tunnel.clone();
+        updated.remote_id = remote.id.clone();
+        updated.user_id = remote.user_id;
+        store.update_tunnel(&updated)?;
+    }
+    Ok((remote.id, remote.user_id))
+}
+
+async fn delete_remote_tunnel(state: &AppState, remote_id: &str) -> Result<(), String> {
+    let (url, token) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        login_credentials(&store).ok_or("未登录")?
+    };
+    sync::delete_remote_tunnel(&url, &token, remote_id).await
+}
+
 #[tauri::command]
 async fn login(
     state: State<'_, AppState>,
@@ -1553,6 +1723,7 @@ async fn login(
         store.set_setting(sync::SETTING_TOKEN, &data.token)?;
         store.set_setting(sync::SETTING_USERNAME, &data.user_name)?;
         store.set_setting(sync::SETTING_NICKNAME, &data.nick_name)?;
+        store.set_setting(sync::SETTING_USER_ID, &data.user_id.to_string())?;
     }
     // Initial sync is best-effort: a login should still succeed if it fails.
     if let Err(e) = sync_now(&state).await {
@@ -1568,6 +1739,7 @@ async fn logout(state: State<'_, AppState>) -> Result<LoginStatus, String> {
     store.delete_setting(sync::SETTING_TOKEN)?;
     store.delete_setting(sync::SETTING_USERNAME)?;
     store.delete_setting(sync::SETTING_NICKNAME)?;
+    store.delete_setting(sync::SETTING_USER_ID)?;
     Ok(read_login_status(&store))
 }
 
@@ -1665,6 +1837,7 @@ pub fn run() {
             ssh_execute,
             check_host_env,
             open_url,
+            open_local_path,
             list_tunnels,
             add_tunnel,
             update_tunnel,

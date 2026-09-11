@@ -108,8 +108,8 @@ const tRemoteLabelEl = $("#t-remote-label");
 const tSshEl = $("#t-ssh");
 const tAuthEl = $("#t-auth");
 const toggleTunnelBtnEl = $("#toggle-tunnel-btn");
-const tunnelMoreBtnEl = $("#tunnel-more-btn");
 const tunnelMoreMenuEl = $("#tunnel-more-menu");
+let tunnelMoreBtnEl = null;
 const hostMoreBtnEl = $("#host-more-btn");
 const hostMoreMenuEl = $("#host-more-menu");
 
@@ -136,6 +136,7 @@ const certFormEl = $("#cert-form");
 const repoStatusLineEl = $("#repo-status-line");
 const repoSetTitleEl = $("#repo-set-title");
 const repoPathEl = $("#repo-path");
+const repoOpenPathBtnEl = $("#repo-open-path-btn");
 const repoCloneUpdateBtnEl = $("#repo-clone-update-btn");
 const setModalEl = $("#set-modal");
 const setFormEl = $("#set-form");
@@ -1139,7 +1140,7 @@ function renderLoginStatus() {
 
 function updateSyncBtn() {
   const s = state.login || { loggedIn: false };
-  syncBtnEl.classList.toggle("hidden", state.section !== "hosts" || !s.loggedIn);
+  syncBtnEl.classList.toggle("hidden", !s.loggedIn);
 }
 
 function openLoginModal() {
@@ -1189,10 +1190,11 @@ async function onSyncClick() {
   }
   syncBtnEl.disabled = true;
   syncBtnEl.textContent = "同步中…";
-  syncBtnEl.title = "正在同步主机…";
+  syncBtnEl.title = "正在同步主机和隧道…";
   try {
     await invoke("sync_hosts");
     await loadHosts();
+    await loadTunnels();
     await loadCertificates();
     updateMainView();
     syncBtnEl.textContent = "已同步";
@@ -1206,7 +1208,7 @@ async function onSyncClick() {
     setTimeout(() => {
       if (!syncBtnEl.disabled) {
         syncBtnEl.textContent = "同步";
-        syncBtnEl.title = "立即同步主机";
+        syncBtnEl.title = "立即同步主机和隧道";
       }
     }, 2000);
   }
@@ -1241,6 +1243,7 @@ loginFormEl.addEventListener("submit", async (e) => {
     logoutBtnEl.classList.remove("hidden");
     loginStatusEl.textContent = "登录成功";
     await loadHosts();
+    await loadTunnels();
     await loadCertificates();
     updateMainView();
     closeLoginModal();
@@ -1460,9 +1463,14 @@ function makeItem({ selected, name, sub, active, onClick, actions, onContextMenu
       ab.type = "button";
       ab.title = action.title;
       ab.innerHTML = action.icon;
+      if (action.menu) {
+        ab.setAttribute("aria-haspopup", "menu");
+        ab.setAttribute("aria-expanded", "false");
+        if (action.controls) ab.setAttribute("aria-controls", action.controls);
+      }
       ab.addEventListener("click", (e) => {
         e.stopPropagation();
-        action.onClick();
+        action.onClick(e, ab);
       });
       actionWrap.appendChild(ab);
     }
@@ -1551,6 +1559,7 @@ function renderHostList() {
 }
 
 function renderTunnelList() {
+  hideTunnelMoreMenu();
   tunnelListEl.textContent = "";
   if (state.tunnels.length === 0) {
     tunnelListEl.appendChild(makeEmptyItem("暂无本地隧道"));
@@ -1566,6 +1575,13 @@ function renderTunnelList() {
           : `Local ${t.localHost}:${t.localPort} → ${t.remoteHost}:${t.remotePort}`,
         active: t.active,
         onClick: () => selectTunnel(t.id),
+        actions: [{
+          title: "更多",
+          icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>',
+          menu: true,
+          controls: "tunnel-more-menu",
+          onClick: (_e, button) => openTunnelListMenu(t.id, button),
+        }],
       })
     );
   }
@@ -1739,6 +1755,7 @@ function selectCert(id) {
 function switchSection(section) {
   hideAllMoreMenus();
   state.section = section;
+  document.querySelector(".app-body")?.classList.toggle("tunnel-sidebar-wide", section === "tunnels");
   $("#nav-hosts").classList.toggle("active", section === "hosts");
   $("#nav-repo").classList.toggle("active", section === "repo");
   $("#nav-proxy").classList.toggle("active", section === "proxy");
@@ -1926,6 +1943,10 @@ function renderRepoStatus() {
   repoCloneUpdateBtnEl.disabled = state.repoSyncing || !setName;
   repoPathEl.textContent = s.localPath || "同步后自动填充";
   repoPathEl.title = s.localPath || "";
+  repoOpenPathBtnEl.disabled = !s.localPath;
+  repoOpenPathBtnEl.title = s.localPath
+    ? `在文件管理器中打开 ${s.localPath}`
+    : "本地路径尚未生成";
   const gitUrl = (set && set.gitUrl) || s.gitUrl || "";
   if (state.repoSyncing) {
     repoStatusLineEl.className = "conn";
@@ -1970,6 +1991,16 @@ async function enterRepo() {
   } else {
     state.repoPath = "";
     showRepoUnsynced();
+  }
+}
+
+async function openRepoLocalPath() {
+  const path = state.repoStatus && state.repoStatus.localPath;
+  if (!path) return;
+  try {
+    await invoke("open_local_path", { path });
+  } catch (err) {
+    uiAlert(`无法打开本地路径: ${err}`);
   }
 }
 
@@ -2473,6 +2504,7 @@ $("#nav-certificates").addEventListener("click", () => switchSection("certificat
 $("#nav-tunnels").addEventListener("click", () => switchSection("tunnels"));
 $("#proxy-indicator").addEventListener("click", () => switchSection("proxy"));
 repoCloneUpdateBtnEl.addEventListener("click", onRepoCloneUpdateClick);
+repoOpenPathBtnEl.addEventListener("click", openRepoLocalPath);
 if (setFormEl) {
   setFormEl.addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -2540,11 +2572,6 @@ $("#delete-tunnel-btn").addEventListener("click", () => {
   hideTunnelMoreMenu();
   deleteSelectedTunnel();
 });
-if (tunnelMoreBtnEl) {
-  tunnelMoreBtnEl.addEventListener("click", (e) => {
-    toggleMoreMenu(tunnelMoreMenuEl, tunnelMoreBtnEl, e);
-  });
-}
 if (hostMoreBtnEl) {
   hostMoreBtnEl.addEventListener("click", (e) => {
     toggleMoreMenu(hostMoreMenuEl, hostMoreBtnEl, e);
@@ -2586,6 +2613,25 @@ function setMoreMenuOpen(menuEl, btnEl, open) {
 
 function hideTunnelMoreMenu() {
   setMoreMenuOpen(tunnelMoreMenuEl, tunnelMoreBtnEl, false);
+  tunnelMoreBtnEl = null;
+}
+
+function openTunnelListMenu(tunnelId, button) {
+  const wasOpen = tunnelMoreBtnEl === button && !tunnelMoreMenuEl.classList.contains("hidden");
+  hideAllMoreMenus();
+  if (wasOpen) return;
+  selectTunnel(tunnelId);
+  tunnelMoreBtnEl = tunnelListEl.querySelector(".item.selected .item-action");
+  if (!tunnelMoreBtnEl) return;
+  const rect = tunnelMoreBtnEl.getBoundingClientRect();
+  tunnelMoreMenuEl.classList.remove("hidden");
+  tunnelMoreBtnEl.setAttribute("aria-expanded", "true");
+  const menuW = tunnelMoreMenuEl.offsetWidth || 140;
+  const menuH = tunnelMoreMenuEl.offsetHeight || 80;
+  const left = Math.min(rect.right - menuW, window.innerWidth - menuW - 8);
+  const top = Math.min(rect.bottom + 4, window.innerHeight - menuH - 8);
+  tunnelMoreMenuEl.style.left = `${Math.max(8, left)}px`;
+  tunnelMoreMenuEl.style.top = `${Math.max(8, top)}px`;
 }
 
 function hideHostMoreMenu() {

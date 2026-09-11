@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS tunnels (
     password       TEXT NOT NULL DEFAULT '',
     certificate_id TEXT NOT NULL DEFAULT '',
     direction      TEXT NOT NULL DEFAULT 'local',
-    local_host     TEXT NOT NULL DEFAULT '127.0.0.1'
+    local_host     TEXT NOT NULL DEFAULT '127.0.0.1',
+    remote_id      TEXT NOT NULL DEFAULT '',
+    user_id        INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS certificates (
@@ -202,7 +204,8 @@ impl Store {
             .conn
             .prepare(
                 "SELECT id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
-                        username, auth_method, password, certificate_id, direction, local_host
+                        username, auth_method, password, certificate_id, direction, local_host,
+                        remote_id, user_id
                  FROM tunnels ORDER BY name COLLATE NOCASE",
             )
             .map_err(|e| e.to_string())?;
@@ -220,7 +223,8 @@ impl Store {
         self.conn
             .query_row(
                 "SELECT id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
-                        username, auth_method, password, certificate_id, direction, local_host
+                        username, auth_method, password, certificate_id, direction, local_host,
+                        remote_id, user_id
                  FROM tunnels WHERE id = ?1",
                 params![id],
                 tunnel_from_row,
@@ -237,8 +241,9 @@ impl Store {
             .execute(
                 "INSERT INTO tunnels
                     (id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
-                     username, auth_method, password, certificate_id, direction, local_host)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                     username, auth_method, password, certificate_id, direction, local_host,
+                     remote_id, user_id)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
                 params![
                     tunnel.id,
                     tunnel.name,
@@ -252,7 +257,9 @@ impl Store {
                     password,
                     certificate_id,
                     tunnel.direction,
-                    tunnel.local_host
+                    tunnel.local_host,
+                    tunnel.remote_id,
+                    tunnel.user_id
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -266,8 +273,9 @@ impl Store {
             .execute(
                 "UPDATE tunnels SET name=?1, local_port=?2, remote_host=?3, remote_port=?4,
                         ssh_host=?5, ssh_port=?6, username=?7, auth_method=?8, password=?9,
-                        certificate_id=?10, direction=?11, local_host=?12
-                 WHERE id=?13",
+                        certificate_id=?10, direction=?11, local_host=?12,
+                        remote_id=?13, user_id=?14
+                 WHERE id=?15",
                 params![
                     tunnel.name,
                     tunnel.local_port,
@@ -281,6 +289,8 @@ impl Store {
                     certificate_id,
                     tunnel.direction,
                     tunnel.local_host,
+                    tunnel.remote_id,
+                    tunnel.user_id,
                     tunnel.id
                 ],
             )
@@ -470,6 +480,18 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     )?;
     ensure_column(
         conn,
+        "tunnels",
+        "remote_id",
+        "ALTER TABLE tunnels ADD COLUMN remote_id TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
+        "tunnels",
+        "user_id",
+        "ALTER TABLE tunnels ADD COLUMN user_id INTEGER NOT NULL DEFAULT 0",
+    )?;
+    ensure_column(
+        conn,
         "hosts",
         "certificate_id",
         "ALTER TABLE hosts ADD COLUMN certificate_id TEXT NOT NULL DEFAULT ''",
@@ -622,6 +644,8 @@ fn tunnel_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tunnel> {
 
     Ok(Tunnel {
         id: row.get(0)?,
+        remote_id: row.get(13)?,
+        user_id: row.get(14)?,
         name: row.get(1)?,
         direction: row.get(11)?,
         local_host: row.get(12)?,
