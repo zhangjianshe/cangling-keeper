@@ -282,6 +282,13 @@ pub(crate) fn record_file(
 /// Refresh the repository fingerprint database. Files whose size and mtime
 /// still match the previous row reuse their SHA-256; only changed files are read.
 pub(crate) fn refresh_database(repository_root: &Path) -> Result<FingerprintDatabase, String> {
+    refresh_database_with_progress(repository_root, |_, _, _, _| {})
+}
+
+pub(crate) fn refresh_database_with_progress(
+    repository_root: &Path,
+    mut on_progress: impl FnMut(usize, usize, &str, bool),
+) -> Result<FingerprintDatabase, String> {
     std::fs::create_dir_all(repository_root).map_err(|error| error.to_string())?;
     let path = database_path(repository_root);
     let previous = read_existing(&path);
@@ -290,12 +297,18 @@ pub(crate) fn refresh_database(repository_root: &Path) -> Result<FingerprintData
     discovered.sort_by(|left, right| left.0.cmp(&right.0));
 
     let mut files = Vec::with_capacity(discovered.len());
-    for (relative, absolute, size, modified_ns) in discovered {
-        let sha256 = previous
+    let total = discovered.len();
+    for (index, (relative, absolute, size, modified_ns)) in discovered.into_iter().enumerate() {
+        let cached = previous
             .get(&relative)
             .filter(|saved| saved.size == size && saved.modified_ns == modified_ns)
-            .map(|saved| saved.sha256.clone())
-            .unwrap_or(sha256_file(&absolute)?);
+            .map(|saved| saved.sha256.clone());
+        let hashed = cached.is_none();
+        let sha256 = match cached {
+            Some(sha256) => sha256,
+            None => sha256_file(&absolute)?,
+        };
+        on_progress(index + 1, total, &relative, hashed);
         files.push(FileFingerprint {
             path: relative,
             size,
@@ -303,6 +316,7 @@ pub(crate) fn refresh_database(repository_root: &Path) -> Result<FingerprintData
             sha256,
         });
     }
+    on_progress(total, total, "正在保存 SQLite 指纹数据库…", false);
     write_database(&path, &files)?;
     Ok(FingerprintDatabase { files })
 }
@@ -319,8 +333,15 @@ mod tests {
         std::fs::write(root.join("np4/partial.part"), b"partial").unwrap();
         std::fs::write(root.join("np4/.git/config"), b"ignored").unwrap();
 
-        let first = refresh_database(&root).unwrap();
+        let mut progress = Vec::new();
+        let first = refresh_database_with_progress(&root, |current, total, path, hashed| {
+            progress.push((current, total, path.to_string(), hashed));
+        })
+        .unwrap();
         assert_eq!(first.files.len(), 1);
+        assert_eq!(progress.len(), 2);
+        assert_eq!(progress[0], (1, 1, "np4/app.jar".to_string(), true));
+        assert_eq!(progress[1].2, "正在保存 SQLite 指纹数据库…");
         assert_eq!(first.files[0].path, "np4/app.jar");
         assert_eq!(
             first.files[0].sha256,

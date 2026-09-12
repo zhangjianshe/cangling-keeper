@@ -1010,19 +1010,26 @@ async function onCanglingUpdateClick() {
   const hostId = state.selectedHostId;
   if (!hostId || !state.termId) return;
   if (state.updateBusy) return;
-  if (!hostInjected(hostId) && !(state.updateProbe && state.updateProbe.localPackageAvailable)) {
+  let p = state.updateProbe;
+  if (!hostInjected(hostId) && !(p && p.localPackageAvailable)) {
     uiAlert("请先注入代理");
     return;
   }
 
-  setUpdateButton({
-    disabled: true,
-    text: "检测中…",
-    title: "正在检查当前版本…",
-    cls: "primary",
-  });
-  await probeCanglingUpdate();
-  const p = state.updateProbe;
+  // The button is rendered from this probe already. Re-probing here races the
+  // automatic probe and can redraw "安装更新程序" before the install flow starts.
+  // run_cangling_update performs its own authoritative probe before changing
+  // anything on the host.
+  if (!p) {
+    setUpdateButton({
+      disabled: true,
+      text: "检测中…",
+      title: "正在检查当前版本…",
+      cls: "primary",
+    });
+    await probeCanglingUpdate();
+    p = state.updateProbe;
+  }
   if (!p) return;
 
   if (!p.supported) {
@@ -1926,6 +1933,28 @@ function hideRepoProgress() {
   repoProgressDetailEl.textContent = "";
 }
 
+function repoProgressActionLabel(action) {
+  return {
+    download: "下载",
+    skip: "跳过",
+    fail: "失败",
+    "git-clone": "克隆",
+    "git-fetch": "拉取",
+    git: "Git",
+    manifest: "获取清单",
+    cleanup: "清理文件",
+    verify: "完整性检查",
+    "fingerprint-scan": "扫描文件",
+    "fingerprint-hash": "计算指纹",
+    fingerprint: "核对指纹",
+    "fingerprint-save": "保存指纹库",
+    finalize: "收尾",
+    refresh: "刷新状态",
+    browse: "读取目录",
+    complete: "完成",
+  }[action] || action || "同步";
+}
+
 function renderRepoProgress(p) {
   repoProgressEl.classList.remove("hidden");
   const current = p.current || 0;
@@ -1942,22 +1971,24 @@ function renderRepoProgress(p) {
   }
   const git =
     p.action === "git" || p.action === "git-clone" || p.action === "git-fetch";
-  const action =
-    p.action === "download"
-      ? "下载"
-      : p.action === "skip"
-        ? "跳过"
-        : p.action === "fail"
-          ? "失败"
-          : p.action === "git-clone"
-            ? "克隆"
-            : p.action === "git-fetch"
-              ? "拉取"
-              : p.action === "git"
-                ? "Git"
-                : p.action || "同步";
+  const action = repoProgressActionLabel(p.action);
+  const finishing = [
+    "manifest",
+    "cleanup",
+    "verify",
+    "fingerprint-scan",
+    "fingerprint-hash",
+    "fingerprint",
+    "fingerprint-save",
+    "finalize",
+    "refresh",
+    "browse",
+    "complete",
+  ].includes(p.action);
   repoProgressLabelEl.textContent = git
     ? `Git ${action}中`
+    : finishing
+      ? `同步中 · ${action}`
     : total > 0
       ? `同步中 ${current}/${total} · ${action}`
       : `同步中 · ${action}`;
@@ -2256,10 +2287,26 @@ async function onRepoCloneUpdateClick() {
     state.repoStatus = await invoke("sync_software_set", { setName });
     state.selectedSetName = setName;
     state.repoPath = "";
+    renderRepoProgress({
+      current: 100,
+      total: 100,
+      action: "refresh",
+      file: "正在刷新软件集状态…",
+      overallDone: 100,
+      overallTotal: 100,
+    });
     await loadSoftwareSets();
     renderSetList();
     renderRepoStatus();
     if (state.repoStatus.cloned) {
+      renderRepoProgress({
+        current: 100,
+        total: 100,
+        action: "browse",
+        file: "正在读取本地软件目录…",
+        overallDone: 100,
+        overallTotal: 100,
+      });
       await loadRepoDir();
     } else {
       showRepoUnsynced();
@@ -2269,11 +2316,27 @@ async function onRepoCloneUpdateClick() {
     }
   } catch (err) {
     uiAlert(`Error: ${err}`);
+    renderRepoProgress({
+      current: 100,
+      total: 100,
+      action: "refresh",
+      file: "正在重新读取软件仓库状态…",
+      overallDone: 100,
+      overallTotal: 100,
+    });
     await loadSoftwareSets();
     await loadRepoStatus();
     renderSetList();
     renderRepoStatus();
     if (state.repoStatus && state.repoStatus.cloned) {
+      renderRepoProgress({
+        current: 100,
+        total: 100,
+        action: "browse",
+        file: "正在读取本地软件目录…",
+        overallDone: 100,
+        overallTotal: 100,
+      });
       await loadRepoDir();
     } else {
       showRepoUnsynced();
@@ -3120,24 +3183,13 @@ listen("host-software-sync-progress", (e) => {
 listen("repo-sync-progress", (e) => {
   const p = e.payload || {};
   if (p.setName && state.selectedSetName && p.setName !== state.selectedSetName) return;
-  state.repoSyncing = true;
+  // Ignore queued events delivered after the command promise has completed;
+  // otherwise an old event can reopen a progress panel that was already closed.
+  if (!state.repoSyncing) return;
   renderRepoProgress(p);
   const git =
     p.action === "git" || p.action === "git-clone" || p.action === "git-fetch";
-  const action =
-    p.action === "download"
-      ? "下载"
-      : p.action === "skip"
-        ? "跳过"
-        : p.action === "fail"
-          ? "失败"
-          : p.action === "git-clone"
-            ? "克隆"
-            : p.action === "git-fetch"
-              ? "拉取"
-              : p.action === "git"
-                ? "Git"
-                : p.action || "";
+  const action = repoProgressActionLabel(p.action);
   const bytes =
     (p.action === "download" || git) && (p.bytesDone || p.bytesTotal)
       ? p.bytesTotal

@@ -914,6 +914,79 @@ fn emit_sync_progress(
     );
 }
 
+fn emit_repo_phase(
+    app: &AppHandle,
+    set_name: &str,
+    action: &str,
+    message: &str,
+    current: u32,
+    total: u32,
+) {
+    let _ = app.emit(
+        "repo-sync-progress",
+        SyncProgress {
+            set_name: set_name.to_string(),
+            current,
+            total,
+            file: message.to_string(),
+            action: action.to_string(),
+            bytes_done: 0,
+            bytes_total: 0,
+            overall_done: u64::from(current),
+            overall_total: u64::from(total),
+        },
+    );
+}
+
+fn refresh_fingerprints_with_progress(
+    app: &AppHandle,
+    data_dir: &Path,
+    set_name: &str,
+) -> Result<(), String> {
+    emit_repo_phase(
+        app,
+        set_name,
+        "fingerprint-scan",
+        "正在扫描本地软件仓库…",
+        0,
+        0,
+    );
+    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    crate::fingerprints::refresh_database_with_progress(
+        &sets_root(data_dir),
+        |current, total, file, hashed| {
+            let now = Instant::now();
+            if current < total && now.duration_since(last_emit) < Duration::from_millis(120) {
+                return;
+            }
+            last_emit = now;
+            let current = u32::try_from(current).unwrap_or(u32::MAX);
+            let total = u32::try_from(total).unwrap_or(u32::MAX);
+            emit_repo_phase(
+                app,
+                set_name,
+                if hashed {
+                    "fingerprint-hash"
+                } else {
+                    "fingerprint"
+                },
+                file,
+                current,
+                total,
+            );
+        },
+    )?;
+    emit_repo_phase(
+        app,
+        set_name,
+        "fingerprint-save",
+        "软件仓库指纹库已更新",
+        100,
+        100,
+    );
+    Ok(())
+}
+
 async fn download_file(
     url: &str,
     dest: &Path,
@@ -1521,8 +1594,17 @@ fn sync_git_set(
         return Err(format!("{last_err}（已自动重试 {GIT_ATTEMPTS} 次）"));
     }
 
+    emit_repo_phase(
+        app,
+        &rec.name,
+        "finalize",
+        "正在读取 Git 分支和提交信息…",
+        100,
+        100,
+    );
     let (branch, commit) = git_head(&dest);
-    crate::fingerprints::refresh_database(&sets_root(data_dir))?;
+    refresh_fingerprints_with_progress(app, data_dir, &rec.name)?;
+    emit_repo_phase(app, &rec.name, "complete", "同步完成", 100, 100);
     Ok(RepoStatus {
         cloned: dest.join(".git").is_dir(),
         local_path: dest.to_string_lossy().into_owned(),
@@ -1715,6 +1797,14 @@ pub async fn sync_software_set(
     let dest = set_dir(&data_dir, &set_name)?;
     std::fs::create_dir_all(&dest).map_err(|e| format!("创建目录失败：{e}"))?;
 
+    emit_repo_phase(
+        &app,
+        &set_name,
+        "manifest",
+        "正在获取远端软件清单…",
+        0,
+        0,
+    );
     let manifest = fetch_manifest(&server_url, &set_name).await?;
     let mut expected = HashSet::new();
     let mut jobs = Vec::new();
@@ -1803,8 +1893,24 @@ pub async fn sync_software_set(
         }
     }
 
+    emit_repo_phase(
+        &app,
+        &set_name,
+        "cleanup",
+        "下载完成，正在清理本地多余文件…",
+        100,
+        100,
+    );
     prune_extra_files(&dest, &expected)?;
 
+    emit_repo_phase(
+        &app,
+        &set_name,
+        "verify",
+        "正在检查软件集完整性…",
+        100,
+        100,
+    );
     let cloned = dir_has_complete_files(&dest);
     if failed > 0 && downloaded == 0 && skipped == 0 {
         return Err(if last_error.is_empty() {
@@ -1821,7 +1927,8 @@ pub async fn sync_software_set(
         });
     }
 
-    crate::fingerprints::refresh_database(&sets_root(&data_dir))?;
+    refresh_fingerprints_with_progress(&app, &data_dir, &set_name)?;
+    emit_repo_phase(&app, &set_name, "complete", "同步完成", 100, 100);
 
     Ok(RepoStatus {
         cloned,
