@@ -153,7 +153,7 @@ pub async fn check_app_update(app: AppHandle) -> Result<AppUpdateStatus, String>
 
 #[tauri::command]
 pub async fn apply_app_update(app: AppHandle) -> Result<(), String> {
-    let latest = fetch_latest().await.unwrap_or_default();
+    let latest = fetch_latest().await?;
     let url = cache_bust(&bundle_url()?, &latest);
     let filename = bundle_file()?;
     let dest = std::env::temp_dir().join(filename);
@@ -198,13 +198,13 @@ pub async fn apply_app_update(app: AppHandle) -> Result<(), String> {
     emit_progress(&app, "download", received, total.max(received));
     emit_progress(&app, "install", received, total.max(received));
 
-    launch_installer(&dest)?;
+    launch_installer(&dest, &latest)?;
     app.exit(0);
     Ok(())
 }
 
 #[cfg(target_os = "windows")]
-fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
+fn launch_installer(dest: &std::path::Path, expected_version: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt;
 
     // Hide the helper console. The NSIS installer itself is launched with `/S`.
@@ -215,40 +215,11 @@ fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
     let exe = std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {e}"))?;
 
     let script_path = std::env::temp_dir().join("cangling-keeper-update.ps1");
-    // Tauri NSIS flags:
-    //   /S      silent (default install location / previous location)
-    //   /UPDATE in-place update, do not run uninstall.exe first
-    //   /R      relaunch the app after a silent install
-    // Running uninstall.exe before the new installer was wiping the current
-    // install and then restarting the old binary, so the next launch still
-    // looked like an update was available.
-    let script = format!(
-        r#"$ErrorActionPreference = 'SilentlyContinue'
-Wait-Process -Id {pid} -ErrorAction SilentlyContinue
-Get-Process -Name 'cangling-keeper' -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Sleep -Milliseconds 800
-$setup = {setup}
-$exe = {exe}
-$p = Start-Process -FilePath $setup -ArgumentList @('/S', '/UPDATE', '/R') -PassThru -WindowStyle Hidden
-if ($p) {{ $p.WaitForExit() }}
-Start-Sleep -Milliseconds 800
-if (-not (Get-Process -Name 'cangling-keeper' -ErrorAction SilentlyContinue)) {{
-  if (Test-Path -LiteralPath $exe) {{ Start-Process -FilePath $exe }}
-}}
-Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
-"#,
-        setup = powershell_literal(&setup),
-        exe = powershell_literal(&exe),
-    );
+    let script = windows_update_script(pid, &setup, &exe, expected_version);
     std::fs::write(&script_path, script).map_err(|e| format!("写入更新脚本失败: {e}"))?;
 
     std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-        ])
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
         .arg(&script_path)
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
@@ -256,16 +227,60 @@ Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force
     Ok(())
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn windows_update_script(
+    pid: u32,
+    setup: &std::path::Path,
+    exe: &std::path::Path,
+    expected_version: &str,
+) -> String {
+    let expected_version = expected_version.trim().trim_start_matches('v');
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
+Wait-Process -Id {pid} -ErrorAction SilentlyContinue
+Get-Process -Name 'cangling-keeper' -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Milliseconds 800
+$setup = {setup}
+$exe = {exe}
+$expected = '{expected_version}'
+$log = Join-Path $env:TEMP 'cangling-keeper-update.log'
+$installDir = Split-Path -Parent $exe
+try {{
+  # /D must be the final NSIS argument. Pinning it to the running executable's
+  # directory prevents a per-user/per-machine mismatch from updating a second copy.
+  $p = Start-Process -FilePath $setup -ArgumentList @('/S', '/UPDATE', "/D=$installDir") -PassThru -WindowStyle Hidden
+  $p.WaitForExit()
+  if ($p.ExitCode -ne 0) {{ throw "installer exited with code $($p.ExitCode)" }}
+  Start-Sleep -Milliseconds 800
+  $actual = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion
+  if (-not ($actual -eq $expected -or $actual.StartsWith("$expected."))) {{
+    throw "installed version $actual does not match expected $expected at $exe"
+  }}
+  "success: $actual at $exe" | Set-Content -LiteralPath $log -Encoding UTF8
+  Start-Process -FilePath $exe
+}} catch {{
+  "failed: $($_.Exception.Message)" | Set-Content -LiteralPath $log -Encoding UTF8
+  if (Test-Path -LiteralPath $exe) {{ Start-Process -FilePath $exe }}
+}} finally {{
+  Remove-Item -LiteralPath $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+}}
+"#,
+        setup = powershell_literal(&setup),
+        exe = powershell_literal(&exe),
+        expected_version = expected_version.replace('\'', "''"),
+    )
+}
+
 /// Single-quoted PowerShell string literal. Paths are wrapped so spaces and
 /// most special characters in usernames do not break the helper script.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", test))]
 fn powershell_literal(path: &std::path::Path) -> String {
     let s = path.to_string_lossy().replace('\'', "''");
     format!("'{s}'")
 }
 
 #[cfg(target_os = "linux")]
-fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
+fn launch_installer(dest: &std::path::Path, _expected_version: &str) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
 
     // When running as an AppImage, replace the running AppImage file in place
@@ -319,10 +334,33 @@ fn replace_appimage(src: &std::path::Path, target: &std::path::Path) -> std::io:
 }
 
 #[cfg(target_os = "macos")]
-fn launch_installer(dest: &std::path::Path) -> Result<(), String> {
+fn launch_installer(dest: &std::path::Path, _expected_version: &str) -> Result<(), String> {
     std::process::Command::new("open")
         .arg(dest)
         .spawn()
         .map_err(|e| format!("启动更新失败: {e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_update_targets_current_directory_and_verifies_version() {
+        let script = windows_update_script(
+            42,
+            std::path::Path::new(r"C:\Temp\keeper setup.exe"),
+            std::path::Path::new(
+                r"C:\Users\test\AppData\Local\cangling-keeper\cangling-keeper.exe",
+            ),
+            "v0.0.73",
+        );
+
+        assert!(script.contains("@('/S', '/UPDATE', \"/D=$installDir\")"));
+        assert!(!script.contains("'/R'"));
+        assert!(script.contains("$p.ExitCode -ne 0"));
+        assert!(script.contains("$expected = '0.0.73'"));
+        assert!(script.contains("VersionInfo.ProductVersion"));
+    }
 }

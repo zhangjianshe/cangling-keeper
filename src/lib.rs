@@ -1301,11 +1301,21 @@ async fn set_cangling_role(
     role: String,
     token: Option<String>,
     master: Option<String>,
+    port: Option<u16>,
 ) -> Result<host_actions::SetRoleResult, String> {
     let role = host_actions::normalize_role(&role)?;
     let token = token.unwrap_or_default();
     let master = master.unwrap_or_default();
-    let cmd = host_actions::wrap_set_role_command(role, token.trim(), master.trim());
+    let selected_port = if role == "master" {
+        match port {
+            Some(0) => return Err("端口必须在 1 到 65535 之间".into()),
+            Some(port) => port,
+            None => host_actions::DEFAULT_CONSOLE_PORT,
+        }
+    } else {
+        0
+    };
+    let cmd = host_actions::wrap_set_role_command(role, token.trim(), master.trim(), selected_port);
     let out = ssh_run(&state, &host_id, cmd).await?;
     if out.exit_status != 0 {
         return Err(format!(
@@ -1321,6 +1331,9 @@ async fn set_cangling_role(
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let mut host = store.get_host(&host_id)?;
         host.update_role = parsed_role.clone();
+        if parsed_role == "master" {
+            host.update_port = selected_port;
+        }
         store.update_host(&host)?;
         host
     };
@@ -1339,7 +1352,7 @@ async fn set_cangling_role(
         let store = state.store.lock().map_err(|e| e.to_string())?;
         if let Ok(host) = store.get_host(&host_id) {
             if !host.hostname.is_empty() && !token.is_empty() {
-                format!("http://{}/?token={}", host.hostname, token)
+                format!("http://{}:{}/token?{}", host.hostname, selected_port, token)
             } else {
                 String::new()
             }

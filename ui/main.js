@@ -885,6 +885,7 @@ async function onRoleSwitchClick(role) {
   const current = currentRole();
   let token = "";
   let master = p.master || "";
+  let port = null;
   // hoisted so both branches can use them
   let clipMaster = "", clipToken = "";
 
@@ -929,6 +930,26 @@ async function onRoleSwitchClick(role) {
       master = String(entered).trim();
     } else {
       master = "";
+      const probedPort = Number(p.port);
+      const defaultPort = Number.isInteger(probedPort) && probedPort >= 1 && probedPort <= 65535
+        ? String(probedPort)
+        : "5400";
+      const enteredPort = await uiPrompt(
+        "请输入 Master 的 HTTP 监听端口",
+        defaultPort,
+        "Master 端口"
+      );
+      if (enteredPort == null) return;
+      const portText = String(enteredPort).trim();
+      if (!/^\d+$/.test(portText)) {
+        uiAlert("端口必须是 1 到 65535 之间的整数", "Master 端口");
+        return;
+      }
+      port = Number(portText);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        uiAlert("端口必须是 1 到 65535 之间的整数", "Master 端口");
+        return;
+      }
     }
   }
 
@@ -937,7 +958,9 @@ async function onRoleSwitchClick(role) {
       ? `，主节点 ${master}`
       : role === "worker"
         ? "，自动发现主节点"
-        : "";
+        : role === "master"
+          ? `，端口 ${port}`
+          : "";
   const same = current === role ? "重新" : "";
   if (
     !(await uiConfirm(
@@ -956,6 +979,7 @@ async function onRoleSwitchClick(role) {
       role,
       token,
       master,
+      port,
     });
     writeActionLog(
       `运行模式 → ${roleLabel(result.role)}`,

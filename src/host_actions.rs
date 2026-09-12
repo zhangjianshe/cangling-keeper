@@ -232,8 +232,8 @@ fn parse_percent(line: &str) -> Option<u8> {
     Some(v as u8)
 }
 
-pub fn wrap_set_role_command(role: &str, token: &str, master: &str) -> String {
-    bash_c(SET_ROLE_SCRIPT, &[role, token, master])
+pub fn wrap_set_role_command(role: &str, token: &str, master: &str, port: u16) -> String {
+    bash_c(SET_ROLE_SCRIPT, &[role, token, master, &port.to_string()])
 }
 
 pub fn wrap_check_command(proxy: &str) -> String {
@@ -729,10 +729,12 @@ mod tests {
 
     #[test]
     fn wrap_set_role_includes_args() {
-        let cmd = wrap_set_role_command("worker", "tok en", "http://10.0.0.1:80");
+        let cmd = wrap_set_role_command("worker", "tok en", "http://10.0.0.1:80", 0);
         assert!(cmd.contains("CK_ROLE"));
         assert!(cmd.contains("standalone|master|worker"));
-        assert!(cmd.ends_with("ck worker 'tok en' http://10.0.0.1:80"));
+        assert!(cmd.ends_with("ck worker 'tok en' http://10.0.0.1:80 0"));
+        let master = wrap_set_role_command("master", "secret", "", 5400);
+        assert!(master.ends_with("ck master secret '' 5400"));
     }
 
     #[test]

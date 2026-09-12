@@ -3,17 +3,19 @@
 # $1 = standalone | master | worker
 # $2 = cluster token (required for master/worker unless already in the unit)
 # $3 = master URL (optional, worker only; empty = UDP discovery)
+# $4 = HTTP port override (master only; empty/0 keeps the current port)
 set -eu
 ROLE="${1:-}"
 TOKEN="${2:-}"
 MASTER="${3:-}"
+REQUESTED_PORT="${4:-}"
 HOME="${HOME:-/root}"
 UNIT=/etc/systemd/system/cangling-update.service
 
 case "$ROLE" in
   standalone|master|worker) ;;
   *)
-    echo "usage: set-cangling-role.sh standalone|master|worker [token] [master]" >&2
+    echo "usage: set-cangling-role.sh standalone|master|worker [token] [master] [port]" >&2
     exit 2
     ;;
 esac
@@ -126,6 +128,20 @@ fi
 
 if [ -z "$TOKEN" ]; then
   TOKEN="$existing_token"
+fi
+
+if [ "$ROLE" = "master" ] && [ -n "$REQUESTED_PORT" ] && [ "$REQUESTED_PORT" != "0" ]; then
+  case "$REQUESTED_PORT" in
+    *[!0-9]*)
+      echo "端口必须是 1 到 65535 之间的整数" >&2
+      exit 2
+      ;;
+  esac
+  if [ "$REQUESTED_PORT" -lt 1 ] || [ "$REQUESTED_PORT" -gt 65535 ]; then
+    echo "端口必须是 1 到 65535 之间的整数" >&2
+    exit 2
+  fi
+  port="$REQUESTED_PORT"
 fi
 
 if [ "$ROLE" = "master" ] || [ "$ROLE" = "worker" ]; then
