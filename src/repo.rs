@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, State};
 
 use crate::AppState;
@@ -312,6 +312,112 @@ struct SoftwareFileManifest {
 
 pub(crate) fn sets_root(data_dir: &Path) -> PathBuf {
     data_dir.join("software-sets")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LocalCanglingUpdatePackage {
+    pub path: PathBuf,
+    pub version: String,
+    pub sha256: String,
+    pub size: u64,
+}
+
+fn embedded_version(path: &Path) -> Result<String, String> {
+    let bytes = std::fs::read(path)
+        .map_err(|error| format!("读取本地 cangling-update 版本失败：{error}"))?;
+    let mut versions = HashSet::new();
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        if bytes[index] != b'v' || index + 1 >= bytes.len() || !bytes[index + 1].is_ascii_digit() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        index += 1;
+        let mut dots = 0_u8;
+        while index < bytes.len() {
+            let byte = bytes[index];
+            if byte.is_ascii_digit() {
+                index += 1;
+            } else if byte == b'.' && dots < 2 {
+                dots += 1;
+                index += 1;
+            } else {
+                break;
+            }
+        }
+        if dots == 2
+            && index > start + 5
+            && (index == bytes.len() || (bytes[index] != b'.' && !bytes[index].is_ascii_digit()))
+        {
+            versions.insert(String::from_utf8_lossy(&bytes[start..index]).into_owned());
+        }
+    }
+    if versions.len() == 1 {
+        Ok(versions.into_iter().next().unwrap_or_default())
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// Locate the cangling-update binary already mirrored by the `np4` software set.
+/// Version metadata is optional for a new installation; updating an existing
+/// installation requires a comparable version so an older local package cannot downgrade it.
+pub(crate) fn local_cangling_update_package(
+    data_dir: &Path,
+    arch: &str,
+) -> Result<Option<LocalCanglingUpdatePackage>, String> {
+    if arch != "amd64" && arch != "arm64" {
+        return Ok(None);
+    }
+    let dir = sets_root(data_dir)
+        .join("np4/np4-update/latest/linux")
+        .join(arch);
+    let path = dir.join("cangling-update");
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let metadata = path
+        .metadata()
+        .map_err(|error| format!("读取本地 cangling-update 包信息失败：{error}"))?;
+    if metadata.len() == 0 {
+        return Err(format!("本地 cangling-update 包为空：{}", path.display()));
+    }
+    let mut version = ["cangling-update-version", "version.txt"]
+        .iter()
+        .find_map(|name| std::fs::read_to_string(dir.join(name)).ok())
+        .map(|value| value.trim().to_string())
+        .unwrap_or_default();
+    if version.is_empty() {
+        version = embedded_version(&path)?;
+    }
+    let relative = format!("np4/np4-update/latest/linux/{arch}/cangling-update");
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .and_then(|value| i64::try_from(value.as_nanos()).ok())
+        .unwrap_or(0);
+    let cached_sha256 = crate::fingerprints::read_database(&crate::fingerprints::database_path(
+        &sets_root(data_dir),
+    ))
+    .ok()
+    .and_then(|files| {
+        files.into_iter().find(|file| {
+            file.path == relative && file.size == metadata.len() && file.modified_ns == modified_ns
+        })
+    })
+    .map(|file| file.sha256);
+    let sha256 = match cached_sha256 {
+        Some(sha256) => sha256,
+        None => sha256_file(&path)?,
+    };
+    Ok(Some(LocalCanglingUpdatePackage {
+        path,
+        version,
+        sha256,
+        size: metadata.len(),
+    }))
 }
 
 fn set_dir(data_dir: &Path, set_name: &str) -> Result<PathBuf, String> {
@@ -1914,5 +2020,39 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         assert_eq!(relative_path(&root, &file).unwrap(), "a/b.txt");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn finds_local_cangling_update_package_with_optional_version() {
+        let data_dir =
+            std::env::temp_dir().join(format!("ck-local-update-{}", uuid::Uuid::new_v4()));
+        let dir = sets_root(&data_dir).join("np4/np4-update/latest/linux/amd64");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("cangling-update"), b"local update binary").unwrap();
+
+        let package = local_cangling_update_package(&data_dir, "amd64")
+            .unwrap()
+            .unwrap();
+        assert_eq!(package.size, 19);
+        assert!(package.version.is_empty());
+        assert_eq!(package.sha256.len(), 64);
+
+        std::fs::write(dir.join("cangling-update"), b"binary-v0.1.95-data").unwrap();
+        let package = local_cangling_update_package(&data_dir, "amd64")
+            .unwrap()
+            .unwrap();
+        assert_eq!(package.version, "v0.1.95");
+
+        std::fs::write(dir.join("cangling-update-version"), "v0.1.96\n").unwrap();
+        let package = local_cangling_update_package(&data_dir, "amd64")
+            .unwrap()
+            .unwrap();
+        assert_eq!(package.version, "v0.1.96");
+        assert!(
+            local_cangling_update_package(&data_dir, "riscv64")
+                .unwrap()
+                .is_none()
+        );
+        let _ = std::fs::remove_dir_all(&data_dir);
     }
 }

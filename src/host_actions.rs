@@ -20,6 +20,8 @@ pub struct UpdateProbe {
     pub latest: String,
     pub update_available: bool,
     pub version_error: String,
+    pub local_package_available: bool,
+    pub update_source: String,
     pub role: String,
     pub token_set: bool,
     pub cluster_token: String,
@@ -157,9 +159,18 @@ pub fn wrap_fix_firewall_command(port: u16) -> String {
     bash_c(FIX_FIREWALL_SCRIPT, &[&port.to_string()])
 }
 
-pub fn wrap_apply_command(action: &str, arch: &str, proxy: &str, port: u16) -> String {
+pub fn wrap_apply_command(
+    action: &str,
+    arch: &str,
+    proxy: &str,
+    port: u16,
+    local_package: &str,
+) -> String {
     let port = console_remote_port(port);
-    bash_c(APPLY_SCRIPT, &[action, arch, proxy, &port.to_string()])
+    bash_c(
+        APPLY_SCRIPT,
+        &[action, arch, proxy, &port.to_string(), local_package],
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -432,6 +443,8 @@ pub fn parse_probe(stdout: &str) -> Result<UpdateProbe, String> {
         latest: String::new(),
         update_available: false,
         version_error: String::new(),
+        local_package_available: false,
+        update_source: String::new(),
         role,
         token_set: token_set || !cluster_token.is_empty(),
         cluster_token,
@@ -702,7 +715,7 @@ mod tests {
 
     #[test]
     fn wrap_includes_urls_and_args() {
-        let cmd = wrap_apply_command("install", "amd64", "http://127.0.0.1:7890", 5400);
+        let cmd = wrap_apply_command("install", "amd64", "http://127.0.0.1:7890", 5400, "");
         assert!(cmd.contains(
             "https://soft.cangling.cn:22002/software/a59ff5999a0d4404a257cf7aa16ca10b/latest"
         ));
@@ -711,7 +724,9 @@ mod tests {
         assert!(!cmd.contains("/upload/"));
         assert!(cmd.contains("install-service"));
         assert!(cmd.contains("--port=\"$PORT\""));
-        assert!(cmd.ends_with("ck install amd64 http://127.0.0.1:7890 5400"));
+        assert!(cmd.ends_with("ck install amd64 http://127.0.0.1:7890 5400 ''"));
+        let local = wrap_apply_command("update", "arm64", "", 5400, "/root/update/local package");
+        assert!(local.ends_with("ck update arm64 '' 5400 '/root/update/local package'"));
         let probe = wrap_probe_command();
         assert!(probe.contains("CK_PROBE"));
         assert!(probe.contains("|port=%s|token=%s"));
@@ -809,6 +824,7 @@ mod tests {
         assert!(is_newer("v0.2", "v0.1.9"));
         assert!(is_newer("v0.1.52", "v0.1.52-beta"));
         assert!(!is_newer("v0.1.51", "v0.1.52"));
+        assert!(!is_newer("v0.1.96", "v0.1.105"));
         assert!(!is_newer("v0.1.52", "v0.1.52"));
         assert!(!is_newer("v0.1.52", "0.1.52"));
         assert!(!is_newer("0.1.52", "v0.1.52"));

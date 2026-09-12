@@ -3,11 +3,13 @@
 # $2 = amd64 | arm64
 # $3 = proxy URL, e.g. http://127.0.0.1:7890
 # $4 = cangling-update HTTP port (default 5400)
+# $5 = package uploaded from keeper's local repository (optional)
 set -eu
 ACTION="${1:-}"
 ARCH="${2:-}"
 PROXY="${3:-http://127.0.0.1:7890}"
 PORT="${4:-5400}"
+LOCAL_PACKAGE="${5:-}"
 HOME="${HOME:-/root}"
 DEST_DIR="$HOME/update"
 DEST="$DEST_DIR/cangling-update"
@@ -23,7 +25,7 @@ case "$ARCH" in
 esac
 
 if [ "$ACTION" != install ] && [ "$ACTION" != update ]; then
-  echo "usage: apply-cangling-update.sh install|update amd64|arm64 [proxy] [port]" >&2
+  echo "usage: apply-cangling-update.sh install|update amd64|arm64 [proxy] [port] [local-package]" >&2
   exit 2
 fi
 
@@ -55,21 +57,31 @@ replace_bin() {
 }
 
 download() {
-  echo "CK_APPLY|phase=download|pct=0|msg=正在下载"
-  echo "downloading $URL"
-  echo "      via   $PROXY"
-  echo "      to    $DEST (via $TMP)"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fL --retry 3 --connect-timeout 20 --max-time 300 -k \
-      --proxy "$PROXY" --progress-bar -o "$TMP" "$URL"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -O "$TMP" --no-check-certificate --timeout=20 --progress=bar:force \
-      -e use_proxy=yes -e "https_proxy=$PROXY" -e "http_proxy=$PROXY" \
-      "$URL"
+  if [ -n "$LOCAL_PACKAGE" ]; then
+    echo "CK_APPLY|phase=prepare|pct=80|msg=正在准备本地软件仓库安装包"
+    echo "using keeper local repository package $LOCAL_PACKAGE"
+    if [ ! -s "$LOCAL_PACKAGE" ]; then
+      echo "CK_APPLY|phase=error|pct=0|msg=本地仓库安装包不存在或为空" >&2
+      exit 1
+    fi
+    cp -f "$LOCAL_PACKAGE" "$TMP"
   else
-    echo "CK_APPLY|phase=error|pct=0|msg=未找到 curl/wget" >&2
-    echo "curl/wget not found" >&2
-    exit 1
+    echo "CK_APPLY|phase=download|pct=0|msg=正在下载"
+    echo "downloading $URL"
+    echo "      via   $PROXY"
+    echo "      to    $DEST (via $TMP)"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL --retry 3 --connect-timeout 20 --max-time 300 -k \
+        --proxy "$PROXY" --progress-bar -o "$TMP" "$URL"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$TMP" --no-check-certificate --timeout=20 --progress=bar:force \
+        -e use_proxy=yes -e "https_proxy=$PROXY" -e "http_proxy=$PROXY" \
+        "$URL"
+    else
+      echo "CK_APPLY|phase=error|pct=0|msg=未找到 curl/wget" >&2
+      echo "curl/wget not found" >&2
+      exit 1
+    fi
   fi
   chmod +x "$TMP"
   if [ ! -s "$TMP" ]; then

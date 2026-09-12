@@ -1183,17 +1183,38 @@ async fn probe_cangling_update(
     host_id: String,
 ) -> Result<host_actions::UpdateProbe, String> {
     let mut probe = run_probe(&state, &host_id).await?;
-    if probe.installed && probe.supported {
-        match require_injected(&state, &host_id) {
-            Ok(remote_port) => match fetch_latest_version(&state, &host_id, remote_port).await {
-                Ok(latest) => {
-                    probe.latest = latest.clone();
-                    probe.update_available = host_actions::is_newer(&latest, &probe.version);
+    let local_package = repo::local_cangling_update_package(&state.data_dir, &probe.arch);
+    match local_package {
+        Ok(Some(package)) => {
+            probe.local_package_available = true;
+            probe.update_source = "local".into();
+            probe.latest = if package.version.is_empty() {
+                "本地仓库版本".into()
+            } else {
+                package.version
+            };
+            if probe.installed {
+                if probe.latest == "本地仓库版本" || probe.version.trim().is_empty() {
+                    probe.version_error = "本地仓库包缺少可比较的版本信息".into();
+                } else {
+                    probe.update_available = host_actions::is_newer(&probe.latest, &probe.version);
                 }
-                Err(e) => probe.version_error = e,
-            },
-            Err(_) => {}
+            }
         }
+        Ok(None) if probe.installed && probe.supported => {
+            if let Ok(remote_port) = require_injected(&state, &host_id) {
+                match fetch_latest_version(&state, &host_id, remote_port).await {
+                    Ok(latest) => {
+                        probe.latest = latest.clone();
+                        probe.update_available = host_actions::is_newer(&latest, &probe.version);
+                        probe.update_source = "server".into();
+                    }
+                    Err(e) => probe.version_error = e,
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(error) => probe.version_error = error,
     }
     // Populate master_url for display:
     if probe.role == "master" && !probe.cluster_token.is_empty() {
@@ -1221,7 +1242,6 @@ async fn run_cangling_update(
     host_id: String,
     port: Option<u16>,
 ) -> Result<host_actions::UpdateApplyResult, String> {
-    let remote_port = require_injected(&state, &host_id)?;
     let probe = run_probe(&state, &host_id).await?;
     if !probe.supported {
         return Err(format!("unsupported CPU arch: {}", probe.arch));
@@ -1235,11 +1255,75 @@ async fn run_cangling_update(
             store.get_host(&host_id)?.update_port_or_default()
         }
     };
+    let local_package = repo::local_cangling_update_package(&state.data_dir, &probe.arch)?;
+    if probe.installed {
+        if let Some(package) = local_package.as_ref() {
+            if package.version.is_empty() || probe.version.trim().is_empty() {
+                return Err("本地软件仓库包缺少可比较的版本信息，已拒绝替换现有程序".into());
+            }
+            if !host_actions::is_newer(&package.version, &probe.version) {
+                return Err(format!(
+                    "本地软件仓库版本 {} 不高于主机当前版本 {}，已取消更新",
+                    package.version, probe.version
+                ));
+            }
+        }
+    }
+    let (proxy, staged_package) = if let Some(package) = local_package {
+        let data_dir = state.data_dir.clone();
+        let (host, auth) = {
+            let store = state.store.lock().map_err(|error| error.to_string())?;
+            let host = store.get_host(&host_id)?;
+            let auth = resolve_auth(&store, &host.auth, &data_dir)?;
+            (host, auth)
+        };
+        let progress_app = app.clone();
+        let progress_host_id = host_id.clone();
+        let package_size = package.size;
+        let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let staged = host_sync::upload_cangling_update_package(
+            &host,
+            &auth,
+            &probe.arch,
+            &package.path,
+            package.size,
+            &package.sha256,
+            move |done| {
+                let now = std::time::Instant::now();
+                if done < package_size
+                    && now.duration_since(last_emit) < std::time::Duration::from_millis(200)
+                {
+                    return;
+                }
+                last_emit = now;
+                let pct = if package_size == 0 {
+                    0
+                } else {
+                    ((done.saturating_mul(80) / package_size).min(80)) as u8
+                };
+                let _ = progress_app.emit(
+                    "cangling-update-progress",
+                    UpdateApplyProgress {
+                        host_id: progress_host_id.clone(),
+                        phase: "upload".into(),
+                        message: "正在从本地软件仓库上传".into(),
+                        pct,
+                    },
+                );
+            },
+        )
+        .await?;
+        (String::new(), staged)
+    } else {
+        let remote_port = require_injected(&state, &host_id)?;
+        (host_actions::inject_proxy_url(remote_port), String::new())
+    };
     let cmd = host_actions::wrap_apply_command(
         action,
         &probe.arch,
-        &host_actions::inject_proxy_url(remote_port),
+        &proxy,
         install_port,
+        &staged_package,
     );
     let _ = app.emit(
         "cangling-update-progress",
@@ -1247,9 +1331,15 @@ async fn run_cangling_update(
             host_id: host_id.clone(),
             phase: "download".into(),
             message: if action == "install" {
-                "正在下载并安装…".into()
-            } else {
+                if staged_package.is_empty() {
+                    "正在下载并安装…".into()
+                } else {
+                    "正在使用本地软件仓库安装…".into()
+                }
+            } else if staged_package.is_empty() {
                 "正在下载更新…".into()
+            } else {
+                "正在使用本地软件仓库更新…".into()
             },
             pct: 0,
         },

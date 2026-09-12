@@ -737,12 +737,12 @@ function updateHostActionsUI() {
     return;
   }
 
-  if (!hostInjected(state.selectedHostId)) {
+  const p = state.updateProbe;
+  if (!hostInjected(state.selectedHostId) && !(p && p.localPackageAvailable)) {
     setUpdateButton({ disabled: true, title: "需要先注入代理" });
     return;
   }
 
-  const p = state.updateProbe;
   if (!p) {
     setUpdateButton({ disabled: true, text: "检测中…", title: "正在检查 cangling-update…" });
     return;
@@ -767,14 +767,16 @@ function updateHostActionsUI() {
       setUpdateButton({
         disabled: false,
         text: `更新到 ${p.latest}`,
-        title: `${run}${ver} · ${p.arch} · 服务器最新 ${p.latest} · 点击后经代理更新并重启`,
+        title: `${run}${ver} · ${p.arch} · ${p.updateSource === "local" ? "本地软件仓库" : "服务器"}最新 ${p.latest} · 点击后更新并重启`,
         cls: "primary",
       });
     } else {
       setUpdateButton({
         disabled: true,
-        text: "已是最新版本",
-        title: `${run}${ver} · ${p.arch} · 已是最新版本（服务器 ${p.latest || "—"}）`,
+        text: p.updateSource === "local" ? "无需更新" : "已是最新版本",
+        title: p.updateSource === "local"
+          ? `${run}${ver} · ${p.arch} · 当前版本不低于本地软件仓库 ${p.latest || "—"}`
+          : `${run}${ver} · ${p.arch} · 已是最新版本（服务器 ${p.latest || "—"}）`,
         cls: "up-to-date",
       });
     }
@@ -782,7 +784,9 @@ function updateHostActionsUI() {
     setUpdateButton({
       disabled: false,
       text: "安装更新程序",
-      title: `未安装 · ${p.arch} · 点击后经代理下载并 install-service`,
+      title: p.localPackageAvailable
+        ? `未安装 · ${p.arch} · 点击后从本地软件仓库安装`
+        : `未安装 · ${p.arch} · 点击后经代理下载并 install-service`,
       cls: "primary",
     });
   }
@@ -1006,7 +1010,7 @@ async function onCanglingUpdateClick() {
   const hostId = state.selectedHostId;
   if (!hostId || !state.termId) return;
   if (state.updateBusy) return;
-  if (!hostInjected(hostId)) {
+  if (!hostInjected(hostId) && !(state.updateProbe && state.updateProbe.localPackageAvailable)) {
     uiAlert("请先注入代理");
     return;
   }
@@ -1052,9 +1056,10 @@ async function onCanglingUpdateClick() {
     return;
   }
 
-  // Service already installed: compare with the server's latest version.
+  // Service already installed: compare with the local repository first,
+  // falling back to the published server when no local package is available.
   if (p.versionError) {
-    uiAlert(`获取最新版本失败：${p.versionError}`);
+    uiAlert(`检查更新失败：${p.versionError}`);
     return;
   }
   if (!p.updateAvailable) {

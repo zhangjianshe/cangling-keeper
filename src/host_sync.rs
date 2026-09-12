@@ -8,7 +8,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
+use crate::host::Host;
 use crate::ssh;
+use crate::ssh::ResolvedAuth;
 use crate::{AppState, resolve_auth};
 
 const SKIP_DIRS: &[&str] = &[".git"];
@@ -573,6 +575,100 @@ async fn upload_software_file(
         return Err(format!("完成远端断点续传失败：{}", output.stderr.trim()));
     }
     Ok(())
+}
+
+/// Upload a cangling-update package from keeper's local repository to the SSH
+/// user's update directory. The stable staging path allows interrupted uploads
+/// larger than 10 MiB to resume on the next attempt.
+pub(crate) async fn upload_cangling_update_package(
+    host: &Host,
+    auth: &ResolvedAuth,
+    arch: &str,
+    local: &Path,
+    size: u64,
+    expected_sha256: &str,
+    mut on_bytes: impl FnMut(u64),
+) -> Result<String, String> {
+    if arch != "amd64" && arch != "arm64" {
+        return Err(format!("不支持的 cangling-update 架构：{arch}"));
+    }
+    let mut session = ssh::connect(&host.hostname, host.port).await?;
+    ssh::authenticate(&mut session, &host.username, auth).await?;
+    let prepare = ssh::execute_on(
+        &session,
+        "mkdir -p \"$HOME/update\" && printf 'CK_HOME|%s\\n' \"$HOME\"",
+    )
+    .await?;
+    if prepare.exit_status != 0 {
+        return Err(format!(
+            "创建主机更新暂存目录失败：{}",
+            prepare.stderr.trim()
+        ));
+    }
+    let home = prepare
+        .stdout
+        .lines()
+        .rev()
+        .find_map(|line| line.strip_prefix("CK_HOME|"))
+        .map(str::trim)
+        .filter(|path| path.starts_with('/') && !path.contains('\0'))
+        .ok_or_else(|| "无法确定主机用户目录".to_string())?;
+    let remote = format!(
+        "{}/update/.cangling-update-from-keeper-{arch}",
+        home.trim_end_matches('/')
+    );
+    let cached = ssh::execute_on(
+        &session,
+        &format!("sha256sum -- {} 2>/dev/null || true", sh_quote(&remote)),
+    )
+    .await?;
+    if cached
+        .stdout
+        .split_whitespace()
+        .next()
+        .is_some_and(|hash| hash.eq_ignore_ascii_case(expected_sha256))
+    {
+        on_bytes(size);
+        return Ok(remote);
+    }
+
+    let channel = session
+        .channel_open_session()
+        .await
+        .map_err(|error| format!("打开 SSH 会话失败：{error}"))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|error| format!("请求 SFTP 失败：{error}"))?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|error| format!("初始化 SFTP 失败：{error}"))?;
+    sftp.set_timeout(30 * 60);
+    upload_software_file(
+        &session,
+        &sftp,
+        local,
+        &remote,
+        size,
+        expected_sha256,
+        on_bytes,
+    )
+    .await?;
+    let verified = ssh::execute_on(&session, &format!("sha256sum -- {}", sh_quote(&remote)))
+        .await
+        .map_err(|error| format!("校验主机更新安装包失败：{error}"))?;
+    let actual_sha256 = verified
+        .stdout
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    if verified.exit_status != 0 || !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+        let _ = sftp.remove_file(&remote).await;
+        return Err("主机更新安装包 SHA-256 校验失败，已删除损坏文件".into());
+    }
+    let _ = sftp.close().await;
+    drop(session);
+    Ok(remote)
 }
 
 async fn publish_remote_fingerprint_database(
