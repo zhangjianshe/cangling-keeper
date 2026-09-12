@@ -1,5 +1,6 @@
 mod auth;
 mod certificate;
+mod fingerprints;
 mod host;
 mod host_actions;
 mod host_cmd;

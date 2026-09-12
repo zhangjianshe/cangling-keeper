@@ -1416,6 +1416,7 @@ fn sync_git_set(
     }
 
     let (branch, commit) = git_head(&dest);
+    crate::fingerprints::refresh_database(&sets_root(data_dir))?;
     Ok(RepoStatus {
         cloned: dest.join(".git").is_dir(),
         local_path: dest.to_string_lossy().into_owned(),
@@ -1604,6 +1605,7 @@ pub async fn sync_software_set(
             .ok_or_else(|| "请先登录维护中心，以便获取服务器地址".to_string())?
     };
     let data_dir = state.data_dir.clone();
+    let repository_root = sets_root(&data_dir);
     let dest = set_dir(&data_dir, &set_name)?;
     std::fs::create_dir_all(&dest).map_err(|e| format!("创建目录失败：{e}"))?;
 
@@ -1652,6 +1654,11 @@ pub async fn sync_software_set(
             overall_total,
         };
         if local_matches(&target, &file) {
+            crate::fingerprints::record_file(
+                &repository_root,
+                &target,
+                (!file.hash.trim().is_empty()).then_some(file.hash.trim()),
+            )?;
             skipped += 1;
             overall_done = overall_done.saturating_add(file.size);
             emit_sync_progress(&ctx, "skip", file.size, file.size);
@@ -1666,6 +1673,11 @@ pub async fn sync_software_set(
                             last_error = format!("{} 哈希不匹配", file.name);
                             emit_sync_progress(&ctx, "fail", 0, file.size);
                         } else {
+                            crate::fingerprints::record_file(
+                                &repository_root,
+                                &target,
+                                Some(&hash),
+                            )?;
                             downloaded += 1;
                             overall_done = overall_done.saturating_add(file.size);
                         }
@@ -1702,6 +1714,8 @@ pub async fn sync_software_set(
             last_error
         });
     }
+
+    crate::fingerprints::refresh_database(&sets_root(&data_dir))?;
 
     Ok(RepoStatus {
         cloned,

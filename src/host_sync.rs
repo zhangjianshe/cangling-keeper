@@ -1,18 +1,19 @@
 use std::collections::{HashMap, HashSet};
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use russh_sftp::client::SftpSession;
+use russh_sftp::{client::SftpSession, protocol::OpenFlags};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::ssh;
 use crate::{AppState, resolve_auth};
 
 const SKIP_DIRS: &[&str] = &[".git"];
 const REMOTE_REPO_NAME: &str = "repo";
+const RESUMABLE_UPLOAD_MIN_BYTES: u64 = 10 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -255,32 +256,6 @@ fn remote_repo_from_binary(binary: &str) -> String {
     "/root/update/repo".into()
 }
 
-/// Same-size files larger than this are treated as unchanged. Hashing GB
-/// package images (k3s, docker) on the host is as slow as uploading them;
-/// size changes when those packages actually change. Small files such as
-/// `version.txt` can keep the same length after a bump, so they are hashed.
-const HASH_MAX_BYTES: u64 = 256 * 1024;
-
-fn parse_remote_sizes(stdout: &str) -> HashMap<String, u64> {
-    let mut map = HashMap::new();
-    for line in stdout.lines() {
-        if line.starts_with("CK_REPO\t") {
-            continue;
-        }
-        let Some((sz, rel)) = line.split_once('\t') else {
-            continue;
-        };
-        let Ok(n) = sz.trim().parse::<u64>() else {
-            continue;
-        };
-        let rel = rel.trim().trim_start_matches("./").replace('\\', "/");
-        if !rel.is_empty() {
-            map.insert(rel, n);
-        }
-    }
-    map
-}
-
 fn parse_inventory_root(stdout: &str, fallback: &str) -> String {
     stdout
         .lines()
@@ -292,30 +267,7 @@ fn parse_inventory_root(stdout: &str, fallback: &str) -> String {
         .unwrap_or_else(|| fallback.to_string())
 }
 
-fn parse_sha256_list(stdout: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for line in stdout.lines() {
-        if line.len() < 66 {
-            continue;
-        }
-        let hash = line[..64].trim();
-        if !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
-            continue;
-        }
-        let path = line[64..]
-            .trim()
-            .trim_start_matches('*')
-            .trim()
-            .trim_start_matches("./")
-            .replace('\\', "/");
-        if !path.is_empty() {
-            map.insert(path, hash.to_ascii_lowercase());
-        }
-    }
-    map
-}
-
-fn remote_inventory_cmd(preferred: &str) -> String {
+fn remote_repository_root_cmd(preferred: &str) -> String {
     let preferred = sh_quote(preferred);
     format!(
         r#"home="${{HOME:-/root}}"
@@ -330,109 +282,125 @@ else
   best="$home/update/repo"
 fi
 printf 'CK_REPO\t%s\n' "$best"
-if [ -d "$best" ]; then
-  cd "$best" || exit 0
-  if find . -maxdepth 0 -printf '' >/dev/null 2>&1; then
-    find . -type f ! -name '*.part' ! -path '*/.git/*' -printf '%s\t%P\n'
-  else
-    find . -type f ! -name '*.part' ! -path '*/.git/*' -exec stat -c '%s\t%n' {{}} + | sed 's/\t\.\//\t/'
-  fi
-fi
 "#,
         preferred = preferred
     )
 }
 
-fn remote_hash_cmd(root: &str, rels: &[String]) -> String {
-    let mut cmd = format!("cd {} && sha256sum --", sh_quote(root));
-    for rel in rels {
-        cmd.push(' ');
-        cmd.push_str(&sh_quote(rel));
+fn parse_remote_sizes(stdout: &str) -> Vec<(String, u64)> {
+    let mut files = Vec::new();
+    for line in stdout.lines() {
+        let Some((size, relative)) = line.split_once('\t') else {
+            continue;
+        };
+        let Ok(size) = size.trim().parse::<u64>() else {
+            continue;
+        };
+        let relative = relative.trim().trim_start_matches("./").replace('\\', "/");
+        if !relative.is_empty() {
+            files.push((relative, size));
+        }
     }
-    cmd
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    files
 }
 
-fn same_size(local: u64, remote: Option<&u64>) -> bool {
-    remote.copied() == Some(local)
+fn parse_sha256_list(stdout: &str) -> HashMap<String, String> {
+    let mut hashes = HashMap::new();
+    for line in stdout.lines() {
+        if line.len() < 66 {
+            continue;
+        }
+        let hash = line[..64].trim();
+        if !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            continue;
+        }
+        let relative = line[64..]
+            .trim()
+            .trim_start_matches('*')
+            .trim()
+            .trim_start_matches("./")
+            .replace('\\', "/");
+        if !relative.is_empty() {
+            hashes.insert(relative, hash.to_ascii_lowercase());
+        }
+    }
+    hashes
 }
 
-async fn remote_skip_set(
-    session: &russh::client::Handle<crate::ssh::SshClient>,
-    preferred_root: &str,
+fn remote_fingerprint_inventory_cmd(root: &str) -> String {
+    format!(
+        r#"cd {root} || exit 1
+if find . -maxdepth 0 -printf '' >/dev/null 2>&1; then
+  find . -type f ! -name '*.part' ! -path '*/.git/*' ! -name '{database}*' -printf '%s\t%P\n'
+else
+  find . -type f ! -name '*.part' ! -path '*/.git/*' ! -name '{database}*' -exec stat -c '%s\t%n' {{}} + | sed 's/\t\.\//\t/'
+fi"#,
+        root = sh_quote(root),
+        database = crate::fingerprints::DATABASE_NAME,
+    )
+}
+
+fn remote_hash_cmd(root: &str, relative_paths: &[String]) -> String {
+    let mut command = format!("cd {} && sha256sum --", sh_quote(root));
+    for relative in relative_paths {
+        command.push(' ');
+        command.push_str(&sh_quote(relative));
+    }
+    command
+}
+
+fn fingerprint_skip_set(
     files: &[LocalFile],
-    app: &AppHandle,
-    host_id: &str,
-) -> (String, HashSet<String>) {
-    let fallback = if preferred_root.trim().is_empty() {
-        "/root/update/repo".to_string()
-    } else {
-        preferred_root.to_string()
-    };
-    let mut skip = HashSet::new();
-    let listing = ssh::execute_on(session, &remote_inventory_cmd(&fallback)).await;
-    let (remote_root, sizes) = match listing {
-        Ok(out) => (
-            parse_inventory_root(&out.stdout, &fallback),
-            parse_remote_sizes(&out.stdout),
-        ),
-        Err(_) => return (fallback, skip),
-    };
+    local: &HashMap<String, crate::fingerprints::FileFingerprint>,
+    remote: &HashMap<String, crate::fingerprints::FileFingerprint>,
+) -> HashSet<String> {
+    files
+        .iter()
+        .filter(|file| {
+            let Some(local) = local.get(&file.rel) else {
+                return false;
+            };
+            remote
+                .get(&file.rel)
+                .is_some_and(|remote| remote.sha256.eq_ignore_ascii_case(&local.sha256))
+        })
+        .map(|file| file.rel.clone())
+        .collect()
+}
 
-    let mut hash_candidates = Vec::new();
-    for f in files {
-        if !same_size(f.size, sizes.get(&f.rel)) {
-            continue;
-        }
-        if f.size > HASH_MAX_BYTES {
-            skip.insert(f.rel.clone());
-        } else {
-            hash_candidates.push(f);
-        }
+async fn read_remote_fingerprint_database(
+    sftp: &SftpSession,
+    remote_path: &str,
+) -> Result<Option<HashMap<String, crate::fingerprints::FileFingerprint>>, String> {
+    if !sftp.try_exists(remote_path).await.unwrap_or(false) {
+        return Ok(None);
     }
-
-    if hash_candidates.is_empty() {
-        return (remote_root, skip);
+    let mut remote = sftp
+        .open(remote_path)
+        .await
+        .map_err(|error| format!("打开主机指纹数据库失败：{error}"))?;
+    let mut value = Vec::new();
+    remote
+        .read_to_end(&mut value)
+        .await
+        .map_err(|error| format!("读取主机指纹数据库失败：{error}"))?;
+    if value.len() > 64 * 1024 * 1024 {
+        return Err("主机指纹数据库异常（超过 64 MiB）".into());
     }
-
-    emit_progress(
-        app,
-        &SyncProgress {
-            host_id: host_id.to_string(),
-            current: 0,
-            total: files.len() as u32,
-            file: "正在比对小文件…".into(),
-            action: "compare".into(),
-            bytes_done: 0,
-            bytes_total: 0,
-            overall_done: 0,
-            overall_total: 0,
-            remote_path: remote_root.clone(),
-        },
-    );
-
-    let mut remote_hashes = HashMap::new();
-    const BATCH: usize = 80;
-    for chunk in hash_candidates.chunks(BATCH) {
-        let rels: Vec<String> = chunk.iter().map(|f| f.rel.clone()).collect();
-        if let Ok(out) = ssh::execute_on(session, &remote_hash_cmd(&remote_root, &rels)).await {
-            // sha256sum exits non-zero if any path is missing; keep the hashes
-            // it did print so the rest of the batch can still skip.
-            remote_hashes.extend(parse_sha256_list(&out.stdout));
-        }
-    }
-
-    for f in hash_candidates {
-        let Some(remote_hash) = remote_hashes.get(&f.rel) else {
-            continue;
-        };
-        let Ok(local_hash) = crate::repo::sha256_file(&f.abs) else {
-            continue;
-        };
-        if local_hash.eq_ignore_ascii_case(remote_hash) {
-            skip.insert(f.rel.clone());
-        }
-    }
-    (remote_root, skip)
+    let temporary = std::env::temp_dir().join(format!(
+        "cangling-remote-fingerprints-{}.sqlite3",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::write(&temporary, value).map_err(|error| error.to_string())?;
+    let result = crate::fingerprints::read_database(&temporary).map(|files| {
+        files
+            .into_iter()
+            .map(|file| (file.path.clone(), file))
+            .collect()
+    });
+    let _ = std::fs::remove_file(&temporary);
+    result.map(Some)
 }
 
 async fn upload_file(
@@ -470,6 +438,218 @@ async fn upload_file(
     Ok(())
 }
 
+fn uses_resumable_upload(size: u64) -> bool {
+    size > RESUMABLE_UPLOAD_MIN_BYTES
+}
+
+async fn upload_software_file(
+    session: &russh::client::Handle<crate::ssh::SshClient>,
+    sftp: &SftpSession,
+    local: &Path,
+    remote: &str,
+    size: u64,
+    expected_sha256: &str,
+    mut on_bytes: impl FnMut(u64),
+) -> Result<(), String> {
+    if !uses_resumable_upload(size) {
+        return upload_file(sftp, local, remote, size, on_bytes).await;
+    }
+    if let Some(parent) = unix_parent(remote) {
+        ensure_remote_dir(sftp, parent).await?;
+    }
+
+    let remote_part = format!("{remote}.part");
+    let mut offset = match sftp.metadata(&remote_part).await {
+        Ok(metadata) => metadata.size.unwrap_or(0),
+        Err(_) => 0,
+    };
+    if offset > size {
+        let _ = sftp.remove_file(&remote_part).await;
+        offset = 0;
+    }
+
+    if offset < size {
+        let mut source =
+            std::fs::File::open(local).map_err(|error| format!("读取本地文件失败：{error}"))?;
+        source
+            .seek(SeekFrom::Start(offset))
+            .map_err(|error| format!("定位本地续传位置失败：{error}"))?;
+        let mut destination = sftp
+            .open_with_flags(&remote_part, OpenFlags::CREATE | OpenFlags::WRITE)
+            .await
+            .map_err(|error| format!("打开远端续传文件失败：{error}"))?;
+        destination
+            .seek(SeekFrom::Start(offset))
+            .await
+            .map_err(|error| format!("定位远端续传位置失败：{error}"))?;
+        on_bytes(offset);
+        let mut buffer = vec![0_u8; 64 * 1024];
+        let mut done = offset;
+        loop {
+            let count = source
+                .read(&mut buffer)
+                .map_err(|error| error.to_string())?;
+            if count == 0 {
+                break;
+            }
+            destination
+                .write_all(&buffer[..count])
+                .await
+                .map_err(|error| format!("写入远端续传文件失败：{error}"))?;
+            done += count as u64;
+            on_bytes(done);
+        }
+        destination
+            .shutdown()
+            .await
+            .map_err(|error| format!("关闭远端续传文件失败：{error}"))?;
+    } else {
+        on_bytes(offset);
+    }
+
+    let verify_command = format!("sha256sum -- {}", sh_quote(&remote_part));
+    let output = ssh::execute_on(session, &verify_command)
+        .await
+        .map_err(|error| format!("校验远端续传文件失败：{error}"))?;
+    let actual_sha256 = output.stdout.split_whitespace().next().unwrap_or_default();
+    if output.exit_status != 0 || !actual_sha256.eq_ignore_ascii_case(expected_sha256) {
+        let _ = sftp.remove_file(&remote_part).await;
+        return Err(format!(
+            "远端文件 SHA-256 校验失败，已清除损坏分片：{remote}"
+        ));
+    }
+    let replace_command = format!("mv -f -- {} {}", sh_quote(&remote_part), sh_quote(remote));
+    let output = ssh::execute_on(session, &replace_command)
+        .await
+        .map_err(|error| format!("完成远端断点续传失败：{error}"))?;
+    if output.exit_status != 0 {
+        return Err(format!("完成远端断点续传失败：{}", output.stderr.trim()));
+    }
+    Ok(())
+}
+
+async fn publish_remote_fingerprint_database(
+    session: &russh::client::Handle<crate::ssh::SshClient>,
+    sftp: &SftpSession,
+    local_path: &Path,
+    remote_path: &str,
+) -> Result<(), String> {
+    let remote_part = format!("{remote_path}.part");
+    let database_size = local_path
+        .metadata()
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    upload_file(sftp, local_path, &remote_part, database_size, |_| {}).await?;
+    let replace_command = format!(
+        "mv -f -- {} {}",
+        sh_quote(&remote_part),
+        sh_quote(remote_path)
+    );
+    let output = ssh::execute_on(session, &replace_command)
+        .await
+        .map_err(|error| format!("更新主机指纹数据库失败：{error}"))?;
+    if output.exit_status != 0 {
+        return Err(format!("更新主机指纹数据库失败：{}", output.stderr.trim()));
+    }
+    Ok(())
+}
+
+async fn initialize_remote_fingerprint_database(
+    app: &AppHandle,
+    host_id: &str,
+    session: &russh::client::Handle<crate::ssh::SshClient>,
+    sftp: &SftpSession,
+    remote_root: &str,
+    local_working_path: &Path,
+    remote_database_path: &str,
+) -> Result<HashMap<String, crate::fingerprints::FileFingerprint>, String> {
+    let inventory = ssh::execute_on(session, &remote_fingerprint_inventory_cmd(remote_root))
+        .await
+        .map_err(|error| format!("读取旧主机软件目录失败：{error}"))?;
+    if inventory.exit_status != 0 {
+        return Err(format!(
+            "读取旧主机软件目录失败：{}",
+            inventory.stderr.trim()
+        ));
+    }
+    let files = parse_remote_sizes(&inventory.stdout);
+    let total = files.len() as u32;
+    let overall_total: u64 = files.iter().map(|(_, size)| *size).sum();
+    emit_progress(
+        app,
+        &SyncProgress {
+            host_id: host_id.to_string(),
+            current: 0,
+            total,
+            file: "旧主机首次同步，正在初始化软件指纹库…".into(),
+            action: "index".into(),
+            bytes_done: 0,
+            bytes_total: 0,
+            overall_done: 0,
+            overall_total,
+            remote_path: remote_root.to_string(),
+        },
+    );
+
+    let sizes: HashMap<&str, u64> = files
+        .iter()
+        .map(|(path, size)| (path.as_str(), *size))
+        .collect();
+    let mut completed = 0_usize;
+    let mut overall_done = 0_u64;
+    let mut fingerprints = HashMap::new();
+    const HASH_BATCH_SIZE: usize = 40;
+    for chunk in files.chunks(HASH_BATCH_SIZE) {
+        let relative_paths: Vec<String> = chunk.iter().map(|(path, _)| path.clone()).collect();
+        let output = ssh::execute_on(session, &remote_hash_cmd(remote_root, &relative_paths))
+            .await
+            .map_err(|error| format!("初始化主机指纹失败：{error}"))?;
+        let hashes = parse_sha256_list(&output.stdout);
+        for relative in &relative_paths {
+            let sha256 = hashes
+                .get(relative)
+                .cloned()
+                .ok_or_else(|| format!("无法计算旧主机文件指纹：{relative}"))?;
+            let size = sizes.get(relative.as_str()).copied().unwrap_or(0);
+            fingerprints.insert(
+                relative.clone(),
+                crate::fingerprints::FileFingerprint {
+                    path: relative.clone(),
+                    size,
+                    modified_ns: 0,
+                    sha256,
+                },
+            );
+            completed += 1;
+            overall_done = overall_done.saturating_add(size);
+        }
+        emit_progress(
+            app,
+            &SyncProgress {
+                host_id: host_id.to_string(),
+                current: completed as u32,
+                total,
+                file: format!("正在初始化主机软件指纹库（{completed}/{}）", files.len()),
+                action: "index".into(),
+                bytes_done: 0,
+                bytes_total: 0,
+                overall_done,
+                overall_total,
+                remote_path: remote_root.to_string(),
+            },
+        );
+    }
+
+    let mut rows: Vec<_> = fingerprints.values().cloned().collect();
+    rows.sort_by(|left, right| left.path.cmp(&right.path));
+    crate::fingerprints::write_database(local_working_path, &rows)
+        .map_err(|error| format!("创建主机指纹数据库失败：{error}"))?;
+    publish_remote_fingerprint_database(session, sftp, local_working_path, remote_database_path)
+        .await
+        .map_err(|error| format!("创建主机指纹数据库失败：{error}"))?;
+    Ok(fingerprints)
+}
+
 #[tauri::command]
 pub async fn sync_host_software(
     app: AppHandle,
@@ -484,6 +664,24 @@ pub async fn sync_host_software(
     let sets = collect_set_names(&files);
     let configured = configured_set_names(&state, &data_dir);
     let incomplete_sets = incomplete_set_names(&data_dir, &sets, &configured);
+    let repository_root = crate::repo::sets_root(&data_dir);
+    let local_database = tauri::async_runtime::spawn_blocking(move || {
+        crate::fingerprints::refresh_database(&repository_root)
+    })
+    .await
+    .map_err(|error| format!("生成本地指纹数据库失败：{error}"))??;
+    let local_fingerprints: HashMap<String, crate::fingerprints::FileFingerprint> = local_database
+        .files
+        .iter()
+        .cloned()
+        .map(|file| (file.path.clone(), file))
+        .collect();
+    if files
+        .iter()
+        .any(|file| !local_fingerprints.contains_key(&file.rel))
+    {
+        return Err("本地指纹数据库不完整，请重新同步软件集".into());
+    }
 
     let (host, auth) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -514,6 +712,17 @@ pub async fn sync_host_software(
         remote_repo_from_binary(&binary)
     };
 
+    let fallback_root = if preferred_root.trim().is_empty() {
+        "/root/update/repo".to_string()
+    } else {
+        preferred_root.clone()
+    };
+    let remote_root =
+        match ssh::execute_on(&session, &remote_repository_root_cmd(&fallback_root)).await {
+            Ok(output) => parse_inventory_root(&output.stdout, &fallback_root),
+            Err(_) => fallback_root,
+        };
+
     emit_progress(
         &app,
         &SyncProgress {
@@ -526,42 +735,9 @@ pub async fn sync_host_software(
             bytes_total: 0,
             overall_done: 0,
             overall_total: files.iter().map(|f| f.size).sum(),
-            remote_path: preferred_root.clone(),
+            remote_path: remote_root.clone(),
         },
     );
-    let (remote_root, skip) =
-        remote_skip_set(&session, &preferred_root, &files, &app, &host_id).await;
-
-    let total = files.len() as u32;
-    let overall_total: u64 = files.iter().map(|f| f.size).sum();
-    if skip.len() == files.len() {
-        emit_progress(
-            &app,
-            &SyncProgress {
-                host_id: host_id.clone(),
-                current: total,
-                total,
-                file: "全部文件未改动，已跳过".into(),
-                action: "skip".into(),
-                bytes_done: overall_total,
-                bytes_total: overall_total,
-                overall_done: overall_total,
-                overall_total,
-                remote_path: remote_root.clone(),
-            },
-        );
-        drop(session);
-        return Ok(HostSoftwareSyncResult {
-            remote_path: remote_root,
-            total_files: total,
-            uploaded: 0,
-            skipped: total,
-            failed: 0,
-            error: String::new(),
-            sets,
-            incomplete_sets,
-        });
-    }
 
     let channel = session
         .channel_open_session()
@@ -576,7 +752,31 @@ pub async fn sync_host_software(
         .map_err(|e| format!("初始化 SFTP 失败：{e}"))?;
     sftp.set_timeout(30 * 60);
     ensure_remote_dir(&sftp, &remote_root).await?;
+    let remote_database_path = join_remote(&remote_root, crate::fingerprints::DATABASE_NAME);
+    let remote_working_database = std::env::temp_dir().join(format!(
+        "cangling-host-fingerprints-{}.sqlite3",
+        uuid::Uuid::new_v4()
+    ));
+    let mut remote_fingerprints =
+        match read_remote_fingerprint_database(&sftp, &remote_database_path).await {
+            Ok(Some(fingerprints)) => fingerprints,
+            Ok(None) | Err(_) => {
+                initialize_remote_fingerprint_database(
+                    &app,
+                    &host_id,
+                    &session,
+                    &sftp,
+                    &remote_root,
+                    &remote_working_database,
+                    &remote_database_path,
+                )
+                .await?
+            }
+        };
+    let skip = fingerprint_skip_set(&files, &local_fingerprints, &remote_fingerprints);
 
+    let total = files.len() as u32;
+    let overall_total: u64 = files.iter().map(|f| f.size).sum();
     let mut uploaded = 0u32;
     let mut skipped = 0u32;
     let mut failed = 0u32;
@@ -610,19 +810,44 @@ pub async fn sync_host_software(
         }
 
         emit_progress(&app, &progress);
+        let fingerprint = local_fingerprints
+            .get(&file.rel)
+            .cloned()
+            .ok_or_else(|| format!("缺少 {} 的本地指纹", file.rel))?;
         let mut last_emit = Instant::now() - Duration::from_secs(1);
-        let upload = upload_file(&sftp, &file.abs, &remote, file.size, |done| {
-            let now = Instant::now();
-            if now.duration_since(last_emit) >= Duration::from_millis(200) || done >= file.size {
-                last_emit = now;
-                progress.bytes_done = done;
-                progress.overall_done = overall_done.saturating_add(done);
-                emit_progress(&app, &progress);
-            }
-        })
+        let upload = upload_software_file(
+            &session,
+            &sftp,
+            &file.abs,
+            &remote,
+            file.size,
+            &fingerprint.sha256,
+            |done| {
+                let now = Instant::now();
+                if now.duration_since(last_emit) >= Duration::from_millis(200) || done >= file.size
+                {
+                    last_emit = now;
+                    progress.bytes_done = done;
+                    progress.overall_done = overall_done.saturating_add(done);
+                    emit_progress(&app, &progress);
+                }
+            },
+        )
         .await;
         match upload {
             Ok(()) => {
+                remote_fingerprints.insert(file.rel.clone(), fingerprint);
+                let mut remote_rows: Vec<_> = remote_fingerprints.values().cloned().collect();
+                remote_rows.sort_by(|left, right| left.path.cmp(&right.path));
+                crate::fingerprints::write_database(&remote_working_database, &remote_rows)
+                    .map_err(|error| format!("更新主机指纹数据库失败：{error}"))?;
+                publish_remote_fingerprint_database(
+                    &session,
+                    &sftp,
+                    &remote_working_database,
+                    &remote_database_path,
+                )
+                .await?;
                 uploaded += 1;
                 overall_done = overall_done.saturating_add(file.size);
                 progress.action = "upload".into();
@@ -638,6 +863,18 @@ pub async fn sync_host_software(
             }
         }
     }
+
+    if failed == 0 {
+        publish_remote_fingerprint_database(
+            &session,
+            &sftp,
+            &local_database.path,
+            &remote_database_path,
+        )
+        .await
+        .map_err(|error| format!("同步主机指纹数据库失败：{error}"))?;
+    }
+    let _ = std::fs::remove_file(&remote_working_database);
 
     let _ = sftp.close().await;
     drop(session);
@@ -770,8 +1007,8 @@ mod tests {
     }
 
     #[test]
-    fn inventory_stays_on_preferred_repo() {
-        let cmd = remote_inventory_cmd("/root/update/repo");
+    fn repository_root_stays_on_preferred_repo() {
+        let cmd = remote_repository_root_cmd("/root/update/repo");
         assert!(cmd.contains("best=\"$pref\""));
         assert!(!cmd.contains("for d in"));
         assert!(cmd.contains("pref=/root/update/repo"));
@@ -801,18 +1038,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_remote_sizes_and_hashes() {
-        let sizes = parse_remote_sizes(
-            "CK_REPO\t/root/update/repo\n12\tnp4/version.txt\n100\tcangling-repo/a.rpm\nbad\n",
-        );
-        assert_eq!(sizes.get("np4/version.txt").copied(), Some(12));
-        assert_eq!(sizes.get("cangling-repo/a.rpm").copied(), Some(100));
+    fn parses_remote_repository_root() {
         assert_eq!(
-            parse_inventory_root(
-                "CK_REPO\t/root/update/repo\n12\tnp4/version.txt\n",
-                "/fallback"
-            ),
+            parse_inventory_root("CK_REPO\t/root/update/repo\n", "/fallback"),
             "/root/update/repo"
+        );
+        assert_eq!(parse_inventory_root("unexpected", "/fallback"), "/fallback");
+    }
+
+    #[test]
+    fn parses_legacy_host_files_for_fingerprint_initialization() {
+        let files = parse_remote_sizes("7\tnp4/version.txt\n3000000000\tnp4/image.tar.gz\n");
+        assert_eq!(
+            files,
+            vec![
+                ("np4/image.tar.gz".to_string(), 3_000_000_000),
+                ("np4/version.txt".to_string(), 7),
+            ]
         );
         let hashes = parse_sha256_list(
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  np4/version.txt\n",
@@ -821,6 +1063,9 @@ mod tests {
             hashes.get("np4/version.txt").map(String::as_str),
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
+        let command = remote_fingerprint_inventory_cmd("/root/update/repo");
+        assert!(command.contains("! -path '*/.git/*'"));
+        assert!(command.contains(crate::fingerprints::DATABASE_NAME));
     }
 
     #[test]
@@ -840,10 +1085,34 @@ mod tests {
     }
 
     #[test]
-    fn large_same_size_skips_without_hash() {
-        assert!(HASH_MAX_BYTES < 1024 * 1024);
-        assert!(same_size(3_000_000_000, Some(&3_000_000_000)));
-        assert!(!same_size(3_000_000_000, Some(&2_999_999_999)));
-        assert!(!same_size(12, None));
+    fn fingerprint_comparison_detects_same_size_content_change() {
+        let files = vec![LocalFile {
+            rel: "np4/app.jar".into(),
+            abs: PathBuf::from("/unused/app.jar"),
+            size: 3_000_000_000,
+        }];
+        let local_file = crate::fingerprints::FileFingerprint {
+            path: files[0].rel.clone(),
+            size: files[0].size,
+            modified_ns: 1,
+            sha256: "a".repeat(64),
+        };
+        let local = HashMap::from([(local_file.path.clone(), local_file.clone())]);
+        let identical = HashMap::from([(local_file.path.clone(), local_file.clone())]);
+        assert!(fingerprint_skip_set(&files, &local, &identical).contains(&files[0].rel));
+
+        let changed_file = crate::fingerprints::FileFingerprint {
+            sha256: "b".repeat(64),
+            ..local_file
+        };
+        let changed = HashMap::from([(changed_file.path.clone(), changed_file)]);
+        assert!(!fingerprint_skip_set(&files, &local, &changed).contains(&files[0].rel));
+    }
+
+    #[test]
+    fn files_over_ten_mib_use_resumable_upload() {
+        assert!(!uses_resumable_upload(RESUMABLE_UPLOAD_MIN_BYTES - 1));
+        assert!(!uses_resumable_upload(RESUMABLE_UPLOAD_MIN_BYTES));
+        assert!(uses_resumable_upload(RESUMABLE_UPLOAD_MIN_BYTES + 1));
     }
 }

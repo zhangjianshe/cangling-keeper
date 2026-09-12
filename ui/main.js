@@ -607,6 +607,8 @@ function renderHostSyncProgress(p) {
           ? "失败"
           : p.action === "compare"
             ? "比对"
+            : p.action === "index"
+              ? "初始化指纹"
             : p.action || "同步";
   const fileSize = fileTransferHint(bytesDone, bytesTotal);
   const countPart = total > 0 ? `${current}/${total}` : "";
