@@ -19,7 +19,6 @@ pub(crate) struct FileFingerprint {
 
 #[derive(Debug)]
 pub(crate) struct FingerprintDatabase {
-    pub(crate) path: PathBuf,
     pub(crate) files: Vec<FileFingerprint>,
 }
 
@@ -192,44 +191,12 @@ pub(crate) fn write_database(path: &Path, files: &[FileFingerprint]) -> Result<(
     result
 }
 
-pub(crate) fn record_file(
-    repository_root: &Path,
-    absolute_path: &Path,
-    verified_sha256: Option<&str>,
-) -> Result<FileFingerprint, String> {
-    let metadata = absolute_path
-        .metadata()
-        .map_err(|error| format!("读取文件信息失败：{error}"))?;
-    if !metadata.is_file() {
-        return Err(format!("不是普通文件：{}", absolute_path.display()));
-    }
-    let relative = absolute_path
-        .strip_prefix(repository_root)
-        .map_err(|_| format!("文件不在软件仓库中：{}", absolute_path.display()))?
-        .to_string_lossy()
-        .replace('\\', "/");
-    let modified_ns = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
-        .and_then(|value| i64::try_from(value.as_nanos()).ok())
-        .unwrap_or(0);
-    let verified_sha256 = verified_sha256
-        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
-        .map(|value| value.to_ascii_lowercase());
-    let sha256 = match verified_sha256 {
-        Some(value) => value,
-        None => sha256_file(absolute_path)?,
-    };
-    let fingerprint = FileFingerprint {
-        path: relative,
-        size: metadata.len(),
-        modified_ns,
-        sha256,
-    };
-
-    let path = database_path(repository_root);
-    let connection = Connection::open(&path).map_err(|error| error.to_string())?;
+pub(crate) fn upsert_fingerprint(path: &Path, fingerprint: &FileFingerprint) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "指纹数据库目录无效".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let connection = Connection::open(path).map_err(|error| error.to_string())?;
     connection
         .execute_batch(
             "PRAGMA synchronous=FULL;
@@ -269,6 +236,46 @@ pub(crate) fn record_file(
             ],
         )
         .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn record_file(
+    repository_root: &Path,
+    absolute_path: &Path,
+    verified_sha256: Option<&str>,
+) -> Result<FileFingerprint, String> {
+    let metadata = absolute_path
+        .metadata()
+        .map_err(|error| format!("读取文件信息失败：{error}"))?;
+    if !metadata.is_file() {
+        return Err(format!("不是普通文件：{}", absolute_path.display()));
+    }
+    let relative = absolute_path
+        .strip_prefix(repository_root)
+        .map_err(|_| format!("文件不在软件仓库中：{}", absolute_path.display()))?
+        .to_string_lossy()
+        .replace('\\', "/");
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .and_then(|value| i64::try_from(value.as_nanos()).ok())
+        .unwrap_or(0);
+    let verified_sha256 = verified_sha256
+        .filter(|value| value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .map(|value| value.to_ascii_lowercase());
+    let sha256 = match verified_sha256 {
+        Some(value) => value,
+        None => sha256_file(absolute_path)?,
+    };
+    let fingerprint = FileFingerprint {
+        path: relative,
+        size: metadata.len(),
+        modified_ns,
+        sha256,
+    };
+
+    upsert_fingerprint(&database_path(repository_root), &fingerprint)?;
     Ok(fingerprint)
 }
 
@@ -297,7 +304,7 @@ pub(crate) fn refresh_database(repository_root: &Path) -> Result<FingerprintData
         });
     }
     write_database(&path, &files)?;
-    Ok(FingerprintDatabase { path, files })
+    Ok(FingerprintDatabase { files })
 }
 
 #[cfg(test)]
@@ -319,7 +326,7 @@ mod tests {
             first.files[0].sha256,
             sha256_file(&root.join("np4/app.jar")).unwrap()
         );
-        assert_eq!(read_database(&first.path).unwrap(), first.files);
+        assert_eq!(read_database(&database_path(&root)).unwrap(), first.files);
 
         std::fs::remove_file(root.join("np4/app.jar")).unwrap();
         let second = refresh_database(&root).unwrap();
@@ -347,6 +354,26 @@ mod tests {
         assert_eq!(saved, vec![second.clone()]);
         assert_eq!(saved.len(), 1);
         assert_ne!(saved[0].sha256, first.sha256);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn upsert_fingerprint_creates_parent_and_updates_one_row() {
+        let root =
+            std::env::temp_dir().join(format!("ck-host-fingerprint-row-{}", uuid::Uuid::new_v4()));
+        let database = root.join("host/fingerprints.sqlite3");
+        let mut fingerprint = FileFingerprint {
+            path: "np4/app.jar".into(),
+            size: 10,
+            modified_ns: 0,
+            sha256: "a".repeat(64),
+        };
+        upsert_fingerprint(&database, &fingerprint).unwrap();
+        fingerprint.size = 20;
+        fingerprint.sha256 = "b".repeat(64);
+        upsert_fingerprint(&database, &fingerprint).unwrap();
+
+        assert_eq!(read_database(&database).unwrap(), vec![fingerprint]);
         let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -14,6 +14,9 @@ use crate::{AppState, resolve_auth};
 const SKIP_DIRS: &[&str] = &[".git"];
 const REMOTE_REPO_NAME: &str = "repo";
 const RESUMABLE_UPLOAD_MIN_BYTES: u64 = 10 * 1024 * 1024;
+const REMOTE_FINGERPRINT_PUBLISH_BATCH_FILES: usize = 32;
+const HOST_SYNC_STATE_DIR: &str = "host-sync-state";
+const HOST_FINGERPRINT_DATABASE_NAME: &str = "fingerprints.sqlite3";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,6 +67,50 @@ struct LocalFile {
     rel: String,
     abs: PathBuf,
     size: u64,
+}
+
+fn safe_host_state_component(host_id: &str) -> String {
+    if !host_id.is_empty()
+        && host_id.len() <= 128
+        && host_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return host_id.to_string();
+    }
+    use sha2::{Digest, Sha256};
+    format!("host-{:x}", Sha256::digest(host_id.as_bytes()))
+}
+
+fn host_fingerprint_database_path(data_dir: &Path, host_id: &str) -> PathBuf {
+    data_dir
+        .join(HOST_SYNC_STATE_DIR)
+        .join(safe_host_state_component(host_id))
+        .join(HOST_FINGERPRINT_DATABASE_NAME)
+}
+
+fn read_fingerprint_map(path: &Path) -> HashMap<String, crate::fingerprints::FileFingerprint> {
+    crate::fingerprints::read_database(path)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|fingerprint| (fingerprint.path.clone(), fingerprint))
+        .collect()
+}
+
+fn merge_confirmed_host_fingerprints(
+    remote: &mut HashMap<String, crate::fingerprints::FileFingerprint>,
+    cached: HashMap<String, crate::fingerprints::FileFingerprint>,
+    local: &HashMap<String, crate::fingerprints::FileFingerprint>,
+) {
+    for (path, cached_fingerprint) in cached {
+        if local.get(&path).is_some_and(|local_fingerprint| {
+            local_fingerprint
+                .sha256
+                .eq_ignore_ascii_case(&cached_fingerprint.sha256)
+        }) {
+            remote.insert(path, cached_fingerprint);
+        }
+    }
 }
 
 fn unix_parent(path: &str) -> Option<&str> {
@@ -650,6 +697,16 @@ async fn initialize_remote_fingerprint_database(
     Ok(fingerprints)
 }
 
+async fn publish_host_state_database(
+    session: &russh::client::Handle<crate::ssh::SshClient>,
+    sftp: &SftpSession,
+    host_database_path: &Path,
+    remote_database_path: &str,
+) -> Result<(), String> {
+    publish_remote_fingerprint_database(session, sftp, host_database_path, remote_database_path)
+        .await
+}
+
 #[tauri::command]
 pub async fn sync_host_software(
     app: AppHandle,
@@ -753,26 +810,36 @@ pub async fn sync_host_software(
     sftp.set_timeout(30 * 60);
     ensure_remote_dir(&sftp, &remote_root).await?;
     let remote_database_path = join_remote(&remote_root, crate::fingerprints::DATABASE_NAME);
-    let remote_working_database = std::env::temp_dir().join(format!(
-        "cangling-host-fingerprints-{}.sqlite3",
-        uuid::Uuid::new_v4()
-    ));
-    let mut remote_fingerprints =
+    let host_database_path = host_fingerprint_database_path(&data_dir, &host_id);
+    let cached_fingerprints = read_fingerprint_map(&host_database_path);
+    let (mut remote_fingerprints, loaded_existing_remote_database) =
         match read_remote_fingerprint_database(&sftp, &remote_database_path).await {
-            Ok(Some(fingerprints)) => fingerprints,
-            Ok(None) | Err(_) => {
+            Ok(Some(fingerprints)) => (fingerprints, true),
+            Ok(None) | Err(_) => (
                 initialize_remote_fingerprint_database(
                     &app,
                     &host_id,
                     &session,
                     &sftp,
                     &remote_root,
-                    &remote_working_database,
+                    &host_database_path,
                     &remote_database_path,
                 )
-                .await?
-            }
+                .await?,
+                false,
+            ),
         };
+    if loaded_existing_remote_database {
+        merge_confirmed_host_fingerprints(
+            &mut remote_fingerprints,
+            cached_fingerprints,
+            &local_fingerprints,
+        );
+    }
+    let mut host_rows: Vec<_> = remote_fingerprints.values().cloned().collect();
+    host_rows.sort_by(|left, right| left.path.cmp(&right.path));
+    crate::fingerprints::write_database(&host_database_path, &host_rows)
+        .map_err(|error| format!("保存主机同步状态失败：{error}"))?;
     let skip = fingerprint_skip_set(&files, &local_fingerprints, &remote_fingerprints);
 
     let total = files.len() as u32;
@@ -782,6 +849,7 @@ pub async fn sync_host_software(
     let mut failed = 0u32;
     let mut last_error = String::new();
     let mut overall_done = 0u64;
+    let mut unpublished_fingerprints = 0_usize;
 
     for (index, file) in files.iter().enumerate() {
         let current = (index as u32) + 1;
@@ -836,18 +904,20 @@ pub async fn sync_host_software(
         .await;
         match upload {
             Ok(()) => {
-                remote_fingerprints.insert(file.rel.clone(), fingerprint);
-                let mut remote_rows: Vec<_> = remote_fingerprints.values().cloned().collect();
-                remote_rows.sort_by(|left, right| left.path.cmp(&right.path));
-                crate::fingerprints::write_database(&remote_working_database, &remote_rows)
-                    .map_err(|error| format!("更新主机指纹数据库失败：{error}"))?;
-                publish_remote_fingerprint_database(
-                    &session,
-                    &sftp,
-                    &remote_working_database,
-                    &remote_database_path,
-                )
-                .await?;
+                remote_fingerprints.insert(file.rel.clone(), fingerprint.clone());
+                crate::fingerprints::upsert_fingerprint(&host_database_path, &fingerprint)
+                    .map_err(|error| format!("保存主机同步状态失败：{error}"))?;
+                unpublished_fingerprints += 1;
+                if unpublished_fingerprints >= REMOTE_FINGERPRINT_PUBLISH_BATCH_FILES {
+                    publish_host_state_database(
+                        &session,
+                        &sftp,
+                        &host_database_path,
+                        &remote_database_path,
+                    )
+                    .await?;
+                    unpublished_fingerprints = 0;
+                }
                 uploaded += 1;
                 overall_done = overall_done.saturating_add(file.size);
                 progress.action = "upload".into();
@@ -865,16 +935,16 @@ pub async fn sync_host_software(
     }
 
     if failed == 0 {
-        publish_remote_fingerprint_database(
-            &session,
-            &sftp,
-            &local_database.path,
-            &remote_database_path,
-        )
-        .await
-        .map_err(|error| format!("同步主机指纹数据库失败：{error}"))?;
+        crate::fingerprints::write_database(&host_database_path, &local_database.files)
+            .map_err(|error| format!("保存主机同步状态失败：{error}"))?;
+        publish_host_state_database(&session, &sftp, &host_database_path, &remote_database_path)
+            .await
+            .map_err(|error| format!("同步主机指纹数据库失败：{error}"))?;
+    } else if unpublished_fingerprints > 0 {
+        publish_host_state_database(&session, &sftp, &host_database_path, &remote_database_path)
+            .await
+            .map_err(|error| format!("同步主机指纹数据库失败：{error}"))?;
     }
-    let _ = std::fs::remove_file(&remote_working_database);
 
     let _ = sftp.close().await;
     drop(session);
@@ -1114,5 +1184,43 @@ mod tests {
         assert!(!uses_resumable_upload(RESUMABLE_UPLOAD_MIN_BYTES - 1));
         assert!(!uses_resumable_upload(RESUMABLE_UPLOAD_MIN_BYTES));
         assert!(uses_resumable_upload(RESUMABLE_UPLOAD_MIN_BYTES + 1));
+    }
+
+    #[test]
+    fn host_state_path_is_isolated_and_cannot_escape_data_dir() {
+        let data_dir = Path::new("/tmp/cangling-keeper-data");
+        assert_eq!(
+            host_fingerprint_database_path(data_dir, "host-123"),
+            data_dir.join("host-sync-state/host-123/fingerprints.sqlite3")
+        );
+        let unsafe_path = host_fingerprint_database_path(data_dir, "../../root");
+        assert!(unsafe_path.starts_with(data_dir.join(HOST_SYNC_STATE_DIR)));
+        assert!(!unsafe_path.to_string_lossy().contains("../"));
+    }
+
+    #[test]
+    fn cached_host_state_only_merges_current_repository_fingerprints() {
+        let current = crate::fingerprints::FileFingerprint {
+            path: "np4/app.jar".into(),
+            size: 10,
+            modified_ns: 0,
+            sha256: "a".repeat(64),
+        };
+        let stale = crate::fingerprints::FileFingerprint {
+            path: "np4/old.jar".into(),
+            size: 10,
+            modified_ns: 0,
+            sha256: "b".repeat(64),
+        };
+        let mut remote = HashMap::new();
+        let cached = HashMap::from([
+            (current.path.clone(), current.clone()),
+            (stale.path.clone(), stale),
+        ]);
+        let local = HashMap::from([(current.path.clone(), current.clone())]);
+
+        merge_confirmed_host_fingerprints(&mut remote, cached, &local);
+
+        assert_eq!(remote, local);
     }
 }
