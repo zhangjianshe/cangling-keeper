@@ -1038,7 +1038,7 @@ async function onCanglingUpdateClick() {
   }
 
   if (!p.installed) {
-    const configuredPort = hostUpdatePort(hostById(hostId));
+    const configuredPort = clusterMgrPort(hostId);
     const enteredPort = await uiPrompt(
       "请输入 cangling-update 的 HTTP 监听端口",
       String(configuredPort),
@@ -3032,7 +3032,13 @@ if (softwareSyncBtnEl) {
   softwareSyncBtnEl.addEventListener("click", onSoftwareSyncClick);
 }
 injectBtnEl.addEventListener("click", toggleInject);
-updateBtnEl.addEventListener("click", onCanglingUpdateClick);
+updateBtnEl.addEventListener("click", () => {
+  onCanglingUpdateClick().catch((err) => {
+    console.error("安装/更新 cangling-update 失败", err);
+    uiAlert(`安装/更新程序失败：${err}`);
+    updateHostActionsUI();
+  });
+});
 roleSwitchEl.addEventListener("click", (e) => {
   const btn = e.target.closest("[data-role]");
   if (!btn || btn.disabled) return;
