@@ -279,7 +279,31 @@ async fn check_host_env(
     //    master can reach this node over HTTP (check cluster / account sync).
     let probe = run_probe(&state, &host_id).await?;
     let port = host_actions::console_remote_port(probe.port);
-    let out = ssh_run(&state, &host_id, host_actions::wrap_fix_firewall_command(port)).await?;
+    let (stored_role, peers) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let selected = store.get_host(&host_id)?;
+        let catalog = selected.catalog.trim();
+        let peers = store
+            .list_hosts()?
+            .into_iter()
+            .filter(|host| host.id != host_id && host.catalog.trim() == catalog)
+            .map(|host| host.hostname)
+            .filter(|hostname| !hostname.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join(",");
+        (selected.update_role, peers)
+    };
+    let role = if probe.role.trim().is_empty() {
+        stored_role.as_str()
+    } else {
+        probe.role.as_str()
+    };
+    let out = ssh_run(
+        &state,
+        &host_id,
+        host_actions::wrap_fix_firewall_command(port, role, &peers),
+    )
+    .await?;
     let fw = host_actions::parse_fix_firewall(&out.stdout)?;
     if fw.status == "error" {
         return Err(if fw.message.is_empty() {

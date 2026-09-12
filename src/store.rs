@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS hosts (
     update_role         TEXT NOT NULL DEFAULT 'standalone'
 );
 
+CREATE TABLE IF NOT EXISTS host_catalog_order (
+    catalog      TEXT PRIMARY KEY,
+    sort_order   INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tunnels (
     id             TEXT PRIMARY KEY,
     name           TEXT NOT NULL,
@@ -93,9 +98,13 @@ impl Store {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, name, hostname, port, username, auth_method, password, certificate_id,
-                        inject_remote_port, catalog, remote_id, is_public, owned, update_port, update_role
-                 FROM hosts ORDER BY name COLLATE NOCASE",
+                "SELECT h.id, h.name, h.hostname, h.port, h.username, h.auth_method, h.password,
+                        h.certificate_id, h.inject_remote_port, h.catalog, h.remote_id, h.is_public,
+                        h.owned, h.update_port, h.update_role
+                 FROM hosts h
+                 LEFT JOIN host_catalog_order c ON c.catalog = TRIM(h.catalog)
+                 ORDER BY COALESCE(c.sort_order, 9223372036854775807),
+                          h.name COLLATE NOCASE",
             )
             .map_err(|e| e.to_string())?;
         let rows = stmt
@@ -149,10 +158,24 @@ impl Store {
                 ],
             )
             .map_err(|e| e.to_string())?;
+        self.ensure_host_catalog_order(&host.catalog)?;
         Ok(())
     }
 
     pub fn update_host(&self, host: &Host) -> Result<(), String> {
+        let old_catalog = self
+            .conn
+            .query_row(
+                "SELECT catalog FROM hosts WHERE id = ?1",
+                params![host.id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => {
+                    format!("Host not found: {}", host.id)
+                }
+                other => other.to_string(),
+            })?;
         let (method, password, certificate_id) = flatten_auth(&host.auth);
         let changed = self
             .conn
@@ -183,10 +206,23 @@ impl Store {
         if changed == 0 {
             return Err(format!("Host not found: {}", host.id));
         }
+        self.ensure_host_catalog_order(&host.catalog)?;
+        self.remove_unused_host_catalog(&old_catalog)?;
         Ok(())
     }
 
     pub fn delete_host(&self, id: &str) -> Result<(), String> {
+        let old_catalog = self
+            .conn
+            .query_row(
+                "SELECT catalog FROM hosts WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => format!("Host not found: {id}"),
+                other => other.to_string(),
+            })?;
         let changed = self
             .conn
             .execute("DELETE FROM hosts WHERE id = ?1", params![id])
@@ -194,6 +230,31 @@ impl Store {
         if changed == 0 {
             return Err(format!("Host not found: {id}"));
         }
+        self.remove_unused_host_catalog(&old_catalog)?;
+        Ok(())
+    }
+
+    fn ensure_host_catalog_order(&self, catalog: &str) -> Result<(), String> {
+        self.conn
+            .execute(
+                "INSERT OR IGNORE INTO host_catalog_order (catalog, sort_order)
+                 VALUES (?1, COALESCE((SELECT MAX(sort_order) + 1 FROM host_catalog_order), 0))",
+                params![catalog.trim()],
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn remove_unused_host_catalog(&self, catalog: &str) -> Result<(), String> {
+        let catalog = catalog.trim();
+        self.conn
+            .execute(
+                "DELETE FROM host_catalog_order
+                 WHERE catalog = ?1
+                   AND NOT EXISTS (SELECT 1 FROM hosts WHERE TRIM(catalog) = ?1)",
+                params![catalog],
+            )
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -576,6 +637,17 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
             last_checked_at INTEGER NOT NULL DEFAULT 0
         );",
     )?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS host_catalog_order (
+            catalog      TEXT PRIMARY KEY,
+            sort_order   INTEGER NOT NULL
+        );
+        INSERT OR IGNORE INTO host_catalog_order (catalog, sort_order)
+        SELECT TRIM(catalog), MIN(rowid)
+        FROM hosts
+        GROUP BY TRIM(catalog)
+        ORDER BY MIN(rowid);",
+    )?;
     Ok(())
 }
 
@@ -691,5 +763,68 @@ fn flatten_auth(auth: &Auth) -> (&'static str, &str, &str) {
     match auth {
         Auth::Password { password } => ("password", password.as_str(), ""),
         Auth::Certificate { certificate_id } => ("certificate", "", certificate_id.as_str()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_store() -> Store {
+        let conn = Connection::open_in_memory().expect("open test database");
+        conn.execute_batch(SCHEMA).expect("create schema");
+        migrate(&conn).expect("migrate schema");
+        Store { conn }
+    }
+
+    fn host(id: &str, name: &str, catalog: &str) -> Host {
+        Host {
+            id: id.into(),
+            name: name.into(),
+            hostname: "127.0.0.1".into(),
+            port: 22,
+            update_port: 5400,
+            update_role: "standalone".into(),
+            username: "root".into(),
+            inject_remote_port: 7890,
+            auth: Auth::Password {
+                password: String::new(),
+            },
+            catalog: catalog.into(),
+            remote_id: String::new(),
+            is_public: false,
+            owned: true,
+        }
+    }
+
+    #[test]
+    fn hosts_are_listed_in_catalog_definition_order() {
+        let store = test_store();
+        store.add_host(&host("1", "z-host", "先定义组")).unwrap();
+        store.add_host(&host("2", "a-host", "后定义组")).unwrap();
+        store
+            .add_host(&host("3", "a-in-first", "先定义组"))
+            .unwrap();
+
+        let listed = store.list_hosts().unwrap();
+        let names: Vec<_> = listed.iter().map(|host| host.name.as_str()).collect();
+        assert_eq!(names, ["a-in-first", "z-host", "a-host"]);
+    }
+
+    #[test]
+    fn removing_and_readding_a_catalog_moves_it_to_the_end() {
+        let store = test_store();
+        store.add_host(&host("1", "one", "第一组")).unwrap();
+        store.add_host(&host("2", "two", "第二组")).unwrap();
+        store.delete_host("1").unwrap();
+        store.add_host(&host("3", "three", "第一组")).unwrap();
+
+        let catalogs: Vec<_> = store
+            .list_hosts()
+            .unwrap()
+            .into_iter()
+            .map(|host| host.catalog)
+            .collect();
+        assert_eq!(catalogs, ["第二组", "第一组"]);
     }
 }

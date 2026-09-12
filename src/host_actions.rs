@@ -154,9 +154,9 @@ pub fn wrap_check_ssh_env_command() -> String {
     bash_c(CHECK_SSH_ENV_SCRIPT, &[])
 }
 
-pub fn wrap_fix_firewall_command(port: u16) -> String {
+pub fn wrap_fix_firewall_command(port: u16, role: &str, peers: &str) -> String {
     let port = console_remote_port(port);
-    bash_c(FIX_FIREWALL_SCRIPT, &[&port.to_string()])
+    bash_c(FIX_FIREWALL_SCRIPT, &[&port.to_string(), role, peers])
 }
 
 pub fn wrap_apply_command(
@@ -789,11 +789,22 @@ mod tests {
 
     #[test]
     fn wraps_fix_firewall_with_port() {
-        let cmd = wrap_fix_firewall_command(80);
+        let cmd = wrap_fix_firewall_command(80, "master", "10.0.0.2,worker.local");
         assert!(cmd.contains("CK_FIREWALL"));
-        assert!(cmd.ends_with("ck 80"));
+        assert!(cmd.ends_with("ck 80 master '10.0.0.2,worker.local'"));
         // A zero/unknown probe port falls back to the console default.
-        assert!(wrap_fix_firewall_command(0).ends_with("ck 5400"));
+        assert!(wrap_fix_firewall_command(0, "worker", "").ends_with("ck 5400 worker ''"));
+    }
+
+    #[test]
+    fn k3s_firewall_rules_are_restricted_to_resolved_peers() {
+        assert!(FIX_FIREWALL_SCRIPT.contains("ip -4 route get"));
+        assert!(FIX_FIREWALL_SCRIPT.contains("address=\\\"${peer_ip}/32\\\""));
+        assert!(FIX_FIREWALL_SCRIPT.contains("ensure_peer_port \"$peer_ip\" 6443 tcp"));
+        assert!(FIX_FIREWALL_SCRIPT.contains("ensure_peer_port \"$peer_ip\" 8472 udp"));
+        assert!(FIX_FIREWALL_SCRIPT.contains("ensure_peer_port \"$peer_ip\" 10250 tcp"));
+        assert!(!FIX_FIREWALL_SCRIPT.contains("ensure_port 6443"));
+        assert!(!FIX_FIREWALL_SCRIPT.contains("ensure_port 8472"));
     }
 
     #[test]

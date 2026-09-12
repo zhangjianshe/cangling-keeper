@@ -1566,8 +1566,9 @@ function renderHostList() {
     if (!groups.has(cat)) groups.set(cat, []);
     groups.get(cat).push(host);
   }
-  const sorted = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh"));
-  for (const [cat, hosts] of sorted) {
+  // list_hosts returns catalogs in their persisted definition order. Map keeps
+  // that insertion order, so newly defined groups stay at the end.
+  for (const [cat, hosts] of groups) {
     const collapsed = !!state.collapsedGroups[cat];
 
     const header = document.createElement("li");
@@ -2865,7 +2866,7 @@ async function onCheckEnvClick() {
     setTimeout(() => {
       if (!btn.disabled) {
         btn.textContent = "检查环境";
-        btn.title = "检查并修复 sshd TCP Forward 与防火墙端口";
+        btn.title = "检查并修复 sshd TCP Forward、更新服务及组内 K3s 防火墙规则";
       }
     }, 3000);
   }
