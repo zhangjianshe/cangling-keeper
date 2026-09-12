@@ -157,8 +157,9 @@ pub fn wrap_fix_firewall_command(port: u16) -> String {
     bash_c(FIX_FIREWALL_SCRIPT, &[&port.to_string()])
 }
 
-pub fn wrap_apply_command(action: &str, arch: &str, proxy: &str) -> String {
-    bash_c(APPLY_SCRIPT, &[action, arch, proxy])
+pub fn wrap_apply_command(action: &str, arch: &str, proxy: &str, port: u16) -> String {
+    let port = console_remote_port(port);
+    bash_c(APPLY_SCRIPT, &[action, arch, proxy, &port.to_string()])
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -701,7 +702,7 @@ mod tests {
 
     #[test]
     fn wrap_includes_urls_and_args() {
-        let cmd = wrap_apply_command("install", "amd64", "http://127.0.0.1:7890");
+        let cmd = wrap_apply_command("install", "amd64", "http://127.0.0.1:7890", 5400);
         assert!(cmd.contains(
             "https://soft.cangling.cn:22002/software/a59ff5999a0d4404a257cf7aa16ca10b/latest"
         ));
@@ -709,7 +710,8 @@ mod tests {
         assert!(cmd.contains("cangling-update-linux-arm64"));
         assert!(!cmd.contains("/upload/"));
         assert!(cmd.contains("install-service"));
-        assert!(cmd.ends_with("ck install amd64 http://127.0.0.1:7890"));
+        assert!(cmd.contains("--port=\"$PORT\""));
+        assert!(cmd.ends_with("ck install amd64 http://127.0.0.1:7890 5400"));
         let probe = wrap_probe_command();
         assert!(probe.contains("CK_PROBE"));
         assert!(probe.contains("|port=%s|token=%s"));

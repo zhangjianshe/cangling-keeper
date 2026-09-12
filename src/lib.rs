@@ -1219,6 +1219,7 @@ async fn run_cangling_update(
     app: AppHandle,
     state: State<'_, AppState>,
     host_id: String,
+    port: Option<u16>,
 ) -> Result<host_actions::UpdateApplyResult, String> {
     let remote_port = require_injected(&state, &host_id)?;
     let probe = run_probe(&state, &host_id).await?;
@@ -1226,10 +1227,19 @@ async fn run_cangling_update(
         return Err(format!("unsupported CPU arch: {}", probe.arch));
     }
     let action = if probe.installed { "update" } else { "install" };
+    let install_port = match port {
+        Some(0) => return Err("安装端口必须在 1 到 65535 之间".into()),
+        Some(port) => port,
+        None => {
+            let store = state.store.lock().map_err(|error| error.to_string())?;
+            store.get_host(&host_id)?.update_port_or_default()
+        }
+    };
     let cmd = host_actions::wrap_apply_command(
         action,
         &probe.arch,
         &host_actions::inject_proxy_url(remote_port),
+        install_port,
     );
     let _ = app.emit(
         "cangling-update-progress",

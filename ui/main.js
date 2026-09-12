@@ -837,14 +837,14 @@ function shortUpdateError(err) {
   return line.length > 36 ? line.slice(0, 34) + "…" : line;
 }
 
-async function applyCanglingUpdate({ busy, status }) {
+async function applyCanglingUpdate({ busy, status, port = null }) {
   const hostId = state.selectedHostId;
   state.updateBusy = true;
   setUpdateButton({ disabled: true, text: busy, title: status, cls: "primary" });
   renderRoleSwitch();
   let failed = false;
   try {
-    const result = await invoke("run_cangling_update", { hostId });
+    const result = await invoke("run_cangling_update", { hostId, port });
     writeActionLog(
       result.action === "install" ? "安装更新程序" : "更新程序",
       [result.stdout, result.stderr].filter(Boolean).join("\n")
@@ -1003,9 +1003,27 @@ async function onCanglingUpdateClick() {
   }
 
   if (!p.installed) {
+    const configuredPort = hostUpdatePort(hostById(hostId));
+    const enteredPort = await uiPrompt(
+      "请输入 cangling-update 的 HTTP 监听端口",
+      String(configuredPort),
+      "安装端口"
+    );
+    if (enteredPort == null) return;
+    const portText = String(enteredPort).trim();
+    if (!/^\d+$/.test(portText)) {
+      uiAlert("端口必须是 1 到 65535 之间的整数", "安装端口");
+      return;
+    }
+    const port = Number(portText);
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      uiAlert("端口必须是 1 到 65535 之间的整数", "安装端口");
+      return;
+    }
     await applyCanglingUpdate({
       busy: "安装中…",
-      status: "正在下载并安装 cangling-update…",
+      status: `正在下载并安装 cangling-update（端口 ${port}）…`,
+      port,
     });
     return;
   }

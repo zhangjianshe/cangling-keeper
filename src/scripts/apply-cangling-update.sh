@@ -2,10 +2,12 @@
 # $1 = install | update
 # $2 = amd64 | arm64
 # $3 = proxy URL, e.g. http://127.0.0.1:7890
+# $4 = cangling-update HTTP port (default 5400)
 set -eu
 ACTION="${1:-}"
 ARCH="${2:-}"
 PROXY="${3:-http://127.0.0.1:7890}"
+PORT="${4:-5400}"
 HOME="${HOME:-/root}"
 DEST_DIR="$HOME/update"
 DEST="$DEST_DIR/cangling-update"
@@ -21,9 +23,15 @@ case "$ARCH" in
 esac
 
 if [ "$ACTION" != install ] && [ "$ACTION" != update ]; then
-  echo "usage: apply-cangling-update.sh install|update amd64|arm64 [proxy]" >&2
+  echo "usage: apply-cangling-update.sh install|update amd64|arm64 [proxy] [port]" >&2
   exit 2
 fi
+
+case "$PORT" in
+  ''|*[!0-9]*) PORT=5400 ;;
+esac
+[ "$PORT" -ge 1 ] 2>/dev/null || PORT=5400
+[ "$PORT" -le 65535 ] 2>/dev/null || PORT=5400
 
 mkdir -p "$DEST_DIR"
 TMP="$DEST.new.$$"
@@ -78,8 +86,8 @@ download
 
 if [ "$ACTION" = install ]; then
   echo "CK_APPLY|phase=install|pct=85|msg=正在安装服务"
-  echo "installing service: $DEST --port=80 install-service"
-  (cd "$DEST_DIR" && ./cangling-update --port=80 install-service)
+  echo "installing service: $DEST --port=$PORT install-service"
+  (cd "$DEST_DIR" && ./cangling-update --port="$PORT" install-service)
   echo "CK_APPLY|phase=done|pct=100|msg=安装完成"
   echo "CK_APPLY_OK install"
   exit 0

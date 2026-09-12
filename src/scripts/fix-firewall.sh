@@ -3,15 +3,15 @@
 # master can reach this node's web console / m2m API over HTTP.
 # $1 = port (e.g. 80 or 5400)
 # Prints a single marker line:
-#   CK_FIREWALL|status=ok|changed=1|firewall=firewalld|port=80|message=...
+#   CK_FIREWALL|status=ok|changed=1|firewall=firewalld|port=5400|message=...
 set -u
 
-port="${1:-80}"
+port="${1:-5400}"
 case "$port" in
-  ''|*[!0-9]*) port=80 ;;
+  ''|*[!0-9]*) port=5400 ;;
 esac
-[ "$port" -ge 1 ] 2>/dev/null || port=80
-[ "$port" -le 65535 ] 2>/dev/null || port=80
+[ "$port" -ge 1 ] 2>/dev/null || port=5400
+[ "$port" -le 65535 ] 2>/dev/null || port=5400
 
 firewall=""
 changed=0
