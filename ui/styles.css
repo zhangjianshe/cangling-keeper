@@ -1151,6 +1151,107 @@ body {
   max-width: 540px;
 }
 
+.software-sync-modal-box {
+  max-width: 760px;
+}
+
+.software-sync-modal-hint {
+  margin: 0 0 12px;
+}
+
+.software-sync-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.software-sync-selection-summary {
+  margin-left: auto;
+}
+
+.software-sync-tree {
+  max-height: 55vh;
+  min-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  padding: 8px 10px;
+}
+
+.software-sync-tree-summary {
+  display: flex;
+  align-items: center;
+  list-style: none;
+  cursor: pointer;
+}
+
+.software-sync-tree-summary::-webkit-details-marker {
+  display: none;
+}
+
+.software-sync-tree-expander {
+  width: 16px;
+  flex: 0 0 16px;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.software-sync-tree-summary > .software-sync-tree-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.software-sync-tree-children {
+  margin-left: 22px;
+}
+
+.software-sync-tree-row {
+  display: flex;
+  align-items: center;
+  min-height: 30px;
+  gap: 7px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.software-sync-tree-row:hover {
+  background: var(--btn-default-bg);
+}
+
+.software-sync-tree-row input {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.software-sync-tree-icon {
+  width: 18px;
+  flex: 0 0 18px;
+  text-align: center;
+}
+
+.software-sync-tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.software-sync-tree-meta {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.software-sync-incomplete {
+  margin: 10px 0 0;
+}
+
 .modal-box h2 {
   margin: 0 0 16px;
   font-size: 16px;

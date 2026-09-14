@@ -536,6 +536,26 @@
       </div>
     </div>
 
+    <!-- Host software sync selection modal -->
+    <div id="software-sync-modal" class="modal hidden">
+      <div class="modal-box software-sync-modal-box" role="dialog" aria-modal="true" aria-labelledby="software-sync-modal-title">
+        <h2 id="software-sync-modal-title">选择同步内容</h2>
+        <button class="modal-close" data-close="software-sync-modal" type="button" aria-label="关闭">×</button>
+        <p id="software-sync-modal-hint" class="hint software-sync-modal-hint"></p>
+        <div class="software-sync-toolbar">
+          <button id="software-sync-select-all" class="btn" type="button">全选</button>
+          <button id="software-sync-clear" class="btn" type="button">清空</button>
+          <span id="software-sync-selection-summary" class="hint software-sync-selection-summary">尚未选择</span>
+        </div>
+        <div id="software-sync-tree" class="software-sync-tree" role="tree" aria-label="本地软件仓库内容"></div>
+        <p id="software-sync-incomplete" class="hint warning software-sync-incomplete hidden"></p>
+        <div class="modal-actions">
+          <button id="cancel-software-sync-btn" class="btn" type="button">取消</button>
+          <button id="confirm-software-sync-btn" class="btn primary" type="button" disabled>同步所选内容</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Login modal -->
     <div id="login-modal" class="modal hidden">
       <div class="modal-box">

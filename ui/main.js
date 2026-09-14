@@ -69,6 +69,15 @@ const termStatusEl = $("#term-status");
 const checkEnvBtnEl = $("#check-env-btn");
 const resourceMgrBtnEl = $("#resource-mgr-btn");
 const softwareSyncBtnEl = $("#software-sync-btn");
+const softwareSyncModalEl = $("#software-sync-modal");
+const softwareSyncModalHintEl = $("#software-sync-modal-hint");
+const softwareSyncTreeEl = $("#software-sync-tree");
+const softwareSyncSelectionSummaryEl = $("#software-sync-selection-summary");
+const softwareSyncIncompleteEl = $("#software-sync-incomplete");
+const softwareSyncSelectAllEl = $("#software-sync-select-all");
+const softwareSyncClearEl = $("#software-sync-clear");
+const confirmSoftwareSyncBtnEl = $("#confirm-software-sync-btn");
+const cancelSoftwareSyncBtnEl = $("#cancel-software-sync-btn");
 const terminalFrameEl = $("#terminal-frame");
 const clusterFrameEl = $("#cluster-frame");
 const clusterFrameUrlEl = $("#cluster-frame-url");
@@ -2891,15 +2900,192 @@ async function onSoftwareSyncClick() {
     uiAlert(`本地没有已拉取完成的软件，请先在「软件仓库」同步软件集。${extra}`);
     return;
   }
-  const readyText = ready
-    .map((s) => `${s.name}（${s.files} 个文件）`)
-    .join("、");
-  let msg = `将把以下本地软件集同步到主机「${host.name}」上 cangling-update 的 repo/<软件集>/：\n${readyText}`;
-  if (incomplete.length) {
-    msg += `\n\n尚未拉取完成、本次不会上传：${incomplete.join("、")}。请先在「软件仓库」同步这些软件集。`;
+  openSoftwareSyncModal(host, preview);
+}
+
+let softwareSyncRoots = [];
+
+function buildSoftwareSyncTree(entries) {
+  const nodes = new Map();
+  for (const entry of entries || []) {
+    const path = String(entry.path || "");
+    if (!path) continue;
+    nodes.set(path, {
+      path,
+      name: path.split("/").pop(),
+      isDir: !!entry.isDir,
+      files: Number(entry.files || 0),
+      bytes: Number(entry.bytes || 0),
+      parent: null,
+      children: [],
+      checkbox: null,
+    });
   }
-  const ok = await uiConfirm(msg, "软件同步");
-  if (!ok) return;
+  const roots = [];
+  for (const node of nodes.values()) {
+    const slash = node.path.lastIndexOf("/");
+    const parent = slash >= 0 ? nodes.get(node.path.slice(0, slash)) : null;
+    if (parent) {
+      node.parent = parent;
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+  const sortNodes = (items) => {
+    items.sort((left, right) => {
+      if (left.isDir !== right.isDir) return left.isDir ? -1 : 1;
+      return left.name.localeCompare(right.name, "zh-CN");
+    });
+    items.forEach((item) => sortNodes(item.children));
+  };
+  sortNodes(roots);
+  return roots;
+}
+
+function softwareSyncNodeMeta(node) {
+  return node.isDir
+    ? `${node.files} 个文件 · ${formatBytes(node.bytes)}`
+    : formatBytes(node.bytes);
+}
+
+function renderSoftwareSyncNode(node) {
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.setAttribute("aria-label", `选择 ${node.path}`);
+  node.checkbox = checkbox;
+
+  const row = document.createElement(node.isDir ? "div" : "label");
+  row.className = "software-sync-tree-row";
+  const icon = document.createElement("span");
+  icon.className = "software-sync-tree-icon";
+  icon.textContent = node.isDir ? "📁" : "📄";
+  const name = document.createElement("span");
+  name.className = "software-sync-tree-name";
+  name.textContent = node.name;
+  name.title = node.path;
+  const meta = document.createElement("span");
+  meta.className = "software-sync-tree-meta";
+  meta.textContent = softwareSyncNodeMeta(node);
+  row.append(checkbox, icon, name, meta);
+
+  checkbox.addEventListener("click", (event) => event.stopPropagation());
+  checkbox.addEventListener("change", () => {
+    setSoftwareSyncNodeChecked(node, checkbox.checked);
+    updateSoftwareSyncAncestors(node.parent);
+    updateSoftwareSyncSelectionSummary();
+  });
+
+  if (!node.isDir) return row;
+  const details = document.createElement("details");
+  details.open = false;
+  const summary = document.createElement("summary");
+  summary.className = "software-sync-tree-summary";
+  const expander = document.createElement("span");
+  expander.className = "software-sync-tree-expander";
+  expander.textContent = "▶";
+  expander.setAttribute("aria-hidden", "true");
+  summary.append(expander, row);
+  const children = document.createElement("div");
+  children.className = "software-sync-tree-children";
+  node.children.forEach((child) => children.append(renderSoftwareSyncNode(child)));
+  details.addEventListener("toggle", () => {
+    expander.textContent = details.open ? "▼" : "▶";
+  });
+  details.append(summary, children);
+  return details;
+}
+
+function setSoftwareSyncNodeChecked(node, checked) {
+  if (node.checkbox) {
+    node.checkbox.checked = checked;
+    node.checkbox.indeterminate = false;
+  }
+  node.children.forEach((child) => setSoftwareSyncNodeChecked(child, checked));
+}
+
+function updateSoftwareSyncAncestors(node) {
+  if (!node || !node.checkbox) return;
+  const children = node.children.filter((child) => child.checkbox);
+  const allChecked = children.length > 0 && children.every((child) => child.checkbox.checked);
+  const someChecked = children.some(
+    (child) => child.checkbox.checked || child.checkbox.indeterminate,
+  );
+  node.checkbox.checked = allChecked;
+  node.checkbox.indeterminate = !allChecked && someChecked;
+  updateSoftwareSyncAncestors(node.parent);
+}
+
+function forEachSoftwareSyncNode(nodes, callback) {
+  nodes.forEach((node) => {
+    callback(node);
+    forEachSoftwareSyncNode(node.children, callback);
+  });
+}
+
+function selectedSoftwareSyncPaths() {
+  const selected = [];
+  const visit = (node) => {
+    if (node.isDir && node.checkbox.checked && !node.checkbox.indeterminate) {
+      selected.push(node.path);
+      return;
+    }
+    if (!node.isDir && node.checkbox.checked) {
+      selected.push(node.path);
+      return;
+    }
+    node.children.forEach(visit);
+  };
+  softwareSyncRoots.forEach(visit);
+  return selected;
+}
+
+function updateSoftwareSyncSelectionSummary() {
+  let files = 0;
+  let bytes = 0;
+  forEachSoftwareSyncNode(softwareSyncRoots, (node) => {
+    if (!node.isDir && node.checkbox && node.checkbox.checked) {
+      files += 1;
+      bytes += node.bytes;
+    }
+  });
+  softwareSyncSelectionSummaryEl.textContent = files
+    ? `已选择 ${files} 个文件 · ${formatBytes(bytes)}`
+    : "尚未选择";
+  confirmSoftwareSyncBtnEl.disabled = files === 0 || state.hostSyncing;
+}
+
+function setAllSoftwareSyncNodes(checked) {
+  softwareSyncRoots.forEach((node) => setSoftwareSyncNodeChecked(node, checked));
+  updateSoftwareSyncSelectionSummary();
+}
+
+function closeSoftwareSyncModal() {
+  softwareSyncModalEl.classList.add("hidden");
+  softwareSyncModalEl.dataset.hostId = "";
+}
+
+function openSoftwareSyncModal(host, preview) {
+  softwareSyncRoots = buildSoftwareSyncTree(preview.entries || []);
+  softwareSyncTreeEl.replaceChildren();
+  softwareSyncRoots.forEach((node) => softwareSyncTreeEl.append(renderSoftwareSyncNode(node)));
+  softwareSyncModalEl.dataset.hostId = host.id;
+  softwareSyncModalHintEl.textContent = `选择要同步到主机「${host.name}」上 cangling-update 软件仓库的目录或文件。选择目录会包含其中全部文件。`;
+  const incomplete = (preview && preview.incompleteSets) || [];
+  softwareSyncIncompleteEl.textContent = incomplete.length
+    ? `尚未拉取完成、本次不可选择：${incomplete.join("、")}。`
+    : "";
+  softwareSyncIncompleteEl.classList.toggle("hidden", !incomplete.length);
+  softwareSyncModalEl.classList.remove("hidden");
+  updateSoftwareSyncSelectionSummary();
+}
+
+async function syncSelectedHostSoftware() {
+  const hostId = softwareSyncModalEl.dataset.hostId;
+  const host = hostById(hostId);
+  const paths = selectedSoftwareSyncPaths();
+  if (!host || state.hostSyncing || !paths.length) return;
+  closeSoftwareSyncModal();
   state.hostSyncing = true;
   renderSoftwareSyncBtn();
   renderHostSyncProgress({
@@ -2914,7 +3100,7 @@ async function onSoftwareSyncClick() {
     remotePath: "",
   });
   try {
-    const result = await invoke("sync_host_software", { hostId: host.id });
+    const result = await invoke("sync_host_software", { hostId: host.id, paths });
     hideHostSyncProgress();
     const extra =
       result && result.totalFiles
@@ -3031,6 +3217,18 @@ if (clusterFrameExternalEl) {
 }
 if (softwareSyncBtnEl) {
   softwareSyncBtnEl.addEventListener("click", onSoftwareSyncClick);
+}
+if (softwareSyncSelectAllEl) {
+  softwareSyncSelectAllEl.addEventListener("click", () => setAllSoftwareSyncNodes(true));
+}
+if (softwareSyncClearEl) {
+  softwareSyncClearEl.addEventListener("click", () => setAllSoftwareSyncNodes(false));
+}
+if (cancelSoftwareSyncBtnEl) {
+  cancelSoftwareSyncBtnEl.addEventListener("click", closeSoftwareSyncModal);
+}
+if (confirmSoftwareSyncBtnEl) {
+  confirmSoftwareSyncBtnEl.addEventListener("click", syncSelectedHostSoftware);
 }
 injectBtnEl.addEventListener("click", toggleInject);
 updateBtnEl.addEventListener("click", () => {
@@ -3165,14 +3363,13 @@ listen("cangling-update-progress", (e) => {
     });
     return;
   }
-  const label =
-    Number.isFinite(pct) && pct > 0 && pct < 100 && msg
-      ? `${msg}`
-      : msg || "更新中…";
+  const baseLabel = msg || "更新中…";
+  const hasProgress = Number.isFinite(pct) && pct >= 0 && pct <= 100;
+  const label = hasProgress ? `${baseLabel} ${Math.round(pct)}%` : baseLabel;
   setUpdateButton({
     disabled: true,
     text: label,
-    title: Number.isFinite(pct) && pct > 0 ? `${msg} ${pct}%` : msg,
+    title: baseLabel,
     cls: p.phase === "done" ? "up-to-date" : "primary",
   });
 });

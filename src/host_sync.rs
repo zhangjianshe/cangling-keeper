@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -45,9 +45,19 @@ pub struct HostSoftwareSetPreview {
 #[serde(rename_all = "camelCase")]
 pub struct HostSoftwareSyncPreview {
     pub sets: Vec<HostSoftwareSetPreview>,
+    pub entries: Vec<HostSoftwareEntryPreview>,
     pub incomplete_sets: Vec<String>,
     pub total_files: u32,
     pub total_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HostSoftwareEntryPreview {
+    pub path: String,
+    pub is_dir: bool,
+    pub files: u32,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -211,6 +221,109 @@ fn summarize_sets(files: &[LocalFile]) -> Vec<HostSoftwareSetPreview> {
         });
     }
     out
+}
+
+fn summarize_entries(files: &[LocalFile]) -> Vec<HostSoftwareEntryPreview> {
+    let mut directories: BTreeMap<String, (u32, u64)> = BTreeMap::new();
+    let mut entries = Vec::new();
+    for file in files {
+        let parts: Vec<&str> = file
+            .rel
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .collect();
+        for end in 1..parts.len() {
+            let directory = parts[..end].join("/");
+            let summary = directories.entry(directory).or_default();
+            summary.0 += 1;
+            summary.1 = summary.1.saturating_add(file.size);
+        }
+        entries.push(HostSoftwareEntryPreview {
+            path: file.rel.clone(),
+            is_dir: false,
+            files: 1,
+            bytes: file.size,
+        });
+    }
+    entries.extend(directories.into_iter().map(|(path, (files, bytes))| {
+        HostSoftwareEntryPreview {
+            path,
+            is_dir: true,
+            files,
+            bytes,
+        }
+    }));
+    entries.sort_by(|left, right| left.path.cmp(&right.path));
+    entries
+}
+
+fn normalize_selected_path(path: &str) -> Result<String, String> {
+    let path = path.trim().replace('\\', "/");
+    if path.is_empty() || path.starts_with('/') {
+        return Err(format!("无效的同步路径：{path}"));
+    }
+    let mut parts = Vec::new();
+    for part in path.split('/') {
+        if part.is_empty() || part == "." || part == ".." || part.contains('\0') {
+            return Err(format!("无效的同步路径：{path}"));
+        }
+        parts.push(part);
+    }
+    Ok(parts.join("/"))
+}
+
+fn path_contains_file(selected: &str, file: &str) -> bool {
+    file == selected
+        || file
+            .strip_prefix(selected)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn select_local_files(
+    files: Vec<LocalFile>,
+    selected_paths: Option<Vec<String>>,
+) -> Result<Vec<LocalFile>, String> {
+    let Some(selected_paths) = selected_paths else {
+        return Ok(files);
+    };
+    if selected_paths.is_empty() {
+        return Err("请至少选择一个要同步的目录或文件".into());
+    }
+
+    let mut selected: Vec<String> = selected_paths
+        .iter()
+        .map(|path| normalize_selected_path(path))
+        .collect::<Result<_, _>>()?;
+    selected.sort_by(|left, right| left.len().cmp(&right.len()).then(left.cmp(right)));
+    selected.dedup();
+    let mut reduced: Vec<String> = Vec::new();
+    for path in selected {
+        if !reduced
+            .iter()
+            .any(|parent| path_contains_file(parent, &path))
+        {
+            reduced.push(path);
+        }
+    }
+
+    if let Some(missing) = reduced
+        .iter()
+        .find(|path| !files.iter().any(|file| path_contains_file(path, &file.rel)))
+    {
+        return Err(format!("所选目录或文件已不存在：{missing}"));
+    }
+    let selected_files: Vec<LocalFile> = files
+        .into_iter()
+        .filter(|file| {
+            reduced
+                .iter()
+                .any(|path| path_contains_file(path, &file.rel))
+        })
+        .collect();
+    if selected_files.is_empty() {
+        return Err("所选目录中没有可同步的文件".into());
+    }
+    Ok(selected_files)
 }
 
 fn incomplete_set_names(data_dir: &Path, present: &[String], configured: &[String]) -> Vec<String> {
@@ -808,15 +921,18 @@ pub async fn sync_host_software(
     app: AppHandle,
     state: State<'_, AppState>,
     host_id: String,
+    paths: Option<Vec<String>>,
 ) -> Result<HostSoftwareSyncResult, String> {
     let data_dir = state.data_dir.clone();
-    let files = collect_local_software(&data_dir)?;
+    let all_files = collect_local_software(&data_dir)?;
+    let all_sets = collect_set_names(&all_files);
+    let configured = configured_set_names(&state, &data_dir);
+    let incomplete_sets = incomplete_set_names(&data_dir, &all_sets, &configured);
+    let files = select_local_files(all_files, paths)?;
     if files.is_empty() {
         return Err("本地没有已拉取完成的软件，请先在「软件仓库」同步软件集".into());
     }
     let sets = collect_set_names(&files);
-    let configured = configured_set_names(&state, &data_dir);
-    let incomplete_sets = incomplete_set_names(&data_dir, &sets, &configured);
     let repository_root = crate::repo::sets_root(&data_dir);
     let local_database = tauri::async_runtime::spawn_blocking(move || {
         crate::fingerprints::refresh_database(&repository_root)
@@ -1031,7 +1147,9 @@ pub async fn sync_host_software(
     }
 
     if failed == 0 {
-        crate::fingerprints::write_database(&host_database_path, &local_database.files)
+        let mut synchronized_rows: Vec<_> = remote_fingerprints.values().cloned().collect();
+        synchronized_rows.sort_by(|left, right| left.path.cmp(&right.path));
+        crate::fingerprints::write_database(&host_database_path, &synchronized_rows)
             .map_err(|error| format!("保存主机同步状态失败：{error}"))?;
         publish_host_state_database(&session, &sftp, &host_database_path, &remote_database_path)
             .await
@@ -1071,6 +1189,7 @@ pub fn preview_host_software_sync(
 ) -> Result<HostSoftwareSyncPreview, String> {
     let files = collect_local_software(&state.data_dir)?;
     let sets = summarize_sets(&files);
+    let entries = summarize_entries(&files);
     let names: Vec<String> = sets.iter().map(|s| s.name.clone()).collect();
     let configured = configured_set_names(&state, &state.data_dir);
     let incomplete_sets = incomplete_set_names(&state.data_dir, &names, &configured);
@@ -1078,6 +1197,7 @@ pub fn preview_host_software_sync(
         total_files: files.len() as u32,
         total_bytes: files.iter().map(|f| f.size).sum(),
         sets,
+        entries,
         incomplete_sets,
     })
 }
@@ -1144,6 +1264,109 @@ mod tests {
             ["cangling-repo".to_string(), "np4".to_string()]
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn preview_entries_include_directories_and_files() {
+        let files = vec![
+            LocalFile {
+                rel: "np4/jars/a.jar".into(),
+                abs: PathBuf::from("/unused/a.jar"),
+                size: 10,
+            },
+            LocalFile {
+                rel: "np4/jars/b.jar".into(),
+                abs: PathBuf::from("/unused/b.jar"),
+                size: 20,
+            },
+        ];
+        assert_eq!(
+            summarize_entries(&files),
+            vec![
+                HostSoftwareEntryPreview {
+                    path: "np4".into(),
+                    is_dir: true,
+                    files: 2,
+                    bytes: 30,
+                },
+                HostSoftwareEntryPreview {
+                    path: "np4/jars".into(),
+                    is_dir: true,
+                    files: 2,
+                    bytes: 30,
+                },
+                HostSoftwareEntryPreview {
+                    path: "np4/jars/a.jar".into(),
+                    is_dir: false,
+                    files: 1,
+                    bytes: 10,
+                },
+                HostSoftwareEntryPreview {
+                    path: "np4/jars/b.jar".into(),
+                    is_dir: false,
+                    files: 1,
+                    bytes: 20,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn selection_accepts_directories_and_individual_files() {
+        let make_files = || {
+            vec![
+                LocalFile {
+                    rel: "np4/jars/a.jar".into(),
+                    abs: PathBuf::from("/unused/a.jar"),
+                    size: 10,
+                },
+                LocalFile {
+                    rel: "np4/images/a.tar".into(),
+                    abs: PathBuf::from("/unused/a.tar"),
+                    size: 20,
+                },
+                LocalFile {
+                    rel: "repo/pkg.rpm".into(),
+                    abs: PathBuf::from("/unused/pkg.rpm"),
+                    size: 30,
+                },
+            ]
+        };
+        let selected = select_local_files(make_files(), Some(vec!["np4/jars".into()])).unwrap();
+        assert_eq!(
+            selected
+                .iter()
+                .map(|file| file.rel.as_str())
+                .collect::<Vec<_>>(),
+            ["np4/jars/a.jar"]
+        );
+        let selected = select_local_files(
+            make_files(),
+            Some(vec!["np4/images/a.tar".into(), "repo/pkg.rpm".into()]),
+        )
+        .unwrap();
+        assert_eq!(
+            selected
+                .iter()
+                .map(|file| file.rel.as_str())
+                .collect::<Vec<_>>(),
+            ["np4/images/a.tar", "repo/pkg.rpm"]
+        );
+    }
+
+    #[test]
+    fn selection_rejects_empty_missing_and_unsafe_paths() {
+        let make_files = || {
+            vec![LocalFile {
+                rel: "np4/app.jar".into(),
+                abs: PathBuf::from("/unused/app.jar"),
+                size: 10,
+            }]
+        };
+        assert!(select_local_files(make_files(), Some(Vec::new())).is_err());
+        assert!(select_local_files(make_files(), Some(vec!["../np4".into()])).is_err());
+        assert!(select_local_files(make_files(), Some(vec!["/np4".into()])).is_err());
+        assert!(select_local_files(make_files(), Some(vec!["missing".into()])).is_err());
     }
 
     #[test]
