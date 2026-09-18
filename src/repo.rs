@@ -15,8 +15,9 @@ use crate::sync::SETTING_SERVER_URL;
 const SETTING_SOFTWARE_SET: &str = "software_set";
 const SETTING_SOFTWARE_SETS: &str = "software_sets";
 const SETTING_SOFTWARE_SETS_SEED: &str = "software_sets_seed";
-const SOFTWARE_SETS_SEED: &str = "3";
+const SOFTWARE_SETS_SEED: &str = "4";
 const DEFAULT_SET_NAME: &str = "np4";
+const DEFAULT_IMAGES_SET_NAME: &str = "images";
 const DEFAULT_GIT_SET_NAME: &str = "cangling-repo";
 const DEFAULT_GIT_URL: &str = "https://code.cangling.cn:22002/operation/cangling-repo.git";
 const DEFAULT_GIT_NP4_SET_NAME: &str = "cangling-np4";
@@ -168,6 +169,17 @@ fn default_np4() -> SoftwareSetRecord {
     }
 }
 
+fn default_images() -> SoftwareSetRecord {
+    SoftwareSetRecord {
+        name: DEFAULT_IMAGES_SET_NAME.to_string(),
+        kind: KIND_MANIFEST.to_string(),
+        git_url: String::new(),
+        git_username: String::new(),
+        git_token: String::new(),
+        git_branch: String::new(),
+    }
+}
+
 fn default_git_repo() -> SoftwareSetRecord {
     SoftwareSetRecord {
         name: DEFAULT_GIT_SET_NAME.to_string(),
@@ -191,7 +203,12 @@ fn default_git_np4() -> SoftwareSetRecord {
 }
 
 fn default_sets() -> Vec<SoftwareSetRecord> {
-    vec![default_np4(), default_git_repo(), default_git_np4()]
+    vec![
+        default_np4(),
+        default_images(),
+        default_git_repo(),
+        default_git_np4(),
+    ]
 }
 
 fn ensure_named(records: &mut Vec<SoftwareSetRecord>, rec: SoftwareSetRecord, index: usize) {
@@ -219,11 +236,11 @@ fn ensure_named(records: &mut Vec<SoftwareSetRecord>, rec: SoftwareSetRecord, in
 
 fn apply_default_sets(records: &mut Vec<SoftwareSetRecord>) {
     ensure_named(records, default_np4(), 0);
-    let git_index = if records.first().map(|r| r.name.as_str()) == Some(DEFAULT_SET_NAME) {
-        1
-    } else {
-        0
-    };
+    ensure_named(records, default_images(), 1);
+    let git_index = records
+        .iter()
+        .position(|record| record.name.eq_ignore_ascii_case(DEFAULT_IMAGES_SET_NAME))
+        .map_or(0, |index| index + 1);
     ensure_named(records, default_git_repo(), git_index);
     ensure_named(records, default_git_np4(), git_index + 1);
 }
@@ -1818,10 +1835,32 @@ pub async fn sync_software_set(
     }
 
     if jobs.is_empty() {
+        emit_repo_phase(
+            &app,
+            &set_name,
+            "cleanup",
+            "远端软件集为空，正在清理本地文件…",
+            100,
+            100,
+        );
         prune_extra_files(&dest, &expected)?;
-        return Err(format!(
-            "服务器软件集「{set_name}」没有可下载文件。请确认名称与维护中心一致，且该集下已有文件（不必包含 install.sh）。"
-        ));
+        refresh_fingerprints_with_progress(&app, &data_dir, &set_name)?;
+        emit_repo_phase(&app, &set_name, "complete", "同步完成", 100, 100);
+        return Ok(RepoStatus {
+            cloned: false,
+            local_path: dest.to_string_lossy().into_owned(),
+            set_name,
+            kind: KIND_MANIFEST.to_string(),
+            git_url: String::new(),
+            git_branch: String::new(),
+            branch: String::new(),
+            commit: String::new(),
+            total_files: 0,
+            downloaded: 0,
+            skipped: 0,
+            failed: 0,
+            error: String::new(),
+        });
     }
 
     let total = jobs.len() as u32;
@@ -2025,6 +2064,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_sets_include_images_manifest() {
+        let records = default_sets();
+        let images = records
+            .iter()
+            .find(|record| record.name == DEFAULT_IMAGES_SET_NAME)
+            .expect("images should be a default software set");
+        assert_eq!(images.kind, KIND_MANIFEST);
+        assert!(images.git_url.is_empty());
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.name == DEFAULT_IMAGES_SET_NAME)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn applying_defaults_preserves_existing_images_set() {
+        let mut records = vec![SoftwareSetRecord {
+            name: DEFAULT_IMAGES_SET_NAME.to_string(),
+            kind: KIND_GIT.to_string(),
+            git_url: "https://example.invalid/images.git".to_string(),
+            git_username: String::new(),
+            git_token: String::new(),
+            git_branch: String::new(),
+        }];
+
+        apply_default_sets(&mut records);
+
+        let images: Vec<_> = records
+            .iter()
+            .filter(|record| record.name == DEFAULT_IMAGES_SET_NAME)
+            .collect();
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].kind, KIND_GIT);
+        assert_eq!(images[0].git_url, "https://example.invalid/images.git");
+    }
+
+    #[test]
     fn part_path_keeps_full_filename() {
         let dest = PathBuf::from("/tmp/k3s-airgap-images-amd64.tar.gz");
         assert_eq!(
@@ -2116,6 +2195,21 @@ mod tests {
         assert!(!extra_file.is_file());
         assert!(!extra_part.is_file());
         assert!(!root.join("gone").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn empty_manifest_removes_all_local_files_and_partial_downloads() {
+        let root =
+            std::env::temp_dir().join(format!("ck-prune-empty-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("old/latest/linux/amd64")).unwrap();
+        std::fs::write(root.join("old/latest/linux/amd64/app.tar"), b"old").unwrap();
+        std::fs::write(root.join("old/latest/linux/amd64/app.tar.part"), b"partial").unwrap();
+
+        prune_extra_files(&root, &HashSet::new()).unwrap();
+
+        assert!(root.is_dir());
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(&root);
     }
 
