@@ -417,6 +417,20 @@ impl Store {
         Ok(())
     }
 
+    pub fn update_certificate_name(&self, id: &str, name: &str) -> Result<(), String> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE certificates SET name = ?1 WHERE id = ?2",
+                params![name, id],
+            )
+            .map_err(|e| e.to_string())?;
+        if changed == 0 {
+            return Err(format!("Certificate not found: {id}"));
+        }
+        Ok(())
+    }
+
     pub fn delete_certificate(&self, id: &str) -> Result<(), String> {
         let hosts_in_use: i64 = self
             .conn
@@ -826,5 +840,24 @@ mod tests {
             .map(|host| host.catalog)
             .collect();
         assert_eq!(catalogs, ["第二组", "第一组"]);
+    }
+
+    #[test]
+    fn certificate_name_can_be_updated_without_changing_the_key() {
+        let store = test_store();
+        let cert = Certificate {
+            id: "cert-1".into(),
+            name: "old".into(),
+            private_key_path: "/tmp/cert-1".into(),
+            public_key: "ssh-ed25519 test".into(),
+        };
+        store.add_certificate(&cert).unwrap();
+
+        store.update_certificate_name("cert-1", "host-a").unwrap();
+
+        let updated = store.get_certificate("cert-1").unwrap();
+        assert_eq!(updated.name, "host-a");
+        assert_eq!(updated.private_key_path, cert.private_key_path);
+        assert_eq!(updated.public_key, cert.public_key);
     }
 }

@@ -93,6 +93,9 @@
             <button id="delete-tunnel-btn" class="ctx-item danger" type="button" role="menuitem">Delete</button>
           </div>
           <ul id="cert-list" class="list hidden"></ul>
+          <div id="cert-more-menu" class="more-menu-panel list-more-menu hidden" role="menu">
+            <button id="edit-cert-btn" class="ctx-item" type="button" role="menuitem">编辑</button>
+          </div>
           <ul id="set-list" class="list hidden"></ul>
           <div id="proxy-sidebar" class="proxy-sidebar hidden">
             <div class="proxy-side-card">
@@ -493,14 +496,14 @@
     <!-- Certificate modal -->
     <div id="cert-modal" class="modal hidden">
       <div class="modal-box">
-        <h2>新建本地证书</h2>
+        <h2 id="cert-modal-title">新建本地证书</h2>
         <button class="modal-close" data-close="cert-modal" type="button" aria-label="关闭">×</button>
         <form id="cert-form">
           <label>Name <input name="name" type="text" required placeholder="e.g. My Laptop" /></label>
-          <p class="hint">Generates a new ed25519 key pair.</p>
+          <p id="cert-modal-hint" class="hint">Generates a new ed25519 key pair.</p>
           <div class="modal-actions">
             <button id="cancel-cert-btn" class="btn" type="button">Cancel</button>
-            <button class="btn primary" type="submit">Generate</button>
+            <button id="save-cert-btn" class="btn primary" type="submit">Generate</button>
           </div>
         </form>
       </div>

@@ -14,6 +14,7 @@ const state = {
   selectedCertId: null,
   editingHostId: null,
   editingTunnelId: null,
+  editingCertId: null,
   contextHostId: null,
   contextSetName: null,
   termId: null,
@@ -119,6 +120,8 @@ const tAuthEl = $("#t-auth");
 const toggleTunnelBtnEl = $("#toggle-tunnel-btn");
 const tunnelMoreMenuEl = $("#tunnel-more-menu");
 let tunnelMoreBtnEl = null;
+const certMoreMenuEl = $("#cert-more-menu");
+let certMoreBtnEl = null;
 const hostMoreBtnEl = $("#host-more-btn");
 const hostMoreMenuEl = $("#host-more-menu");
 
@@ -141,6 +144,9 @@ const tunnelAuthCertEl = $("#tunnel-auth-cert");
 
 const certModalEl = $("#cert-modal");
 const certFormEl = $("#cert-form");
+const certModalTitleEl = $("#cert-modal-title");
+const certModalHintEl = $("#cert-modal-hint");
+const saveCertBtnEl = $("#save-cert-btn");
 
 const repoStatusLineEl = $("#repo-status-line");
 const repoSetTitleEl = $("#repo-set-title");
@@ -1654,6 +1660,7 @@ function renderTunnelList() {
 }
 
 function renderCertList() {
+  hideCertMoreMenu();
   certListEl.textContent = "";
   if (state.certificates.length === 0) {
     certListEl.appendChild(makeEmptyItem("暂无本地证书"));
@@ -1666,6 +1673,13 @@ function renderCertList() {
         name: cert.name,
         sub: "ed25519",
         onClick: () => selectCert(cert.id),
+        actions: [{
+          title: "更多",
+          icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="19" r="2"/></svg>',
+          menu: true,
+          controls: "cert-more-menu",
+          onClick: (_e, button) => openCertListMenu(cert.id, button),
+        }],
       })
     );
   }
@@ -2484,14 +2498,30 @@ function closeTunnelModal() {
   tunnelModalEl.classList.add("hidden");
 }
 
-function openCertModal() {
-  certFormEl.elements.name.value = "";
+async function openCertModal(cert = null) {
+  state.editingCertId = cert ? cert.id : null;
+  certModalTitleEl.textContent = cert ? "编辑本地证书" : "新建本地证书";
+  certModalHintEl.textContent = cert
+    ? "仅修改显示名称，不会重新生成密钥。"
+    : "Generates a new ed25519 key pair.";
+  saveCertBtnEl.textContent = cert ? "保存" : "Generate";
+  let defaultName = cert ? cert.name : "";
+  if (!cert) {
+    try {
+      defaultName = await invoke("local_hostname");
+    } catch (_) {
+      defaultName = "Local Certificate";
+    }
+  }
+  certFormEl.elements.name.value = defaultName;
   certModalEl.classList.remove("hidden");
   certFormEl.elements.name.focus();
+  certFormEl.elements.name.select();
 }
 
 function closeCertModal() {
   certModalEl.classList.add("hidden");
+  state.editingCertId = null;
 }
 
 function updateHostAuthFields() {
@@ -2694,6 +2724,11 @@ $("#delete-tunnel-btn").addEventListener("click", () => {
   hideTunnelMoreMenu();
   deleteSelectedTunnel();
 });
+$("#edit-cert-btn").addEventListener("click", () => {
+  hideCertMoreMenu();
+  const cert = certById(state.selectedCertId);
+  if (cert) openCertModal(cert);
+});
 if (hostMoreBtnEl) {
   hostMoreBtnEl.addEventListener("click", (e) => {
     toggleMoreMenu(hostMoreMenuEl, hostMoreBtnEl, e);
@@ -2738,6 +2773,11 @@ function hideTunnelMoreMenu() {
   tunnelMoreBtnEl = null;
 }
 
+function hideCertMoreMenu() {
+  setMoreMenuOpen(certMoreMenuEl, certMoreBtnEl, false);
+  certMoreBtnEl = null;
+}
+
 function openTunnelListMenu(tunnelId, button) {
   const wasOpen = tunnelMoreBtnEl === button && !tunnelMoreMenuEl.classList.contains("hidden");
   hideAllMoreMenus();
@@ -2756,12 +2796,31 @@ function openTunnelListMenu(tunnelId, button) {
   tunnelMoreMenuEl.style.top = `${Math.max(8, top)}px`;
 }
 
+function openCertListMenu(certId, button) {
+  const wasOpen = certMoreBtnEl === button && !certMoreMenuEl.classList.contains("hidden");
+  hideAllMoreMenus();
+  if (wasOpen) return;
+  selectCert(certId);
+  certMoreBtnEl = certListEl.querySelector(".item.selected .item-action");
+  if (!certMoreBtnEl) return;
+  const rect = certMoreBtnEl.getBoundingClientRect();
+  certMoreMenuEl.classList.remove("hidden");
+  certMoreBtnEl.setAttribute("aria-expanded", "true");
+  const menuW = certMoreMenuEl.offsetWidth || 140;
+  const menuH = certMoreMenuEl.offsetHeight || 44;
+  const left = Math.min(rect.right - menuW, window.innerWidth - menuW - 8);
+  const top = Math.min(rect.bottom + 4, window.innerHeight - menuH - 8);
+  certMoreMenuEl.style.left = `${Math.max(8, left)}px`;
+  certMoreMenuEl.style.top = `${Math.max(8, top)}px`;
+}
+
 function hideHostMoreMenu() {
   setMoreMenuOpen(hostMoreMenuEl, hostMoreBtnEl, false);
 }
 
 function hideAllMoreMenus() {
   hideTunnelMoreMenu();
+  hideCertMoreMenu();
   hideHostMoreMenu();
 }
 
@@ -3329,7 +3388,10 @@ certFormEl.addEventListener("submit", async (e) => {
   const name = certFormEl.elements.name.value.trim();
   if (!name) return;
   try {
-    const cert = await invoke("add_certificate", { name });
+    const editingId = state.editingCertId;
+    const cert = editingId
+      ? await invoke("update_certificate_name", { id: editingId, name })
+      : await invoke("add_certificate", { name });
     closeCertModal();
     await loadCertificates();
     selectCert(cert.id);

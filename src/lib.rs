@@ -686,6 +686,35 @@ fn add_certificate(state: State<'_, AppState>, name: String) -> Result<Certifica
 }
 
 #[tauri::command]
+fn update_certificate_name(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<Certificate, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Certificate name is required".into());
+    }
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    store.update_certificate_name(&id, name)?;
+    store.get_certificate(&id)
+}
+
+#[tauri::command]
+fn local_hostname() -> String {
+    std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .and_then(|value| value.lines().next().map(str::trim).map(str::to_string))
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            std::env::var("HOSTNAME")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| "Local Certificate".into())
+}
+
+#[tauri::command]
 fn delete_certificate(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let cert = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -1947,7 +1976,7 @@ pub fn run() {
 
             // Ensure at least one certificate exists on startup.
             if store.list_certificates().map_err(err_box)?.is_empty() {
-                let cert = create_certificate(&keys_dir, "Local Certificate").map_err(err_box)?;
+                let cert = create_certificate(&keys_dir, &local_hostname()).map_err(err_box)?;
                 store.add_certificate(&cert).map_err(err_box)?;
             }
 
@@ -1985,6 +2014,8 @@ pub fn run() {
             tunnel_disconnect,
             list_certificates,
             add_certificate,
+            update_certificate_name,
+            local_hostname,
             delete_certificate,
             start_terminal,
             terminal_input,
