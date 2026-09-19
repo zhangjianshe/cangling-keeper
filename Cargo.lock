@@ -393,7 +393,7 @@ dependencies = [
 
 [[package]]
 name = "cangling-keeper"
-version = "0.0.79"
+version = "0.0.80"
 dependencies = [
  "arboard",
  "futures-util",
