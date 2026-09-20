@@ -1,7 +1,7 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -1171,20 +1171,38 @@ fn persist_download(tmp: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn local_matches(path: &Path, file: &SoftwareFileManifest) -> bool {
-    if !path.is_file() {
+fn local_matches(
+    path: &Path,
+    file: &SoftwareFileManifest,
+    cached: Option<&crate::fingerprints::FileFingerprint>,
+) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() != file.size {
         return false;
     }
-    let meta_ok = path
-        .metadata()
-        .map(|m| m.len() == file.size)
-        .unwrap_or(false);
-    if !file.hash.trim().is_empty() {
-        return sha256_file(path)
-            .map(|h| h.eq_ignore_ascii_case(file.hash.trim()))
-            .unwrap_or(false);
+
+    let expected_hash = file.hash.trim();
+    if expected_hash.is_empty() {
+        return true;
     }
-    meta_ok
+
+    let modified_ns = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+        .and_then(|value| i64::try_from(value.as_nanos()).ok())
+        .unwrap_or(0);
+    if let Some(saved) =
+        cached.filter(|saved| saved.size == metadata.len() && saved.modified_ns == modified_ns)
+    {
+        return saved.sha256.eq_ignore_ascii_case(expected_hash);
+    }
+
+    sha256_file(path)
+        .map(|hash| hash.eq_ignore_ascii_case(expected_hash))
+        .unwrap_or(false)
 }
 
 fn prune_extra_files(root: &Path, expected: &HashSet<String>) -> Result<(), String> {
@@ -1870,9 +1888,16 @@ pub async fn sync_software_set(
     let mut failed = 0u32;
     let mut last_error = String::new();
     let mut overall_done = 0u64;
+    let cached_fingerprints: HashMap<String, crate::fingerprints::FileFingerprint> =
+        crate::fingerprints::read_database(&crate::fingerprints::database_path(&repository_root))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|fingerprint| (fingerprint.path.clone(), fingerprint))
+            .collect();
 
     for (index, (rel, rel_str, software_name, file)) in jobs.into_iter().enumerate() {
         let target = dest.join(&rel);
+        let fingerprint_path = format!("{set_name}/{rel_str}");
         let display = if software_name.is_empty() {
             rel_str.clone()
         } else {
@@ -1888,7 +1913,7 @@ pub async fn sync_software_set(
             overall_done,
             overall_total,
         };
-        if local_matches(&target, &file) {
+        if local_matches(&target, &file, cached_fingerprints.get(&fingerprint_path)) {
             crate::fingerprints::record_file(
                 &repository_root,
                 &target,
@@ -2062,6 +2087,52 @@ pub fn read_repo_file(state: State<'_, AppState>, path: String) -> Result<RepoFi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_manifest_match_reuses_unchanged_cached_hash() {
+        let root = std::env::temp_dir().join(format!("ck-local-match-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("large.tar.gz");
+        std::fs::write(&path, b"data").unwrap();
+        let metadata = path.metadata().unwrap();
+        let modified_ns = metadata
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        let expected_hash = "a".repeat(64);
+        let manifest = SoftwareFileManifest {
+            name: "large.tar.gz".into(),
+            version: String::new(),
+            os: String::new(),
+            arch: String::new(),
+            size: metadata.len(),
+            hash: expected_hash.clone(),
+            url: String::new(),
+        };
+        let cached = crate::fingerprints::FileFingerprint {
+            path: "images/latest/all/large.tar.gz".into(),
+            size: metadata.len(),
+            modified_ns,
+            sha256: expected_hash,
+        };
+
+        // The cache hash intentionally differs from the file contents. A match proves that
+        // unchanged metadata avoids opening and hashing the potentially very large file.
+        assert!(local_matches(&path, &manifest, Some(&cached)));
+
+        let stale = crate::fingerprints::FileFingerprint {
+            modified_ns: modified_ns.saturating_sub(1),
+            ..cached
+        };
+        assert!(!local_matches(&path, &manifest, Some(&stale)));
+
+        let mut wrong_size = manifest;
+        wrong_size.size += 1;
+        assert!(!local_matches(&path, &wrong_size, None));
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn default_sets_include_images_manifest() {
