@@ -43,6 +43,8 @@ quote_arg() {
 bind="0.0.0.0"
 port="5400"
 data_dir=""
+images_dir="/opt/cangling/images"
+discovery_port="5401"
 exe=""
 workdir=""
 existing_token=""
@@ -59,13 +61,17 @@ parse_exec() {
       --bind=*) bind="${tok#--bind=}" ;;
       --port=*) port="${tok#--port=}" ;;
       --data-dir=*) data_dir="${tok#--data-dir=}" ;;
+      --images-dir=*) images_dir="${tok#--images-dir=}" ;;
+      --discovery-port=*) discovery_port="${tok#--discovery-port=}" ;;
       --cluster-token=*) existing_token="${tok#--cluster-token=}" ;;
       --bind) prev=bind ;;
       --port) prev=port ;;
       --data-dir) prev=data_dir ;;
+      --images-dir) prev=images_dir ;;
+      --discovery-port) prev=discovery_port ;;
       --cluster-token) prev=token ;;
       --master) prev="" ;;
-      --role|--role=*|--discovery-port|--discovery-port=*) prev="" ;;
+      --role|--role=*) prev="" ;;
       CANGLING_CLUSTER_TOKEN=*) existing_token="${tok#CANGLING_CLUSTER_TOKEN=}" ;;
       CANGLING_BIND=*) bind="${tok#CANGLING_BIND=}" ;;
       CANGLING_PORT=*) port="${tok#CANGLING_PORT=}" ;;
@@ -74,6 +80,8 @@ parse_exec() {
           bind) bind="$tok" ;;
           port) port="$tok" ;;
           data_dir) data_dir="$tok" ;;
+          images_dir) images_dir="$tok" ;;
+          discovery_port) discovery_port="$tok" ;;
           token) existing_token="$tok" ;;
           "")
             case "$tok" in
@@ -159,6 +167,7 @@ elif [ "$ROLE" = "master" ]; then
 fi
 
 exec_line="$(quote_arg "$exe") --bind $(quote_arg "$bind") --port $(quote_arg "$port")"
+exec_line="$exec_line --images-dir $(quote_arg "$images_dir")"
 if [ -n "$data_dir" ]; then
   exec_line="$exec_line --data-dir $(quote_arg "$data_dir")"
 fi
@@ -169,6 +178,39 @@ if [ "$ROLE" != "standalone" ]; then
   fi
 else
   exec_line="$exec_line --role standalone"
+fi
+exec_line="$exec_line --discovery-port $(quote_arg "$discovery_port")"
+
+# New cangling-update versions persist all runtime and cluster options from
+# install-service. Prefer that single source of truth; retain the unit writer
+# below as a compatibility fallback for already deployed older binaries.
+install_args=(
+  --bind "$bind"
+  --port "$port"
+  --images-dir "$images_dir"
+  --role "$ROLE"
+  --discovery-port "$discovery_port"
+)
+if [ -n "$data_dir" ]; then
+  install_args+=(--data-dir "$data_dir")
+fi
+if [ "$ROLE" != "standalone" ]; then
+  install_args+=(--cluster-token "$TOKEN")
+fi
+if [ "$ROLE" = "worker" ] && [ -n "$MASTER" ]; then
+  install_args+=(--master "$MASTER")
+fi
+
+native_registered=0
+echo "registering cangling-update as $ROLE via install-service"
+if (cd "$workdir" && as_root "$exe" "${install_args[@]}" install-service); then
+  if grep -Eq "^ExecStart=.*--role([ =])${ROLE}([[:space:]]|$)" "$UNIT"; then
+    native_registered=1
+  else
+    echo "installed binary does not persist cluster options; using compatibility registration" >&2
+  fi
+else
+  echo "install-service registration failed; using compatibility registration" >&2
 fi
 
 unit_body=$(cat <<EOF
@@ -191,15 +233,16 @@ WantedBy=multi-user.target
 EOF
 )
 
-echo "registering cangling-update as $ROLE"
-echo "  ExecStart=$exec_line"
-
-tmp=$(mktemp)
-trap 'rm -f "$tmp"' EXIT
-printf '%s\n' "$unit_body" > "$tmp"
-as_root cp "$tmp" "$UNIT"
-as_root chmod 644 "$UNIT"
-as_root systemctl daemon-reload
+if [ "$native_registered" != "1" ]; then
+  echo "registering cangling-update as $ROLE with compatibility unit"
+  echo "  ExecStart=$exec_line"
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' EXIT
+  printf '%s\n' "$unit_body" > "$tmp"
+  as_root cp "$tmp" "$UNIT"
+  as_root chmod 644 "$UNIT"
+  as_root systemctl daemon-reload
+fi
 as_root systemctl enable cangling-update >/dev/null
 as_root systemctl restart cangling-update
 
