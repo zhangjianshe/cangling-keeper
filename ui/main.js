@@ -2569,6 +2569,10 @@ function updateTunnelTypeFields() {
   $("#tunnel-websocket-fields").classList.toggle("hidden", !websocket);
   $("#tunnel-auth-password-option").classList.toggle("hidden", websocket);
   f.websocket_url.required = websocket;
+  f.websocket_url.disabled = !websocket;
+  ["direction", "remote_host", "remote_port", "ssh_host", "ssh_port", "username"].forEach((name) => {
+    f[name].disabled = websocket;
+  });
   ["remote_host", "remote_port", "ssh_host", "username"].forEach((name) => {
     f[name].required = !websocket;
   });
