@@ -102,6 +102,26 @@ fn create_certificate(keys_dir: &Path, name: &str) -> Result<Certificate, String
     })
 }
 
+fn import_certificate(
+    keys_dir: &Path,
+    name: &str,
+    private_key: &str,
+) -> Result<Certificate, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Certificate name is required".into());
+    }
+    let id = Uuid::new_v4().to_string();
+    let private_path = keys_dir.join(&id);
+    let public_key = ssh::import_ed25519_keypair(&private_path, private_key)?;
+    Ok(Certificate {
+        id,
+        name: name.to_string(),
+        private_key_path: private_path.to_string_lossy().into_owned(),
+        public_key,
+    })
+}
+
 fn err_box(e: String) -> Box<dyn std::error::Error> {
     e.into()
 }
@@ -717,6 +737,24 @@ fn add_certificate(state: State<'_, AppState>, name: String) -> Result<Certifica
     let cert = create_certificate(&keys_dir, &name)?;
     let store = state.store.lock().map_err(|e| e.to_string())?;
     store.add_certificate(&cert)?;
+    Ok(cert)
+}
+
+#[tauri::command]
+fn import_private_key(
+    state: State<'_, AppState>,
+    name: String,
+    private_key: String,
+) -> Result<Certificate, String> {
+    let keys_dir = state.data_dir.join("keys");
+    let cert = import_certificate(&keys_dir, &name, &private_key)?;
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    if let Err(error) = store.add_certificate(&cert) {
+        let key_path = resolve_key_path(&state.data_dir, &cert.private_key_path);
+        let _ = std::fs::remove_file(&key_path);
+        let _ = std::fs::remove_file(key_path.with_extension("pub"));
+        return Err(error);
+    }
     Ok(cert)
 }
 
@@ -2049,6 +2087,7 @@ pub fn run() {
             tunnel_disconnect,
             list_certificates,
             add_certificate,
+            import_private_key,
             update_certificate_name,
             local_hostname,
             delete_certificate,

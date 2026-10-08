@@ -147,6 +147,8 @@ const certFormEl = $("#cert-form");
 const certModalTitleEl = $("#cert-modal-title");
 const certModalHintEl = $("#cert-modal-hint");
 const saveCertBtnEl = $("#save-cert-btn");
+const certSourceFieldsEl = $("#cert-source-fields");
+const certImportFieldsEl = $("#cert-import-fields");
 
 const repoStatusLineEl = $("#repo-status-line");
 const repoSetTitleEl = $("#repo-set-title");
@@ -2511,7 +2513,12 @@ async function openCertModal(cert = null) {
   certModalHintEl.textContent = cert
     ? "仅修改显示名称，不会重新生成密钥。"
     : "Generates a new ed25519 key pair.";
-  saveCertBtnEl.textContent = cert ? "保存" : "Generate";
+  certSourceFieldsEl.classList.toggle("hidden", Boolean(cert));
+  certImportFieldsEl.classList.add("hidden");
+  certFormEl.elements.key_source.value = "generate";
+  certFormEl.elements.private_key_file.value = "";
+  certFormEl.elements.private_key_file.required = false;
+  saveCertBtnEl.textContent = cert ? "保存" : "生成";
   let defaultName = cert ? cert.name : "";
   if (!cert) {
     try {
@@ -2524,6 +2531,17 @@ async function openCertModal(cert = null) {
   certModalEl.classList.remove("hidden");
   certFormEl.elements.name.focus();
   certFormEl.elements.name.select();
+}
+
+function updateCertificateSourceFields() {
+  if (state.editingCertId) return;
+  const importing = certFormEl.elements.key_source.value === "import";
+  certImportFieldsEl.classList.toggle("hidden", !importing);
+  certFormEl.elements.private_key_file.required = importing;
+  certModalHintEl.textContent = importing
+    ? "导入后将从私钥推导公钥，并安全复制到 Keeper 本地目录。"
+    : "生成新的 Ed25519 密钥对。";
+  saveCertBtnEl.textContent = importing ? "导入" : "生成";
 }
 
 function closeCertModal() {
@@ -3418,15 +3436,30 @@ certFormEl.addEventListener("submit", async (e) => {
   if (!name) return;
   try {
     const editingId = state.editingCertId;
-    const cert = editingId
-      ? await invoke("update_certificate_name", { id: editingId, name })
-      : await invoke("add_certificate", { name });
+    let cert;
+    if (editingId) {
+      cert = await invoke("update_certificate_name", { id: editingId, name });
+    } else if (certFormEl.elements.key_source.value === "import") {
+      const file = certFormEl.elements.private_key_file.files[0];
+      if (!file) {
+        uiAlert("请选择私钥文件");
+        return;
+      }
+      const privateKey = await file.text();
+      cert = await invoke("import_private_key", { name, privateKey });
+    } else {
+      cert = await invoke("add_certificate", { name });
+    }
     closeCertModal();
     await loadCertificates();
     selectCert(cert.id);
   } catch (err) {
     uiAlert(`Error: ${err}`);
   }
+});
+
+certFormEl.querySelectorAll('input[name="key_source"]').forEach((el) => {
+  el.addEventListener("change", updateCertificateSourceFields);
 });
 
 listen("tunnel-stopped", async () => {

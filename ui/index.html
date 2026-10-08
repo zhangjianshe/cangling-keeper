@@ -514,10 +514,21 @@
         <button class="modal-close" data-close="cert-modal" type="button" aria-label="关闭">×</button>
         <form id="cert-form">
           <label>Name <input name="name" type="text" required placeholder="e.g. My Laptop" /></label>
+          <fieldset id="cert-source-fields" class="auth-fieldset">
+            <legend>密钥来源</legend>
+            <div class="radio-row">
+              <label class="radio"><input type="radio" name="key_source" value="generate" checked /> 新建 Ed25519 密钥</label>
+              <label class="radio"><input type="radio" name="key_source" value="import" /> 导入本地私钥</label>
+            </div>
+          </fieldset>
+          <div id="cert-import-fields" class="hidden">
+            <label>私钥文件 <input name="private_key_file" type="file" /></label>
+            <p class="hint">仅支持未加密的 OpenSSH Ed25519 私钥。私钥只复制到 Keeper 本地目录，不会上传服务器。</p>
+          </div>
           <p id="cert-modal-hint" class="hint">Generates a new ed25519 key pair.</p>
           <div class="modal-actions">
             <button id="cancel-cert-btn" class="btn" type="button">Cancel</button>
-            <button id="save-cert-btn" class="btn primary" type="submit">Generate</button>
+            <button id="save-cert-btn" class="btn primary" type="submit">生成</button>
           </div>
         </form>
       </div>

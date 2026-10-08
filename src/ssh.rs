@@ -527,6 +527,34 @@ pub fn generate_keypair(private_path: &Path) -> Result<String, String> {
     Ok(public.trim().to_string())
 }
 
+/// Import an unencrypted ed25519 OpenSSH private key into Keeper's managed
+/// key directory. The public key is derived from the private key so a sibling
+/// `.pub` file is not required or trusted.
+pub fn import_ed25519_keypair(private_path: &Path, private_key: &str) -> Result<String, String> {
+    let key = PrivateKey::from_openssh(private_key)
+        .map_err(|e| format!("无法读取私钥（仅支持未加密的 OpenSSH 私钥）：{e}"))?;
+    if key.algorithm() != Algorithm::Ed25519 {
+        return Err("WebSocket 隧道仅支持 Ed25519 私钥".into());
+    }
+    if let Some(parent) = private_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    key.write_openssh_file(private_path, LineEnding::LF)
+        .map_err(|e| format!("保存私钥失败：{e}"))?;
+    let public = key.public_key().to_openssh().map_err(|e| e.to_string())?;
+    let public_path = private_path.with_extension("pub");
+    std::fs::write(&public_path, public.trim_end()).map_err(|e| e.to_string())?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(private_path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(public.trim().to_string())
+}
+
 // ---- interactive terminal (PTY) --------------------------------------------
 
 pub struct PtySession {
@@ -639,5 +667,23 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("pub"));
+    }
+
+    #[test]
+    fn imports_ed25519_private_key_and_derives_public_key() {
+        let base = std::env::temp_dir().join(format!("keeper-key-test-{}", uuid::Uuid::new_v4()));
+        let source = base.join("source");
+        let imported = base.join("imported");
+        let expected_public = generate_keypair(&source).unwrap();
+        let private_key = std::fs::read_to_string(&source).unwrap();
+
+        let public = import_ed25519_keypair(&imported, &private_key).unwrap();
+
+        assert_eq!(public, expected_public);
+        assert_eq!(std::fs::read_to_string(imported.with_extension("pub")).unwrap(), public);
+        let key = russh::keys::load_secret_key(&imported, None).unwrap();
+        assert_eq!(key.algorithm(), Algorithm::Ed25519);
+
+        let _ = std::fs::remove_dir_all(base);
     }
 }
