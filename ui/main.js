@@ -1638,11 +1638,14 @@ function renderTunnelList() {
     return;
   }
   for (const t of state.tunnels) {
+    const isWebSocket = t.tunnelType === "websocket";
     tunnelListEl.appendChild(
       makeItem({
         selected: t.id === state.selectedTunnelId,
         name: t.name,
-        sub: t.direction === "remote"
+        sub: isWebSocket
+          ? `WEBSOCKET ${t.localHost}:${t.localPort}`
+          : t.direction === "remote"
           ? `Remote ${t.remoteHost}:${t.localPort} ← ${t.localHost}:${t.remotePort}`
           : `Local ${t.localHost}:${t.localPort} → ${t.remoteHost}:${t.remotePort}`,
         active: t.active,
@@ -1805,12 +1808,13 @@ function renderTunnelDetail() {
   tunnelNameEl.textContent = t.name;
   tunnelStatusEl.textContent = t.active ? "Connected" : "Disconnected";
   tunnelStatusEl.className = "status " + (t.active ? "on" : "off");
-  const reverse = t.direction === "remote";
+  const isWebSocket = t.tunnelType === "websocket";
+  const reverse = !isWebSocket && t.direction === "remote";
   tLocalLabelEl.textContent = reverse ? "Remote listen" : "Local listen";
-  tRemoteLabelEl.textContent = reverse ? "Local target" : "Remote target";
+  tRemoteLabelEl.textContent = isWebSocket ? "WebSocket endpoint" : (reverse ? "Local target" : "Remote target");
   tLocalEl.textContent = `${reverse ? t.remoteHost : t.localHost}:${t.localPort}`;
-  tRemoteEl.textContent = `${reverse ? t.localHost : t.remoteHost}:${t.remotePort}`;
-  tSshEl.textContent = `${t.username}@${t.sshHost}:${t.sshPort}`;
+  tRemoteEl.textContent = isWebSocket ? t.websocketUrl : `${reverse ? t.localHost : t.remoteHost}:${t.remotePort}`;
+  tSshEl.textContent = isWebSocket ? "WEBSOCKET → SSH :22" : `${t.username}@${t.sshHost}:${t.sshPort}`;
   tAuthEl.textContent =
     t.auth.method === "certificate"
       ? `Certificate · ${certNameById(t.auth.certificateId)}`
@@ -2469,6 +2473,8 @@ function openTunnelModal(tunnel) {
 
   const f = tunnelFormEl.elements;
   f.name.value = tunnel ? tunnel.name : "";
+  f.tunnel_type.value = tunnel ? tunnel.tunnelType || "ssh" : "ssh";
+  f.websocket_url.value = tunnel ? tunnel.websocketUrl || "" : "";
   f.direction.value = tunnel ? tunnel.direction || "local" : "local";
   f.local_host.value = tunnel ? tunnel.localHost || "127.0.0.1" : "127.0.0.1";
   f.local_port.value = tunnel ? tunnel.localPort : "";
@@ -2489,6 +2495,7 @@ function openTunnelModal(tunnel) {
     f.password.value = tunnel && tunnel.auth ? tunnel.auth.password : "";
   }
 
+  updateTunnelTypeFields();
   updateTunnelAuthFields();
   tunnelModalEl.classList.remove("hidden");
   f.name.focus();
@@ -2534,6 +2541,23 @@ function updateTunnelAuthFields() {
   const method = tunnelFormEl.elements.auth_method.value;
   tunnelAuthPasswordEl.classList.toggle("hidden", method !== "password");
   tunnelAuthCertEl.classList.toggle("hidden", method !== "certificate");
+  tunnelFormEl.elements.certificate_id.required = method === "certificate";
+}
+
+function updateTunnelTypeFields() {
+  const f = tunnelFormEl.elements;
+  const websocket = f.tunnel_type.value === "websocket";
+  document.querySelectorAll(".tunnel-ssh-only").forEach((el) => el.classList.toggle("hidden", websocket));
+  $("#tunnel-websocket-fields").classList.toggle("hidden", !websocket);
+  $("#tunnel-auth-password-option").classList.toggle("hidden", websocket);
+  f.websocket_url.required = websocket;
+  ["remote_host", "remote_port", "ssh_host", "username"].forEach((name) => {
+    f[name].required = !websocket;
+  });
+  if (websocket) {
+    f.auth_method.value = "certificate";
+  }
+  updateTunnelAuthFields();
 }
 
 // ---- actions ----------------------------------------------------------------
@@ -2610,6 +2634,8 @@ async function parseSshCommand() {
   try {
     const t = await invoke("parse_ssh_command", { command: cmd });
     const f = tunnelFormEl.elements;
+    f.tunnel_type.value = "ssh";
+    updateTunnelTypeFields();
     f.direction.value = t.direction || "local";
     f.local_host.value = t.localHost || "127.0.0.1";
     f.local_port.value = t.localPort;
@@ -3311,6 +3337,7 @@ hostFormEl.querySelectorAll('input[name="auth_method"]').forEach((r) => {
 tunnelFormEl.querySelectorAll('input[name="auth_method"]').forEach((r) => {
   r.addEventListener("change", updateTunnelAuthFields);
 });
+tunnelFormEl.elements.tunnel_type.addEventListener("change", updateTunnelTypeFields);
 
 hostFormEl.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -3353,6 +3380,8 @@ tunnelFormEl.addEventListener("submit", async (e) => {
   const method = f.auth_method.value;
   const tunnel = {
     name: f.name.value.trim(),
+    tunnelType: f.tunnel_type.value === "websocket" ? "websocket" : "ssh",
+    websocketUrl: f.websocket_url.value.trim(),
     direction: f.direction.value || "local",
     localHost: f.local_host.value.trim() || "127.0.0.1",
     localPort: parseInt(f.local_port.value, 10) || 0,

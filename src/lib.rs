@@ -13,6 +13,7 @@ mod ssh;
 mod store;
 mod sync;
 mod tunnel;
+mod websocket_tunnel;
 mod window_state;
 
 use std::collections::{HashMap, HashSet};
@@ -438,9 +439,11 @@ async fn add_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result<Tu
             .unwrap_or_default();
         store.add_tunnel(&tunnel)?;
     }
-    if let Ok((remote_id, user_id)) = push_tunnel_to_server(&state, &tunnel).await {
-        tunnel.remote_id = remote_id;
-        tunnel.user_id = user_id;
+    if tunnel.tunnel_type == "ssh" {
+        if let Ok((remote_id, user_id)) = push_tunnel_to_server(&state, &tunnel).await {
+            tunnel.remote_id = remote_id;
+            tunnel.user_id = user_id;
+        }
     }
     Ok(tunnel)
 }
@@ -455,7 +458,9 @@ async fn update_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result
         tunnel.user_id = existing.user_id;
         store.update_tunnel(&tunnel)?;
     }
-    let _ = push_tunnel_to_server(&state, &tunnel).await;
+    if tunnel.tunnel_type == "ssh" {
+        let _ = push_tunnel_to_server(&state, &tunnel).await;
+    }
     Ok(())
 }
 
@@ -508,6 +513,36 @@ async fn tunnel_connect(
         let auth = resolve_auth(&store, &tunnel.auth, &data_dir)?;
         (tunnel, auth)
     };
+
+    if tunnel.tunnel_type == "websocket" {
+        let key_path = match &auth {
+            ResolvedAuth::Key(path) => path.clone(),
+            ResolvedAuth::Password(_) => {
+                return Err("WebSocket tunnel requires certificate authentication".into());
+            }
+        };
+        let established = websocket_tunnel::establish(&tunnel, &key_path).await?;
+        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let mut active = state.active_tunnels.lock().map_err(|e| e.to_string())?;
+            if active.contains_key(&tunnel_id) {
+                return Err("Tunnel is already connected".into());
+            }
+            active.insert(tunnel_id.clone(), tx);
+        }
+        let app2 = app.clone();
+        let id = tunnel_id.clone();
+        tauri::async_runtime::spawn(async move {
+            websocket_tunnel::accept_loop(established, rx).await;
+            if let Some(st) = app2.try_state::<AppState>() {
+                if let Ok(mut active) = st.active_tunnels.lock() {
+                    active.remove(&id);
+                }
+            }
+            let _ = app2.emit("tunnel-stopped", &id);
+        });
+        return Ok(());
+    }
 
     if tunnel.direction == "remote" {
         let established = ssh::establish_reverse_tunnel(&tunnel, &auth).await?;
@@ -1783,7 +1818,7 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
         store
             .list_tunnels()?
             .into_iter()
-            .filter(|t| t.remote_id.is_empty())
+            .filter(|t| t.remote_id.is_empty() && t.tunnel_type == "ssh")
             .collect()
     };
     for local in tunnels_to_push {

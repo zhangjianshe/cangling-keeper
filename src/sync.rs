@@ -76,6 +76,10 @@ pub struct SyncTunnel {
     #[serde(default, deserialize_with = "null_to_default")]
     pub name: String,
     #[serde(default, deserialize_with = "null_to_default")]
+    pub tunnel_type: String,
+    #[serde(default, deserialize_with = "null_to_default")]
+    pub websocket_url: String,
+    #[serde(default, deserialize_with = "null_to_default")]
     pub direction: String,
     #[serde(default, deserialize_with = "null_to_default")]
     pub local_host: String,
@@ -401,6 +405,8 @@ pub fn tunnel_to_sync(
         id: tunnel.remote_id.clone(),
         user_id: tunnel.user_id,
         name: tunnel.name.clone(),
+        tunnel_type: tunnel.tunnel_type.clone(),
+        websocket_url: tunnel.websocket_url.clone(),
         direction: tunnel.direction.clone(),
         local_host: tunnel.local_host.clone(),
         local_port: tunnel.local_port,
@@ -437,6 +443,12 @@ pub fn sync_to_tunnel(store: &Store, keys_dir: &Path, s: &SyncTunnel) -> Result<
         remote_id: s.id.clone(),
         user_id: s.user_id,
         name: s.name.clone(),
+        tunnel_type: if s.tunnel_type.trim().is_empty() {
+            "ssh".into()
+        } else {
+            s.tunnel_type.clone()
+        },
+        websocket_url: s.websocket_url.clone(),
         direction: if s.direction.trim().is_empty() {
             "local".into()
         } else {

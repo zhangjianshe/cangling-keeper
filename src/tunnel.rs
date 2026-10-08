@@ -15,6 +15,10 @@ pub struct Tunnel {
     #[serde(default)]
     pub user_id: i64,
     pub name: String,
+    #[serde(default = "default_tunnel_type")]
+    pub tunnel_type: String,
+    #[serde(default)]
+    pub websocket_url: String,
     #[serde(default = "default_direction")]
     pub direction: String,
     #[serde(default = "default_local_host")]
@@ -38,6 +42,10 @@ fn default_direction() -> String {
     "local".into()
 }
 
+fn default_tunnel_type() -> String {
+    "ssh".into()
+}
+
 fn default_local_host() -> String {
     "127.0.0.1".into()
 }
@@ -46,6 +54,19 @@ impl Tunnel {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
             return Err("Name is required".into());
+        }
+        if !matches!(self.tunnel_type.as_str(), "ssh" | "websocket") {
+            return Err("Tunnel type must be ssh or websocket".into());
+        }
+        if self.tunnel_type == "websocket" {
+            if !matches!(self.websocket_url.as_str(), url if url.starts_with("ws://") || url.starts_with("wss://"))
+            {
+                return Err("WebSocket URL must start with ws:// or wss://".into());
+            }
+            if !matches!(self.auth, Auth::Certificate { .. }) {
+                return Err("WebSocket tunnel requires certificate authentication".into());
+            }
+            return Ok(());
         }
         if !matches!(self.direction.as_str(), "local" | "remote") {
             return Err("Tunnel direction must be local or remote".into());
@@ -177,6 +198,8 @@ pub fn parse_ssh_command(cmd: &str) -> Result<Tunnel, String> {
         remote_id: String::new(),
         user_id: 0,
         name: String::new(),
+        tunnel_type: default_tunnel_type(),
+        websocket_url: String::new(),
         direction,
         local_host,
         local_port,
@@ -224,6 +247,30 @@ fn parse_destination(dest: &str) -> (String, String, u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validates_websocket_tunnel_with_certificate() {
+        let tunnel = Tunnel {
+            id: String::new(),
+            remote_id: String::new(),
+            user_id: 0,
+            name: "ws".into(),
+            tunnel_type: "websocket".into(),
+            websocket_url: "ws://127.0.0.1:5400/api/tunnel/ws".into(),
+            direction: "local".into(),
+            local_host: "127.0.0.1".into(),
+            local_port: 10022,
+            remote_host: String::new(),
+            remote_port: 0,
+            ssh_host: String::new(),
+            ssh_port: 0,
+            username: String::new(),
+            auth: Auth::Certificate {
+                certificate_id: "cert-1".into(),
+            },
+        };
+        assert!(tunnel.validate().is_ok());
+    }
 
     #[test]
     fn parses_basic_forward() {

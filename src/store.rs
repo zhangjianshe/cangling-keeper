@@ -46,7 +46,9 @@ CREATE TABLE IF NOT EXISTS tunnels (
     direction      TEXT NOT NULL DEFAULT 'local',
     local_host     TEXT NOT NULL DEFAULT '127.0.0.1',
     remote_id      TEXT NOT NULL DEFAULT '',
-    user_id        INTEGER NOT NULL DEFAULT 0
+    user_id        INTEGER NOT NULL DEFAULT 0,
+    tunnel_type    TEXT NOT NULL DEFAULT 'ssh',
+    websocket_url  TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS certificates (
@@ -266,7 +268,7 @@ impl Store {
             .prepare(
                 "SELECT id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
                         username, auth_method, password, certificate_id, direction, local_host,
-                        remote_id, user_id
+                        remote_id, user_id, tunnel_type, websocket_url
                  FROM tunnels ORDER BY name COLLATE NOCASE",
             )
             .map_err(|e| e.to_string())?;
@@ -285,7 +287,7 @@ impl Store {
             .query_row(
                 "SELECT id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
                         username, auth_method, password, certificate_id, direction, local_host,
-                        remote_id, user_id
+                        remote_id, user_id, tunnel_type, websocket_url
                  FROM tunnels WHERE id = ?1",
                 params![id],
                 tunnel_from_row,
@@ -303,8 +305,8 @@ impl Store {
                 "INSERT INTO tunnels
                     (id, name, local_port, remote_host, remote_port, ssh_host, ssh_port,
                      username, auth_method, password, certificate_id, direction, local_host,
-                     remote_id, user_id)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
+                     remote_id, user_id, tunnel_type, websocket_url)
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
                 params![
                     tunnel.id,
                     tunnel.name,
@@ -320,7 +322,9 @@ impl Store {
                     tunnel.direction,
                     tunnel.local_host,
                     tunnel.remote_id,
-                    tunnel.user_id
+                    tunnel.user_id,
+                    tunnel.tunnel_type,
+                    tunnel.websocket_url
                 ],
             )
             .map_err(|e| e.to_string())?;
@@ -335,8 +339,8 @@ impl Store {
                 "UPDATE tunnels SET name=?1, local_port=?2, remote_host=?3, remote_port=?4,
                         ssh_host=?5, ssh_port=?6, username=?7, auth_method=?8, password=?9,
                         certificate_id=?10, direction=?11, local_host=?12,
-                        remote_id=?13, user_id=?14
-                 WHERE id=?15",
+                        remote_id=?13, user_id=?14, tunnel_type=?15, websocket_url=?16
+                 WHERE id=?17",
                 params![
                     tunnel.name,
                     tunnel.local_port,
@@ -352,6 +356,8 @@ impl Store {
                     tunnel.local_host,
                     tunnel.remote_id,
                     tunnel.user_id,
+                    tunnel.tunnel_type,
+                    tunnel.websocket_url,
                     tunnel.id
                 ],
             )
@@ -597,6 +603,18 @@ fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     )?;
     ensure_column(
         conn,
+        "tunnels",
+        "tunnel_type",
+        "ALTER TABLE tunnels ADD COLUMN tunnel_type TEXT NOT NULL DEFAULT 'ssh'",
+    )?;
+    ensure_column(
+        conn,
+        "tunnels",
+        "websocket_url",
+        "ALTER TABLE tunnels ADD COLUMN websocket_url TEXT NOT NULL DEFAULT ''",
+    )?;
+    ensure_column(
+        conn,
         "hosts",
         "inject_remote_port",
         "ALTER TABLE hosts ADD COLUMN inject_remote_port INTEGER NOT NULL DEFAULT 7890",
@@ -733,6 +751,8 @@ fn tunnel_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Tunnel> {
         remote_id: row.get(13)?,
         user_id: row.get(14)?,
         name: row.get(1)?,
+        tunnel_type: row.get(15)?,
+        websocket_url: row.get(16)?,
         direction: row.get(11)?,
         local_host: row.get(12)?,
         local_port: row.get(2)?,
@@ -859,5 +879,39 @@ mod tests {
         assert_eq!(updated.name, "host-a");
         assert_eq!(updated.private_key_path, cert.private_key_path);
         assert_eq!(updated.public_key, cert.public_key);
+    }
+
+    #[test]
+    fn websocket_tunnel_round_trips_through_sqlite() {
+        let store = test_store();
+        let tunnel = Tunnel {
+            id: "ws-1".into(),
+            remote_id: String::new(),
+            user_id: 0,
+            name: "jiangsu".into(),
+            tunnel_type: "websocket".into(),
+            websocket_url: "wss://example.test/update/api/tunnel/ws".into(),
+            direction: "local".into(),
+            local_host: "127.0.0.1".into(),
+            local_port: 10022,
+            remote_host: String::new(),
+            remote_port: 22,
+            ssh_host: String::new(),
+            ssh_port: 22,
+            username: String::new(),
+            auth: Auth::Certificate {
+                certificate_id: "cert-1".into(),
+            },
+        };
+        tunnel.validate().unwrap();
+        store.add_tunnel(&tunnel).unwrap();
+
+        let saved = store.get_tunnel("ws-1").unwrap();
+        assert_eq!(saved.tunnel_type, "websocket");
+        assert_eq!(saved.websocket_url, tunnel.websocket_url);
+        assert_eq!(saved.local_port, 10022);
+        assert!(
+            matches!(saved.auth, Auth::Certificate { certificate_id } if certificate_id == "cert-1")
+        );
     }
 }
