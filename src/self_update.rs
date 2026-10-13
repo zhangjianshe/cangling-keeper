@@ -66,7 +66,15 @@ fn bundle_file() -> Result<&'static str, String> {
     if cfg!(target_os = "windows") {
         Ok("cangling-keeper-setup.exe")
     } else if cfg!(target_os = "linux") {
-        Ok("cangling-keeper.AppImage")
+        if std::env::var_os("APPIMAGE").is_some() {
+            Ok("cangling-keeper.AppImage")
+        } else if std::path::Path::new("/etc/debian_version").exists() {
+            Ok("cangling-keeper.deb")
+        } else if std::path::Path::new("/etc/redhat-release").exists() {
+            Ok("cangling-keeper.rpm")
+        } else {
+            Err("无法识别当前 Linux 安装类型，请下载对应安装包手动升级".into())
+        }
     } else if cfg!(target_os = "macos") {
         Ok("cangling-keeper.dmg")
     } else {
@@ -281,8 +289,6 @@ fn powershell_literal(path: &std::path::Path) -> String {
 
 #[cfg(target_os = "linux")]
 fn launch_installer(dest: &std::path::Path, _expected_version: &str) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-
     // When running as an AppImage, replace the running AppImage file in place
     // instead of launching the freshly downloaded copy from /tmp. This keeps
     // the existing launcher / app-center entry pointing at the same file, so
@@ -304,12 +310,34 @@ fn launch_installer(dest: &std::path::Path, _expected_version: &str) -> Result<(
         }
     }
 
-    // Fallback: run the downloaded AppImage from the temp directory.
-    std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o755))
-        .map_err(|e| format!("设置可执行权限失败: {e}"))?;
-    crate::host_cmd::command(dest)
+    let extension = dest.extension().and_then(|value| value.to_str());
+    let mut install = crate::host_cmd::command("pkexec");
+    match extension {
+        Some("deb") => {
+            install.arg("dpkg").arg("-i").arg(dest);
+        }
+        Some("rpm") => {
+            install.arg("rpm").arg("-U").arg("--replacepkgs").arg(dest);
+        }
+        _ => {
+            return Err("当前程序不是 AppImage，且下载的更新包不是 DEB/RPM".into());
+        }
+    }
+
+    let status = install
+        .status()
+        .map_err(|e| format!("启动系统安装授权失败: {e}"))?;
+    if !status.success() {
+        return Err(format!(
+            "系统安装程序返回失败状态 {}，原版本未被替换",
+            status.code().unwrap_or(-1)
+        ));
+    }
+
+    let exe = std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {e}"))?;
+    crate::host_cmd::command(&exe)
         .spawn()
-        .map_err(|e| format!("启动更新失败: {e}"))?;
+        .map_err(|e| format!("升级成功，但重新启动失败: {e}"))?;
     Ok(())
 }
 
