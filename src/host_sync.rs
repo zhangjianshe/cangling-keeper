@@ -365,6 +365,71 @@ fn emit_progress(app: &AppHandle, p: &SyncProgress) {
     let _ = app.emit("host-software-sync-progress", p);
 }
 
+/// Open an SFTP session. Some SSH servers accept the subsystem request and
+/// then immediately close the channel because their configured sftp-server
+/// path is missing. Fall back to starting OpenSSH's server directly so a
+/// working SSH login can still be used for software synchronization.
+async fn open_sftp(
+    session: &russh::client::Handle<crate::ssh::SshClient>,
+) -> Result<SftpSession, String> {
+    let channel = session
+        .channel_open_session()
+        .await
+        .map_err(|error| format!("打开 SSH 会话失败：{error}"))?;
+    channel
+        .request_subsystem(true, "sftp")
+        .await
+        .map_err(|error| format!("请求 SFTP 失败：{error}"))?;
+    match SftpSession::new(channel.into_stream()).await {
+        Ok(sftp) => {
+            sftp.set_timeout(30 * 60);
+            return Ok(sftp);
+        }
+        Err(subsystem_error) => {
+            let probe = ssh::execute_on(
+                session,
+                "if command -v sftp-server >/dev/null 2>&1; then command -v sftp-server; \
+                 elif [ -x /usr/libexec/openssh/sftp-server ]; then printf '%s\\n' /usr/libexec/openssh/sftp-server; \
+                 elif [ -x /usr/lib/openssh/sftp-server ]; then printf '%s\\n' /usr/lib/openssh/sftp-server; fi",
+            )
+            .await
+            .map_err(|probe_error| {
+                format!(
+                    "初始化 SFTP 失败：{subsystem_error}；探测 sftp-server 失败：{probe_error}"
+                )
+            })?;
+            let server = probe
+                .stdout
+                .lines()
+                .next()
+                .map(str::trim)
+                .unwrap_or_default();
+            if probe.exit_status != 0 || !server.starts_with('/') {
+                return Err(format!(
+                    "初始化 SFTP 失败：{subsystem_error}；目标主机未找到可用的 OpenSSH sftp-server"
+                ));
+            }
+
+            let fallback = session.channel_open_session().await.map_err(|error| {
+                format!("初始化 SFTP 失败：{subsystem_error}；打开备用会话失败：{error}")
+            })?;
+            fallback
+                .exec(true, server.as_bytes())
+                .await
+                .map_err(|error| {
+                    format!("初始化 SFTP 失败：{subsystem_error}；启动 {server} 失败：{error}")
+                })?;
+            let sftp = SftpSession::new(fallback.into_stream())
+                .await
+                .map_err(|error| {
+                    format!("初始化 SFTP 失败：{subsystem_error}；通过 {server} 重试失败：{error}")
+                })?;
+            sftp.set_timeout(30 * 60);
+            Ok(sftp)
+        }
+    }
+}
+
 async fn ensure_remote_dir(sftp: &SftpSession, path: &str) -> Result<(), String> {
     let path = path.trim_end_matches('/');
     if path.is_empty() || path == "/" {
@@ -745,18 +810,7 @@ pub(crate) async fn upload_cangling_update_package(
         return Ok(remote);
     }
 
-    let channel = session
-        .channel_open_session()
-        .await
-        .map_err(|error| format!("打开 SSH 会话失败：{error}"))?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|error| format!("请求 SFTP 失败：{error}"))?;
-    let sftp = SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|error| format!("初始化 SFTP 失败：{error}"))?;
-    sftp.set_timeout(30 * 60);
+    let sftp = open_sftp(&session).await?;
     upload_software_file(
         &session,
         &sftp,
@@ -1008,18 +1062,7 @@ pub async fn sync_host_software(
         },
     );
 
-    let channel = session
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("打开 SSH 会话失败：{e}"))?;
-    channel
-        .request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| format!("请求 SFTP 失败：{e}"))?;
-    let sftp = SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|e| format!("初始化 SFTP 失败：{e}"))?;
-    sftp.set_timeout(30 * 60);
+    let sftp = open_sftp(&session).await?;
     ensure_remote_dir(&sftp, &remote_root).await?;
     let remote_database_path = join_remote(&remote_root, crate::fingerprints::DATABASE_NAME);
     let host_database_path = host_fingerprint_database_path(&data_dir, &host_id);
