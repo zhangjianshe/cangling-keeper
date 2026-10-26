@@ -2502,6 +2502,17 @@ function openTunnelModal(tunnel) {
   f.name.focus();
 }
 
+function openCopyTunnelModal(tunnel) {
+  if (!tunnel) return;
+  openTunnelModal(tunnel);
+  state.editingTunnelId = null;
+  tunnelModalTitleEl.textContent = "复制本地隧道";
+  const nameInput = tunnelFormEl.elements.name;
+  nameInput.value = `${tunnel.name} 副本`;
+  nameInput.focus();
+  nameInput.select();
+}
+
 function closeTunnelModal() {
   tunnelModalEl.classList.add("hidden");
 }
@@ -2766,6 +2777,11 @@ $("#edit-tunnel-btn").addEventListener("click", () => {
   hideTunnelMoreMenu();
   const t = tunnelById(state.selectedTunnelId);
   if (t) openTunnelModal(t);
+});
+$("#copy-tunnel-btn").addEventListener("click", () => {
+  hideTunnelMoreMenu();
+  const t = tunnelById(state.selectedTunnelId);
+  if (t) openCopyTunnelModal(t);
 });
 $("#delete-tunnel-btn").addEventListener("click", () => {
   hideTunnelMoreMenu();
