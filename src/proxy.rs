@@ -30,23 +30,14 @@ pub struct ProxySettings {
     pub last_checked_at: i64,
 }
 
-/// Merge loopback entries into `NO_PROXY` / `no_proxy` so WebKit does not send
-/// `http://127.0.0.1:<mapped-port>` through the system proxy.
+/// Merge loopback entries into `NO_PROXY` / `no_proxy` so local service calls
+/// never go through the system proxy.
 pub fn ensure_loopback_not_proxied() {
     for key in ["NO_PROXY", "no_proxy"] {
         let merged = merge_no_proxy(std::env::var(key).ok().as_deref());
         // SAFETY: called once at process start, before the webview starts.
         unsafe {
             std::env::set_var(key, merged);
-        }
-    }
-    // GNOME's proxy resolver often ignores NO_PROXY and still CONNECT-proxies
-    // loopback; Clash then returns 502. Dummy resolver is process-local and
-    // only affects GIO/WebKit — reqwest still honours HTTP_PROXY.
-    #[cfg(target_os = "linux")]
-    if std::env::var_os("GIO_USE_PROXY_RESOLVER").is_none() {
-        unsafe {
-            std::env::set_var("GIO_USE_PROXY_RESOLVER", "dummy");
         }
     }
 }

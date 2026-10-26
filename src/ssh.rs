@@ -6,7 +6,6 @@ use russh::keys::ssh_key::LineEnding;
 use russh::keys::{Algorithm, PrivateKey};
 use russh::{ChannelMsg, Disconnect, client};
 use serde::Serialize;
-use tauri::Emitter;
 use tokio::net::{TcpListener, TcpStream};
 
 use crate::host::Host;
@@ -326,7 +325,7 @@ pub async fn accept_loop(
                             .await
                         {
                             Ok(channel) => {
-                                tauri::async_runtime::spawn(async move {
+                                tokio::spawn(async move {
                                     let _ = pipe(socket, channel).await;
                                 });
                             }
@@ -607,7 +606,7 @@ pub async fn terminal_loop(
     pty: PtySession,
     input_rx: tokio::sync::mpsc::UnboundedReceiver<TerminalMsg>,
     cancel: tokio::sync::oneshot::Receiver<()>,
-    app: tauri::AppHandle,
+    app: crate::LegacyEventSink,
     term_id: String,
 ) {
     terminal_loop_with(pty, input_rx, cancel, term_id, move |payload| {
@@ -617,7 +616,7 @@ pub async fn terminal_loop(
 }
 
 /// Run a terminal and forward output through an arbitrary event sink.  The
-/// browser server uses this while the desktop build keeps using Tauri events.
+/// browser server uses this to forward terminal events over WebSocket.
 pub async fn terminal_loop_with<F>(
     pty: PtySession,
     mut input_rx: tokio::sync::mpsc::UnboundedReceiver<TerminalMsg>,

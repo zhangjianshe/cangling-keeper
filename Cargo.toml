@@ -1,21 +1,15 @@
 [package]
 name = "cangling-keeper"
 version = "0.0.87"
-description = "A Tauri desktop application for local file/keeper functions"
+description = "A browser-based Rust service for host and repository maintenance"
 authors = ["satway"]
 edition = "2024"
 
-# The library target is used by the Tauri entry point (src/main.rs) and
-# enables mobile support later if needed.
 [lib]
 name = "cangling_keeper_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-[build-dependencies]
-tauri-build = { version = "2", features = [] }
+crate-type = ["rlib"]
 
 [dependencies]
-tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "2.4"
@@ -31,7 +25,6 @@ tokio = { version = "1", features = ["net", "io-util", "sync", "macros", "time",
 rand = "0.10"
 tun = { version = "0.8.14", features = ["async"] }
 sha2 = "0.10"
-arboard = { version = "3", default-features = false }
 axum = { version = "0.8", features = ["ws"] }
 rust-embed = "8"
 mime_guess = "2"

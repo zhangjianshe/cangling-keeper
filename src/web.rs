@@ -1,8 +1,7 @@
 //! Browser-based frontend for cangling-keeper.
 //!
-//! The API deliberately mirrors Tauri's `invoke(command, args)` shape.  This
-//! lets the existing frontend run unchanged and keeps desktop and web modes on
-//! the same data store and Rust business logic.
+//! The API exposes a compact `invoke(command, args)` transport so the frontend
+//! can share one JSON endpoint while live events use WebSocket.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

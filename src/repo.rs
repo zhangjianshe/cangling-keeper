@@ -6,7 +6,7 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant, UNIX_EPOCH};
-use tauri::{AppHandle, State};
+use crate::{LegacyEventSink, State};
 
 use crate::{AppState, EventSink, emit_event};
 use crate::store::Store;
@@ -1692,18 +1692,15 @@ fn build_record(
     })
 }
 
-#[tauri::command]
 pub fn repo_status(state: State<'_, AppState>) -> RepoStatus {
     current_status(&state)
 }
 
-#[tauri::command]
 pub fn list_software_sets(state: State<'_, AppState>) -> Result<Vec<SoftwareSetInfo>, String> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
     list_set_infos(&store, &state.data_dir)
 }
 
-#[tauri::command]
 pub fn add_software_set(
     state: State<'_, AppState>,
     set_name: String,
@@ -1729,7 +1726,6 @@ pub fn add_software_set(
     list_set_infos(&store, &state.data_dir)
 }
 
-#[tauri::command]
 pub fn update_software_set(
     state: State<'_, AppState>,
     set_name: String,
@@ -1754,7 +1750,6 @@ pub fn update_software_set(
     list_set_infos(&store, &state.data_dir)
 }
 
-#[tauri::command]
 pub fn remove_software_set(
     state: State<'_, AppState>,
     set_name: String,
@@ -1784,7 +1779,6 @@ pub fn remove_software_set(
     list_set_infos(&store, &state.data_dir)
 }
 
-#[tauri::command]
 pub fn select_software_set(
     state: State<'_, AppState>,
     set_name: String,
@@ -1801,9 +1795,8 @@ pub fn select_software_set(
     Ok(current_status(&state))
 }
 
-#[tauri::command]
 pub async fn sync_software_set(
-    app: AppHandle,
+    app: LegacyEventSink,
     state: State<'_, AppState>,
     set_name: String,
 ) -> Result<RepoStatus, String> {
@@ -1838,7 +1831,7 @@ async fn sync_software_set_core(
     if rec.kind == KIND_GIT {
         let data_dir = state.data_dir.clone();
         let app2 = app.clone();
-        return tauri::async_runtime::spawn_blocking(move || sync_git_set(app2.as_ref(), &data_dir, &rec))
+        return tokio::task::spawn_blocking(move || sync_git_set(app2.as_ref(), &data_dir, &rec))
             .await
             .map_err(|e| format!("后台任务失败：{e}"))?;
     }
@@ -2036,7 +2029,6 @@ async fn sync_software_set_core(
     })
 }
 
-#[tauri::command]
 pub fn list_repo_files(state: State<'_, AppState>, path: String) -> Result<Vec<RepoEntry>, String> {
     let set_name = current_set_name(&state);
     if set_name.trim().is_empty() {
@@ -2078,7 +2070,6 @@ pub fn list_repo_files(state: State<'_, AppState>, path: String) -> Result<Vec<R
     Ok(entries)
 }
 
-#[tauri::command]
 pub fn read_repo_file(state: State<'_, AppState>, path: String) -> Result<RepoFile, String> {
     let set_name = current_set_name(&state);
     if set_name.trim().is_empty() {
@@ -2109,8 +2100,7 @@ pub fn read_repo_file(state: State<'_, AppState>, path: String) -> Result<RepoFi
     })
 }
 
-// Browser-server entry points.  These mirror the read-only/metadata Tauri
-// commands without requiring a Tauri `State` wrapper.
+// Browser-server entry points used by the JSON command dispatcher.
 pub(crate) fn web_repo_status(state: &AppState) -> RepoStatus {
     current_status(state)
 }

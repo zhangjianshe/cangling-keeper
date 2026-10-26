@@ -1,7 +1,6 @@
-// Browser transport for the standalone `cangling-keeper --web` mode.  Tauri
-// injects its own API before this script, so the desktop edition is untouched.
+// Browser transport for the cangling-keeper web service.
 (() => {
-  if (window.__TAURI__) return;
+  if (window.__KEEPER__) return;
 
   const listeners = new Map();
   let socket;
@@ -49,6 +48,6 @@
     return () => listeners.get(event)?.delete(callback);
   }
 
-  window.__TAURI__ = { core: { invoke }, event: { listen } };
+  window.__KEEPER__ = { core: { invoke }, event: { listen } };
   connectEvents();
 })();

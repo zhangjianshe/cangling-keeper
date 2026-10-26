@@ -7,7 +7,6 @@ mod host_cmd;
 mod host_sync;
 mod proxy;
 mod repo;
-mod self_update;
 mod single_instance;
 mod ssh;
 mod store;
@@ -15,7 +14,6 @@ mod sync;
 mod tunnel;
 mod websocket_tunnel;
 mod web;
-mod window_state;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -25,16 +23,13 @@ use auth::Auth;
 use certificate::Certificate;
 use host::Host;
 use proxy::{ProxySettings, ProxyStatus};
-use self_update::{apply_app_update, check_app_update};
 use ssh::{ResolvedAuth, TerminalMsg};
 use store::Store;
-use tauri::{AppHandle, Emitter, Manager, State};
 use tunnel::{Tunnel, TunnelInfo};
 use uuid::Uuid;
 
 pub(crate) struct AppState {
     pub(crate) store: Mutex<Store>,
-    clipboard: Mutex<Option<arboard::Clipboard>>,
     active_tunnels: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     active_terminals: Mutex<HashMap<String, TerminalHandle>>,
     proxy: Mutex<ProxyRuntime>,
@@ -46,10 +41,26 @@ pub(crate) trait EventSink: Send + Sync {
     fn emit_json(&self, event: &str, payload: serde_json::Value);
 }
 
-impl EventSink for AppHandle {
-    fn emit_json(&self, event: &str, payload: serde_json::Value) {
-        let _ = self.emit(event, payload);
+// Legacy command wrappers remain as private adapters around the shared core
+// while the browser API is the only public runtime.  These lightweight types
+// keep those wrappers independent of any desktop framework.
+type State<'a, T> = &'a T;
+
+#[derive(Clone)]
+struct LegacyEventSink;
+
+impl LegacyEventSink {
+    fn emit<T: serde::Serialize>(&self, _event: &str, _payload: T) -> Result<(), String> {
+        Ok(())
     }
+
+    fn try_state<T>(&self) -> Option<&T> {
+        None
+    }
+}
+
+impl EventSink for LegacyEventSink {
+    fn emit_json(&self, _event: &str, _payload: serde_json::Value) {}
 }
 
 pub(crate) fn emit_event<T: serde::Serialize>(sink: &dyn EventSink, event: &str, payload: &T) {
@@ -70,7 +81,6 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
     let proxy_settings = store.get_proxy_settings().unwrap_or_default();
     Ok(AppState {
         store: Mutex::new(store),
-        clipboard: Mutex::new(None),
         active_tunnels: Mutex::new(HashMap::new()),
         active_terminals: Mutex::new(HashMap::new()),
         proxy: Mutex::new(ProxyRuntime {
@@ -82,9 +92,9 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
     })
 }
 
-/// Start the browser-based edition. The desktop Tauri entry point remains
-/// available when `--web` is not supplied.
+/// Start the browser-based service.
 pub fn run_web_from_args() -> Result<(), String> {
+    let _instance_guard = single_instance::acquire()?;
     web::run_from_args()
 }
 
@@ -173,32 +183,6 @@ fn err_box(e: String) -> Box<dyn std::error::Error> {
     e.into()
 }
 
-#[tauri::command]
-fn write_clipboard_text(state: State<'_, AppState>, text: String) -> Result<(), String> {
-    let mut clipboard = state.clipboard.lock().map_err(|e| e.to_string())?;
-    if clipboard.is_none() {
-        *clipboard = Some(
-            arboard::Clipboard::new().map_err(|e| format!("无法访问系统剪贴板：{e}"))?,
-        );
-    }
-    clipboard
-        .as_mut()
-        .expect("clipboard was initialized")
-        .set_text(text)
-        .map_err(|e| format!("无法写入系统剪贴板：{e}"))
-}
-
-/// Resolve the per-user data directory for the app and make sure it exists.
-fn resolve_data_dir(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("cannot resolve app data directory: {e}"))?;
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("cannot create data directory {}: {e}", dir.display()))?;
-    Ok(dir)
-}
-
 /// Recursively copy a directory (used to migrate the legacy ./config dir).
 fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
@@ -217,13 +201,11 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
 
 // ---- hosts -----------------------------------------------------------------
 
-#[tauri::command]
 fn list_hosts(state: State<'_, AppState>) -> Result<Vec<Host>, String> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
     store.list_hosts()
 }
 
-#[tauri::command]
 async fn add_host(state: State<'_, AppState>, mut host: Host) -> Result<Host, String> {
     if host.id.is_empty() {
         host.id = Uuid::new_v4().to_string();
@@ -242,7 +224,6 @@ async fn add_host(state: State<'_, AppState>, mut host: Host) -> Result<Host, St
     Ok(host)
 }
 
-#[tauri::command]
 async fn update_host(state: State<'_, AppState>, mut host: Host) -> Result<(), String> {
     host.validate()?;
     // Only locally-defined hosts can be edited. The form does not carry
@@ -265,7 +246,6 @@ async fn update_host(state: State<'_, AppState>, mut host: Host) -> Result<(), S
     Ok(())
 }
 
-#[tauri::command]
 async fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let host = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -295,7 +275,6 @@ async fn delete_host(state: State<'_, AppState>, id: String) -> Result<(), Strin
     Ok(())
 }
 
-#[tauri::command]
 async fn ssh_execute(
     state: State<'_, AppState>,
     host_id: String,
@@ -325,7 +304,6 @@ struct HostEnvCheck {
     message: String,
 }
 
-#[tauri::command]
 async fn check_host_env(
     state: State<'_, AppState>,
     host_id: String,
@@ -401,7 +379,6 @@ async fn check_host_env_core(state: &AppState, host_id: &str) -> Result<HostEnvC
 // ---- external links -------------------------------------------------------
 
 /// Open an http/https link in the system default browser.
-#[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("仅支持 http/https 链接".into());
@@ -414,7 +391,6 @@ fn open_url(url: String) -> Result<(), String> {
 }
 
 /// Open a local directory in the operating system's default file manager.
-#[tauri::command]
 fn open_local_path(path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
     if !path.is_dir() {
@@ -477,7 +453,6 @@ fn open_with_command(url: &str) -> Result<std::process::ExitStatus, String> {
 
 // ---- tunnels ---------------------------------------------------------------
 
-#[tauri::command]
 fn list_tunnels(state: State<'_, AppState>) -> Result<Vec<TunnelInfo>, String> {
     let tunnels = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -496,7 +471,6 @@ fn list_tunnels(state: State<'_, AppState>) -> Result<Vec<TunnelInfo>, String> {
         .collect())
 }
 
-#[tauri::command]
 async fn add_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result<Tunnel, String> {
     if tunnel.id.is_empty() {
         tunnel.id = Uuid::new_v4().to_string();
@@ -519,7 +493,6 @@ async fn add_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result<Tu
     Ok(tunnel)
 }
 
-#[tauri::command]
 async fn update_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result<(), String> {
     tunnel.validate()?;
     {
@@ -535,7 +508,6 @@ async fn update_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result
     Ok(())
 }
 
-#[tauri::command]
 async fn delete_tunnel(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let tunnel = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -559,14 +531,12 @@ async fn delete_tunnel(state: State<'_, AppState>, id: String) -> Result<(), Str
     Ok(())
 }
 
-#[tauri::command]
 fn parse_ssh_command(command: String) -> Result<Tunnel, String> {
     tunnel::parse_ssh_command(&command)
 }
 
-#[tauri::command]
 async fn tunnel_connect(
-    app: AppHandle,
+    app: LegacyEventSink,
     state: State<'_, AppState>,
     tunnel_id: String,
 ) -> Result<(), String> {
@@ -603,7 +573,7 @@ async fn tunnel_connect(
         }
         let app2 = app.clone();
         let id = tunnel_id.clone();
-        tauri::async_runtime::spawn(async move {
+        tokio::spawn(async move {
             websocket_tunnel::accept_loop(established, rx).await;
             if let Some(st) = app2.try_state::<AppState>() {
                 if let Ok(mut active) = st.active_tunnels.lock() {
@@ -627,7 +597,7 @@ async fn tunnel_connect(
         }
         let app2 = app.clone();
         let id = tunnel_id.clone();
-        tauri::async_runtime::spawn(async move {
+        tokio::spawn(async move {
             ssh::hold_inject(established, rx).await;
             if let Some(st) = app2.try_state::<AppState>() {
                 if let Ok(mut active) = st.active_tunnels.lock() {
@@ -656,7 +626,7 @@ async fn tunnel_connect(
     let app2 = app.clone();
     let id = tunnel_id.clone();
 
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         ssh::accept_loop(established, remote_host, remote_port, rx).await;
 
         if let Some(st) = app2.try_state::<AppState>() {
@@ -670,7 +640,6 @@ async fn tunnel_connect(
     Ok(())
 }
 
-#[tauri::command]
 fn tunnel_disconnect(state: State<'_, AppState>, tunnel_id: String) -> Result<(), String> {
     let mut active = state.active_tunnels.lock().map_err(|e| e.to_string())?;
     match active.remove(&tunnel_id) {
@@ -684,9 +653,8 @@ fn tunnel_disconnect(state: State<'_, AppState>, tunnel_id: String) -> Result<()
 
 // ---- terminals -------------------------------------------------------------
 
-#[tauri::command]
 async fn start_terminal(
-    app: AppHandle,
+    app: LegacyEventSink,
     state: State<'_, AppState>,
     host_id: String,
     cols: u32,
@@ -719,7 +687,7 @@ async fn start_terminal(
 
     let app2 = app.clone();
     let id = term_id.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         ssh::terminal_loop(pty, input_rx, cancel_rx, app2.clone(), id.clone()).await;
 
         if let Some(st) = app2.try_state::<AppState>() {
@@ -733,7 +701,6 @@ async fn start_terminal(
     Ok(term_id)
 }
 
-#[tauri::command]
 fn terminal_input(state: State<'_, AppState>, term_id: String, data: String) -> Result<(), String> {
     let terms = state.active_terminals.lock().map_err(|e| e.to_string())?;
     match terms.get(&term_id) {
@@ -745,7 +712,6 @@ fn terminal_input(state: State<'_, AppState>, term_id: String, data: String) -> 
     }
 }
 
-#[tauri::command]
 fn terminal_resize(
     state: State<'_, AppState>,
     term_id: String,
@@ -762,7 +728,6 @@ fn terminal_resize(
     }
 }
 
-#[tauri::command]
 fn terminal_close(state: State<'_, AppState>, term_id: String) -> Result<(), String> {
     let mut terms = state.active_terminals.lock().map_err(|e| e.to_string())?;
     match terms.remove(&term_id) {
@@ -776,13 +741,11 @@ fn terminal_close(state: State<'_, AppState>, term_id: String) -> Result<(), Str
 
 // ---- certificates ----------------------------------------------------------
 
-#[tauri::command]
 fn list_certificates(state: State<'_, AppState>) -> Result<Vec<Certificate>, String> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
     store.list_certificates()
 }
 
-#[tauri::command]
 fn add_certificate(state: State<'_, AppState>, name: String) -> Result<Certificate, String> {
     let keys_dir = state.data_dir.join("keys");
     let cert = create_certificate(&keys_dir, &name)?;
@@ -791,7 +754,6 @@ fn add_certificate(state: State<'_, AppState>, name: String) -> Result<Certifica
     Ok(cert)
 }
 
-#[tauri::command]
 fn import_private_key(
     state: State<'_, AppState>,
     name: String,
@@ -809,7 +771,6 @@ fn import_private_key(
     Ok(cert)
 }
 
-#[tauri::command]
 fn update_certificate_name(
     state: State<'_, AppState>,
     id: String,
@@ -824,7 +785,6 @@ fn update_certificate_name(
     store.get_certificate(&id)
 }
 
-#[tauri::command]
 fn local_hostname() -> String {
     std::fs::read_to_string("/etc/hostname")
         .ok()
@@ -838,7 +798,6 @@ fn local_hostname() -> String {
         .unwrap_or_else(|| "Local Certificate".into())
 }
 
-#[tauri::command]
 fn delete_certificate(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let cert = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -894,7 +853,7 @@ fn usable_local_proxy(state: &AppState) -> Result<(String, u16, String), String>
 
 /// Reuse a known-good proxy, otherwise probe saved settings then 127.0.0.1:7890.
 async fn ensure_usable_proxy(
-    app: &AppHandle,
+    app: &LegacyEventSink,
     state: &AppState,
 ) -> Result<(String, u16, String), String> {
     if let Ok(ok) = usable_local_proxy(state) {
@@ -975,14 +934,12 @@ struct ProxyInjection {
     local_endpoint: String,
 }
 
-#[tauri::command]
 fn get_proxy_status(state: State<'_, AppState>) -> Result<ProxyStatus, String> {
     current_proxy_status(&state)
 }
 
-#[tauri::command]
 async fn start_local_proxy(
-    app: AppHandle,
+    app: LegacyEventSink,
     state: State<'_, AppState>,
     port: u16,
 ) -> Result<ProxyStatus, String> {
@@ -995,7 +952,7 @@ async fn start_local_proxy(
 
     let listener = proxy::bind_local(port).await?;
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         proxy::accept_loop(listener, rx).await;
     });
 
@@ -1023,9 +980,8 @@ async fn start_local_proxy(
     Ok(status)
 }
 
-#[tauri::command]
 async fn use_existing_proxy(
-    app: AppHandle,
+    app: LegacyEventSink,
     state: State<'_, AppState>,
     host: String,
     port: u16,
@@ -1063,8 +1019,7 @@ async fn use_existing_proxy(
     Ok(status)
 }
 
-#[tauri::command]
-async fn check_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<ProxyStatus, String> {
+async fn check_proxy(app: LegacyEventSink, state: State<'_, AppState>) -> Result<ProxyStatus, String> {
     let (mode, host, port, enabled) = {
         let runtime = state.proxy.lock().map_err(|e| e.to_string())?;
         (
@@ -1104,8 +1059,7 @@ async fn check_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<Proxy
     Ok(status)
 }
 
-#[tauri::command]
-fn stop_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<ProxyStatus, String> {
+fn stop_proxy(app: LegacyEventSink, state: State<'_, AppState>) -> Result<ProxyStatus, String> {
     let settings = {
         let mut runtime = state.proxy.lock().map_err(|e| e.to_string())?;
         stop_local_locked(&mut runtime);
@@ -1123,7 +1077,6 @@ fn stop_proxy(app: AppHandle, state: State<'_, AppState>) -> Result<ProxyStatus,
     Ok(status)
 }
 
-#[tauri::command]
 fn list_proxy_injections(state: State<'_, AppState>) -> Result<Vec<ProxyInjection>, String> {
     let injected = state.injected_proxies.lock().map_err(|e| e.to_string())?;
     Ok(injected
@@ -1137,9 +1090,8 @@ fn list_proxy_injections(state: State<'_, AppState>) -> Result<Vec<ProxyInjectio
         .collect())
 }
 
-#[tauri::command]
 async fn inject_proxy(
-    app: AppHandle,
+    app: LegacyEventSink,
     state: State<'_, AppState>,
     host_id: String,
 ) -> Result<ProxyInjection, String> {
@@ -1221,7 +1173,7 @@ async fn inject_proxy(
 
     let app2 = app.clone();
     let id = host_id.clone();
-    tauri::async_runtime::spawn(async move {
+    tokio::spawn(async move {
         ssh::hold_inject(established, rx).await;
         if let Some(st) = app2.try_state::<AppState>() {
             if let Ok(mut injected) = st.injected_proxies.lock() {
@@ -1355,7 +1307,6 @@ async fn fetch_latest_version(
     host_actions::parse_latest_version(&out.stdout)
 }
 
-#[tauri::command]
 async fn probe_cangling_update(
     state: State<'_, AppState>,
     host_id: String,
@@ -1420,9 +1371,8 @@ async fn probe_cangling_update_core(
     Ok(probe)
 }
 
-#[tauri::command]
 async fn run_cangling_update(
-    app: AppHandle,
+    app: LegacyEventSink,
     state: State<'_, AppState>,
     host_id: String,
     port: Option<u16>,
@@ -1582,7 +1532,6 @@ async fn run_cangling_update_core(
     })
 }
 
-#[tauri::command]
 async fn set_cangling_role(
     state: State<'_, AppState>,
     host_id: String,
@@ -1680,7 +1629,6 @@ async fn set_cangling_role_core(
     })
 }
 
-#[tauri::command]
 fn uninject_proxy(state: State<'_, AppState>, host_id: String) -> Result<(), String> {
     let mut injected = state.injected_proxies.lock().map_err(|e| e.to_string())?;
     if injected
@@ -1709,7 +1657,6 @@ struct ClusterConsole {
     port: u16,
 }
 
-#[tauri::command]
 async fn cluster_console_url(
     state: State<'_, AppState>,
     host_id: String,
@@ -2035,7 +1982,6 @@ async fn delete_remote_tunnel(state: &AppState, remote_id: &str) -> Result<(), S
     sync::delete_remote_tunnel(&url, &token, remote_id).await
 }
 
-#[tauri::command]
 async fn login(
     state: State<'_, AppState>,
     server_url: String,
@@ -2063,7 +2009,6 @@ async fn login(
     Ok(read_login_status(&store))
 }
 
-#[tauri::command]
 async fn logout(state: State<'_, AppState>) -> Result<LoginStatus, String> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
     store.delete_setting(sync::SETTING_TOKEN)?;
@@ -2073,126 +2018,18 @@ async fn logout(state: State<'_, AppState>) -> Result<LoginStatus, String> {
     Ok(read_login_status(&store))
 }
 
-#[tauri::command]
 fn get_login_status(state: State<'_, AppState>) -> Result<LoginStatus, String> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
     Ok(read_login_status(&store))
 }
 
-#[tauri::command]
 async fn sync_hosts(state: State<'_, AppState>) -> Result<(), String> {
     sync_now(&state).await
 }
 
-#[tauri::command]
 async fn sync_public_hosts(state: State<'_, AppState>) -> Result<(), String> {
     // Startup synchronization must be bidirectional too. A host may have been
     // created while logged out, or its first best-effort upload may have failed;
     // pull-only synchronization would otherwise leave it local forever.
     sync_now(&state).await
-}
-
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    let _instance_guard = match single_instance::acquire() {
-        Ok(guard) => guard,
-        Err(message) => {
-            eprintln!("{message}");
-            return;
-        }
-    };
-    proxy::ensure_loopback_not_proxied();
-    tauri::Builder::default()
-        .setup(|app| {
-            // Store user data in the platform data directory instead of the
-            // current working directory. The CWD is read-only when running
-            // from an AppImage (or a desktop launcher), which made older
-            // builds crash on startup with "Read-only file system".
-            let data_dir = resolve_data_dir(app)?;
-
-            // Restore the saved window position/size and remember it on close.
-            if let Some(window) = app.get_webview_window("main") {
-                window_state::restore(&window, &data_dir);
-                window_state::register_close_handler(&window, &data_dir);
-            }
-
-            // One-time migration of legacy data directories into the current
-            // data dir (the ./config dir used by dev/older builds, and the
-            // data dir of the previous bundle identifier).
-            let mut legacy_dirs = vec![PathBuf::from("config")];
-            if let Ok(base) = app.path().data_dir() {
-                legacy_dirs.push(base.join("com.cangling.keeper"));
-            }
-            for legacy in legacy_dirs {
-                if !legacy.join("data.sql").exists() || data_dir.join("data.sql").exists() {
-                    continue;
-                }
-                if let Err(e) = copy_dir_all(&legacy, &data_dir) {
-                    eprintln!("failed to migrate legacy config {}: {e}", legacy.display());
-                }
-            }
-
-            app.manage(create_app_state(data_dir)?);
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            write_clipboard_text,
-            list_hosts,
-            add_host,
-            update_host,
-            delete_host,
-            ssh_execute,
-            check_host_env,
-            open_url,
-            open_local_path,
-            list_tunnels,
-            add_tunnel,
-            update_tunnel,
-            delete_tunnel,
-            parse_ssh_command,
-            tunnel_connect,
-            tunnel_disconnect,
-            list_certificates,
-            add_certificate,
-            import_private_key,
-            update_certificate_name,
-            local_hostname,
-            delete_certificate,
-            start_terminal,
-            terminal_input,
-            terminal_resize,
-            terminal_close,
-            get_proxy_status,
-            start_local_proxy,
-            use_existing_proxy,
-            check_proxy,
-            stop_proxy,
-            list_proxy_injections,
-            inject_proxy,
-            uninject_proxy,
-            probe_cangling_update,
-            run_cangling_update,
-            set_cangling_role,
-            check_app_update,
-            apply_app_update,
-            repo::repo_status,
-            repo::list_software_sets,
-            repo::add_software_set,
-            repo::update_software_set,
-            repo::remove_software_set,
-            repo::select_software_set,
-            repo::sync_software_set,
-            repo::list_repo_files,
-            repo::read_repo_file,
-            host_sync::preview_host_software_sync,
-            host_sync::sync_host_software,
-            cluster_console_url,
-            login,
-            logout,
-            get_login_status,
-            sync_hosts,
-            sync_public_hosts
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
 }

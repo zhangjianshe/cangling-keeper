@@ -1,6 +1,5 @@
-// `withGlobalTauri: true` in tauri.conf.json injects the API at window.__TAURI__.
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
+const { invoke } = window.__KEEPER__.core;
+const { listen } = window.__KEEPER__.event;
 
 const state = {
   section: "hosts", // "hosts" | "tunnels" | "certificates" | "proxy" | "repo"
@@ -3505,7 +3504,7 @@ listen("cangling-update-progress", (e) => {
 listen("host-software-sync-progress", (e) => {
   const p = e.payload || {};
   if (p.hostId && state.selectedHostId && p.hostId !== state.selectedHostId) return;
-  // Tauri events can arrive after the command promise has resolved.  Ignore
+  // WebSocket events can arrive after the command promise has resolved. Ignore
   // those stale progress events so they cannot reopen a completed sync panel.
   if (!state.hostSyncing) return;
   renderHostSyncProgress(p);

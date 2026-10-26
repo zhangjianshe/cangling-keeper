@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use russh_sftp::{client::SftpSession, protocol::OpenFlags};
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use crate::{LegacyEventSink, State};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::host::Host;
@@ -970,9 +970,8 @@ async fn publish_host_state_database(
         .await
 }
 
-#[tauri::command]
 pub async fn sync_host_software(
-    app: AppHandle,
+    app: LegacyEventSink,
     state: State<'_, AppState>,
     host_id: String,
     paths: Option<Vec<String>>,
@@ -1006,7 +1005,7 @@ async fn sync_host_software_core(
     }
     let sets = collect_set_names(&files);
     let repository_root = crate::repo::sets_root(&data_dir);
-    let local_database = tauri::async_runtime::spawn_blocking(move || {
+    let local_database = tokio::task::spawn_blocking(move || {
         crate::fingerprints::refresh_database(&repository_root)
     })
     .await
@@ -1244,7 +1243,6 @@ async fn sync_host_software_core(
     })
 }
 
-#[tauri::command]
 pub fn preview_host_software_sync(
     state: State<'_, AppState>,
 ) -> Result<HostSoftwareSyncPreview, String> {

@@ -5,13 +5,13 @@ use std::process::Command;
 use std::os::windows::process::CommandExt;
 
 /// Hide the console window when spawning a Windows console subsystem binary
-/// such as `git.exe` from a GUI (Tauri) process.
+/// such as `git.exe` from a packaged process.
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Spawn a host binary without AppImage/linuxdeploy library search paths.
 ///
-/// AppRun prepends `$APPDIR/usr/lib` to `LD_LIBRARY_PATH` so WebKitGTK can
+/// Some package launchers prepend private library paths to `LD_LIBRARY_PATH`, which can
 /// find bundled `.so` files. Child processes inherit that path, so host tools
 /// such as `git` load the bundle's older `libnghttp2` against the distro's
 /// `libcurl` and crash:

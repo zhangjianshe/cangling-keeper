@@ -1,8 +1,8 @@
 # Cangling Keeper
 
-A local desktop application built with **Rust + Tauri v2**, targeting
-**Windows** and **Linux**. It manages a list of remote hosts and lets you run
-commands over SSH with one click.
+A browser-based local management service built with **Rust + Axum**, targeting
+**Windows** and **Linux**. It manages remote hosts and exposes its interface on
+the local loopback address.
 
 ## Features
 
@@ -244,7 +244,7 @@ Enum variants carry data:
 - `Auth::Password { password }`, `Auth::Certificate { certificate_id }`
 - `ResolvedAuth::Password(String)`, `ResolvedAuth::Key(String)`
 
-### Runtime state (managed by Tauri)
+### Runtime state
 
 ```mermaid
 classDiagram
@@ -286,7 +286,7 @@ classDiagram
     ProxyRuntime *-- ProxySettings : settings
 ```
 
-- `AppState` is the shared Tauri managed state; the maps and handles are guarded
+- `AppState` is the shared server state; the maps and handles are guarded
   by `Mutex` and hold tokio `oneshot`/`mpsc` senders used to cancel active
   tunnels, terminals and proxy injections.
 
@@ -294,15 +294,11 @@ classDiagram
 
 ```
 cangling-keeper/
-├── Cargo.toml              # Rust crate + Tauri dependencies
-├── build.rs                # Tauri build script
-├── tauri.conf.json         # Tauri v2 configuration
-├── capabilities/           # Tauri v2 capability (permission) files
-│   └── default.json
-├── icons/                  # App icons (window + bundle)
+├── Cargo.toml              # Rust crate and server dependencies
 ├── src/
 │   ├── main.rs             # Entry point
-│   ├── lib.rs              # Tauri app + #[tauri::command] handlers
+│   ├── lib.rs              # Shared service state and business logic
+│   ├── web.rs              # Axum HTTP/WebSocket server and API dispatcher
 │   ├── host.rs             # Host model
 │   ├── tunnel.rs           # Tunnel model + SSH command parsing
 │   ├── store.rs            # SQLite persistence (hosts + tunnels)
@@ -314,9 +310,8 @@ cangling-keeper/
     └── main.js
 ```
 
-The frontend is intentionally dependency-free. `withGlobalTauri` is enabled in
-`tauri.conf.json`, so JavaScript can call Rust commands via
-`window.__TAURI__.core.invoke(...)` without npm or a bundler.
+The frontend is dependency-free. It calls the Rust service through JSON APIs;
+terminal output and long-task progress are delivered through WebSocket.
 
 SSH is implemented with [`russh`](https://crates.io/crates/russh) (pure-Rust,
 async) using its `ring` crypto backend, which avoids OpenSSL/libssh2 C
@@ -327,12 +322,6 @@ dependencies and needs no extra system libraries beyond a C compiler.
 ### Both platforms
 
 - [Rust](https://rustup.rs) (stable toolchain)
-- [Tauri CLI](https://v2.tauri.app/reference/cli/):
-
-  ```sh
-  cargo install tauri-cli --version "^2" --locked
-  ```
-
 ### Linux (Debian/Ubuntu)
 
 #### Build dependencies (compile-time only)
@@ -342,88 +331,52 @@ not need them:
 
 ```sh
 sudo apt update
-sudo apt install libwebkit2gtk-4.1-dev \
-  build-essential \
-  curl \
-  wget \
-  file \
-  libxdo-dev \
-  libssl-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev
+sudo apt install build-essential pkg-config
 ```
-
-#### Runtime dependencies (needed to run the binary)
-
-The compiled binary dynamically links against these shared libraries. Installing
-the `-dev` packages above pulls them in automatically on a dev machine, but end
-users need the runtime (non-`-dev`) versions:
-
-| Build-time (`-dev`)             | Runtime (end users)         |
-| ------------------------------- | --------------------------- |
-| `libwebkit2gtk-4.1-dev`         | `libwebkit2gtk-4.1-0`       |
-| `libxdo-dev`                    | `libxdo3`                   |
-| `libssl-dev`                    | `libssl3`                   |
-| `librsvg2-dev`                  | `librsvg2-2`                |
-| `libayatana-appindicator3-dev`  | `libayatana-appindicator3-1` |
-
-When distributing as a `.deb`, Tauri declares these runtime dependencies
-automatically so `apt` installs them for the user.
-
-(For other distros see https://v2.tauri.app/start/prerequisites/)
 
 ### Windows
 
 - Microsoft Visual Studio **C++ Build Tools** with the "Desktop development
   with C++" workload (MSVC).
 - Rust **MSVC** toolchain (`rustup default stable-msvc`).
-- WebView2 runtime — preinstalled on Windows 10/11, no action needed.
+- WebView2 is not required.
 
 ## Run (development)
 
 ```sh
-cargo tauri dev
+cargo run
 ```
 
-This opens the window and serves `ui/` with hot reload.
-
-### Browser/Web service mode
-
-The same executable can run without a Tauri window or WebView2. It embeds the
-frontend, listens on loopback by default, and opens the system browser:
+This embeds the frontend, starts the local service and opens the system browser:
 
 ```sh
-cargo run -- --web
+cargo run
 ```
 
 The default URL is `http://127.0.0.1:18080`. Optional arguments:
 
 ```sh
-cangling-keeper --web --listen 127.0.0.1:18080 --no-open
-cangling-keeper --web --data-dir D:\cangling-keeper-data
+cangling-keeper --listen 127.0.0.1:18080 --no-open
+cangling-keeper --data-dir D:\cangling-keeper-data
 ```
 
 Keep the listener on `127.0.0.1` unless authentication and HTTPS are provided
 by a trusted reverse proxy. The Web service uses the same platform data
-directory and SQLite database as the desktop edition. Browser-to-server calls
+directory and SQLite database used by earlier releases. Browser-to-server calls
 use JSON and live terminal/status events use WebSocket.
 
-## Build a release bundle
+## Build a release binary
 
 ```sh
-cargo tauri build
+cargo build --release
 ```
 
-Bundles are written to `target/release/bundle/`:
-
-- Windows: `.msi` / `.exe` (NSIS)
-- Linux: `.deb`, `.rpm`, and/or AppImage
+The executable is written to `target/release/`.
 
 ## Adding commands
 
-1. Add a function in `src/lib.rs` (or a module) and mark it with `#[tauri::command]`.
-2. Register it in `.invoke_handler(tauri::generate_handler![...])`.
-3. Call it from `ui/main.js` with `window.__TAURI__.core.invoke("name", { args })`
+1. Add the operation to the dispatcher in `src/web.rs`.
+2. Call it from `ui/main.js` with `window.__KEEPER__.core.invoke("name", { args })`
    (argument names use camelCase, e.g. Rust `host_id` → JS `hostId`).
 
 ### Data location

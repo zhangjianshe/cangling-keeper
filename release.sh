@@ -3,7 +3,7 @@
 # release.sh — bump the version, commit it, and push a version tag to GitHub.
 #
 # Pushing the tag triggers .github/workflows/release.yml, which builds the
-# Tauri app for Windows + Linux and drafts a GitHub release.
+# Web service binary for Windows + Linux and drafts a GitHub release.
 #
 # Usage:
 #   ./release.sh                # bump patch  (0.1.0 -> 0.1.1) [default]
@@ -20,7 +20,6 @@ cd "$(dirname "$0")"
 
 REMOTE="${REMOTE:-origin}"
 CARGO_TOML="Cargo.toml"
-TAURI_CONF="tauri.conf.json"
 CARGO_LOCK="Cargo.lock"
 
 info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -68,16 +67,13 @@ TAG="v$NEW"
 
 info "bumping version: $CURRENT -> $NEW  (tag $TAG)"
 
-# --- update version in the three files ---------------------------------------
+# --- update version files ----------------------------------------------------
 
 # Cargo.toml — replace only the first `version = "..."` line (the package version).
 awk -v new="$NEW" '
   !done && /^version = "/ { print "version = \"" new "\""; done=1; next }
   { print }
 ' "$CARGO_TOML" > "$CARGO_TOML.tmp" && mv "$CARGO_TOML.tmp" "$CARGO_TOML"
-
-# tauri.conf.json
-sed -i "s/\"version\": \"$CURRENT\"/\"version\": \"$NEW\"/" "$TAURI_CONF"
 
 # Cargo.lock — update the version right after this package's name line.
 if [[ -f "$CARGO_LOCK" ]]; then
@@ -104,7 +100,7 @@ if ! git rev-parse --verify HEAD >/dev/null 2>&1; then
   info "note: repository has no commits yet — only the version files will be committed."
 fi
 
-git add "$CARGO_TOML" "$TAURI_CONF"
+git add "$CARGO_TOML"
 [[ -f "$CARGO_LOCK" ]] && git add "$CARGO_LOCK"
 
 git commit -m "release: $TAG"
