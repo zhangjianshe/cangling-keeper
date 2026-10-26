@@ -1443,7 +1443,9 @@ body {
 }
 
 .ctx-item {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 7px 10px;
   border: none;
@@ -1453,6 +1455,12 @@ body {
   font-size: 13px;
   text-align: left;
   cursor: pointer;
+}
+
+.ctx-item svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 
 .ctx-item:hover {
