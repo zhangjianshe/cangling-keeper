@@ -208,6 +208,73 @@ body {
   color: var(--danger);
 }
 
+.service-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.service-close-btn svg {
+  width: 17px;
+  height: 17px;
+}
+
+.service-close-btn:hover {
+  border-color: var(--danger);
+  background: var(--danger-subtle);
+  color: var(--danger);
+}
+
+.service-close-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.service-closed-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 32px;
+  background: var(--bg);
+}
+
+.service-closed-card {
+  width: min(420px, 100%);
+  padding: 40px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 12px 36px rgba(31, 35, 40, 0.12);
+  text-align: center;
+}
+
+.service-closed-card svg {
+  width: 44px;
+  height: 44px;
+  margin-bottom: 14px;
+  color: var(--fg-muted);
+}
+
+.service-closed-card h1 {
+  margin: 0 0 8px;
+  font-size: 22px;
+}
+
+.service-closed-card p {
+  margin: 0;
+  color: var(--fg-muted);
+  line-height: 1.6;
+}
+
 #proxy-indicator-text {
   overflow: hidden;
   text-overflow: ellipsis;

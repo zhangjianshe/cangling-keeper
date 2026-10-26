@@ -5,7 +5,7 @@
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -19,7 +19,7 @@ use rust_embed::Embed;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, oneshot};
 use uuid::Uuid;
 
 use crate::host::Host;
@@ -41,6 +41,7 @@ struct UiAssets;
 pub(crate) struct WebState {
     core: Arc<AppState>,
     events: broadcast::Sender<WebEvent>,
+    shutdown: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 impl crate::EventSink for WebState {
@@ -131,7 +132,12 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
     proxy::ensure_loopback_not_proxied();
     let core = Arc::new(create_app_state(data_dir).map_err(|error| error.to_string())?);
     let (events, _) = broadcast::channel(512);
-    let state = WebState { core, events };
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let state = WebState {
+        core,
+        events,
+        shutdown: Arc::new(Mutex::new(Some(shutdown_tx))),
+    };
     let app = Router::new()
         .route("/api/health", get(|| async { Json(json!({ "ok": true })) }))
         .route("/api/events", get(events_socket))
@@ -154,7 +160,10 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
     }
     axum::serve(listener, app)
         .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {},
+                _ = shutdown_rx => {},
+            }
         })
         .await
         .map_err(|error| error.to_string())
@@ -237,6 +246,22 @@ async fn invoke(
 async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value, String> {
     let core = &state.core;
     match command {
+        "shutdown_app" => {
+            let sender = state
+                .shutdown
+                .lock()
+                .map_err(|error| error.to_string())?
+                .take()
+                .ok_or("服务正在关闭")?;
+            state.emit("service-shutdown", true);
+            tokio::spawn(async move {
+                // Give the HTTP response enough time to reach the browser
+                // before stopping the listener.
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                let _ = sender.send(());
+            });
+            value(())
+        }
         "list_hosts" => {
             let store = core.store.lock().map_err(|e| e.to_string())?;
             value(store.list_hosts()?)

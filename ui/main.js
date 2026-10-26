@@ -100,6 +100,7 @@ const clusterTokenUrlTitleEl = $("#cluster-token-url-title");
 const clusterTokenValueEl = $("#cluster-token-value");
 const clusterTokenCopyEl = $("#cluster-token-copy");
 const appUpdateBtnEl = $("#app-update-btn");
+const serviceCloseBtnEl = $("#service-close-btn");
 const loginBtnEl = $("#login-btn");
 const loginModalEl = $("#login-modal");
 const loginFormEl = $("#login-form");
@@ -3510,6 +3511,8 @@ listen("tunnel-stopped", async () => {
   renderTunnelDetail();
 });
 
+listen("service-shutdown", showServiceClosedPage);
+
 listen("app-update-progress", (e) => {
   if (!state.appUpdateBusy) return;
   applyAppUpdateProgress(e.payload || {});
@@ -3813,6 +3816,36 @@ async function uiPrompt(message, defaultValue = "", title = "输入") {
   });
 }
 
+async function closeKeeperService() {
+  if (!(await uiConfirm("关闭后所有终端、隧道和同步任务都会停止。确定关闭服务吗？", "关闭服务"))) {
+    return;
+  }
+  serviceCloseBtnEl.disabled = true;
+  try {
+    await invoke("shutdown_app");
+    showServiceClosedPage();
+  } catch (error) {
+    serviceCloseBtnEl.disabled = false;
+    await uiAlert(`关闭服务失败：${error}`);
+  }
+}
+
+function showServiceClosedPage() {
+  window.__KEEPER__.shutdownTransport?.();
+  document.title = "服务已关闭";
+  document.body.innerHTML = `
+    <main class="service-closed-page">
+      <section class="service-closed-card" role="status">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M18 6 6 18M6 6l12 12"/>
+          <circle cx="12" cy="12" r="10"/>
+        </svg>
+        <h1>服务已关闭</h1>
+        <p>可以关闭此页面。再次点击桌面上的 Cangling Keeper 快捷方式即可重新启动。</p>
+      </section>
+    </main>`;
+}
+
 uiDialogOkBtnEl.addEventListener("click", uiDialogOk);
 uiDialogCancelBtnEl.addEventListener("click", uiDialogCancel);
 uiDialogCloseBtnEl.addEventListener("click", uiDialogCancel);
@@ -3825,6 +3858,7 @@ uiDialogInputEl.addEventListener("keydown", (e) => {
 uiDialogEl.addEventListener("mousedown", (e) => {
   if (e.target === uiDialogEl) uiDialogCancel();
 });
+serviceCloseBtnEl.addEventListener("click", closeKeeperService);
 document.addEventListener("keydown", (e) => {
   if (uiDialogEl.classList.contains("hidden")) return;
   if (e.key === "Escape") {

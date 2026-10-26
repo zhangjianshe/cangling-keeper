@@ -5,8 +5,10 @@
   const listeners = new Map();
   let socket;
   let retry;
+  let stopped = false;
 
   function connectEvents() {
+    if (stopped) return;
     clearTimeout(retry);
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     socket = new WebSocket(`${scheme}//${location.host}/api/events`);
@@ -19,8 +21,14 @@
       } catch (_) {}
     };
     socket.onclose = () => {
-      retry = setTimeout(connectEvents, 1000);
+      if (!stopped) retry = setTimeout(connectEvents, 1000);
     };
+  }
+
+  function shutdownTransport() {
+    stopped = true;
+    clearTimeout(retry);
+    if (socket) socket.close();
   }
 
   async function invoke(command, args = {}) {
@@ -48,6 +56,6 @@
     return () => listeners.get(event)?.delete(callback);
   }
 
-  window.__KEEPER__ = { core: { invoke }, event: { listen } };
+  window.__KEEPER__ = { core: { invoke }, event: { listen }, shutdownTransport };
   connectEvents();
 })();
