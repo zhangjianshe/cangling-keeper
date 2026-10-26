@@ -6,9 +6,9 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
-use crate::AppState;
+use crate::{AppState, EventSink, emit_event};
 use crate::store::Store;
 use crate::sync::SETTING_SERVER_URL;
 
@@ -900,7 +900,7 @@ async fn fetch_manifest(server_url: &str, set_name: &str) -> Result<SoftwareSetM
 }
 
 struct DownloadProgressCtx<'a> {
-    app: &'a AppHandle,
+    app: &'a dyn EventSink,
     set_name: &'a str,
     current: u32,
     total: u32,
@@ -915,9 +915,10 @@ fn emit_sync_progress(
     bytes_done: u64,
     bytes_total: u64,
 ) {
-    let _ = ctx.app.emit(
+    emit_event(
+        ctx.app,
         "repo-sync-progress",
-        SyncProgress {
+        &SyncProgress {
             set_name: ctx.set_name.to_string(),
             current: ctx.current,
             total: ctx.total,
@@ -932,16 +933,17 @@ fn emit_sync_progress(
 }
 
 fn emit_repo_phase(
-    app: &AppHandle,
+    app: &dyn EventSink,
     set_name: &str,
     action: &str,
     message: &str,
     current: u32,
     total: u32,
 ) {
-    let _ = app.emit(
+    emit_event(
+        app,
         "repo-sync-progress",
-        SyncProgress {
+        &SyncProgress {
             set_name: set_name.to_string(),
             current,
             total,
@@ -956,7 +958,7 @@ fn emit_repo_phase(
 }
 
 fn refresh_fingerprints_with_progress(
-    app: &AppHandle,
+    app: &dyn EventSink,
     data_dir: &Path,
     set_name: &str,
 ) -> Result<(), String> {
@@ -1383,7 +1385,13 @@ fn parse_git_bytes(line: &str) -> Option<u64> {
     last
 }
 
-fn emit_git_progress(app: &AppHandle, set_name: &str, phase: &str, line: &str, last_pct: &mut u32) {
+fn emit_git_progress(
+    app: &dyn EventSink,
+    set_name: &str,
+    phase: &str,
+    line: &str,
+    last_pct: &mut u32,
+) {
     let line = line.trim();
     if line.is_empty() {
         return;
@@ -1392,9 +1400,10 @@ fn emit_git_progress(app: &AppHandle, set_name: &str, phase: &str, line: &str, l
         *last_pct = pct;
     }
     let bytes_done = parse_git_bytes(line).unwrap_or(0);
-    let _ = app.emit(
+    emit_event(
+        app,
         "repo-sync-progress",
-        SyncProgress {
+        &SyncProgress {
             set_name: set_name.to_string(),
             current: *last_pct,
             total: 100,
@@ -1409,7 +1418,7 @@ fn emit_git_progress(app: &AppHandle, set_name: &str, phase: &str, line: &str, l
 }
 
 fn run_git_progress(
-    app: &AppHandle,
+    app: &dyn EventSink,
     set_name: &str,
     rec: &SoftwareSetRecord,
     cwd: Option<&Path>,
@@ -1506,7 +1515,7 @@ fn remove_incomplete_git(dest: &Path) {
 }
 
 fn git_fetch_update(
-    app: &AppHandle,
+    app: &dyn EventSink,
     rec: &SoftwareSetRecord,
     dest: &Path,
     auth_url: &str,
@@ -1537,7 +1546,7 @@ fn git_fetch_update(
 }
 
 fn git_clone_once(
-    app: &AppHandle,
+    app: &dyn EventSink,
     rec: &SoftwareSetRecord,
     dest: &Path,
     parent: &Path,
@@ -1574,7 +1583,7 @@ fn git_clone_once(
 }
 
 fn sync_git_set(
-    app: &AppHandle,
+    app: &dyn EventSink,
     data_dir: &Path,
     rec: &SoftwareSetRecord,
 ) -> Result<RepoStatus, String> {
@@ -1798,6 +1807,22 @@ pub async fn sync_software_set(
     state: State<'_, AppState>,
     set_name: String,
 ) -> Result<RepoStatus, String> {
+    sync_software_set_core(std::sync::Arc::new(app), &state, set_name).await
+}
+
+pub(crate) async fn web_sync_software_set(
+    app: std::sync::Arc<dyn EventSink>,
+    state: &AppState,
+    set_name: String,
+) -> Result<RepoStatus, String> {
+    sync_software_set_core(app, state, set_name).await
+}
+
+async fn sync_software_set_core(
+    app: std::sync::Arc<dyn EventSink>,
+    state: &AppState,
+    set_name: String,
+) -> Result<RepoStatus, String> {
     let set_name = normalize_set_name(&set_name)?;
     let rec = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -1813,7 +1838,7 @@ pub async fn sync_software_set(
     if rec.kind == KIND_GIT {
         let data_dir = state.data_dir.clone();
         let app2 = app.clone();
-        return tauri::async_runtime::spawn_blocking(move || sync_git_set(&app2, &data_dir, &rec))
+        return tauri::async_runtime::spawn_blocking(move || sync_git_set(app2.as_ref(), &data_dir, &rec))
             .await
             .map_err(|e| format!("后台任务失败：{e}"))?;
     }
@@ -1833,7 +1858,7 @@ pub async fn sync_software_set(
     std::fs::create_dir_all(&dest).map_err(|e| format!("创建目录失败：{e}"))?;
 
     emit_repo_phase(
-        &app,
+        app.as_ref(),
         &set_name,
         "manifest",
         "正在获取远端软件清单…",
@@ -1854,7 +1879,7 @@ pub async fn sync_software_set(
 
     if jobs.is_empty() {
         emit_repo_phase(
-            &app,
+            app.as_ref(),
             &set_name,
             "cleanup",
             "远端软件集为空，正在清理本地文件…",
@@ -1862,8 +1887,8 @@ pub async fn sync_software_set(
             100,
         );
         prune_extra_files(&dest, &expected)?;
-        refresh_fingerprints_with_progress(&app, &data_dir, &set_name)?;
-        emit_repo_phase(&app, &set_name, "complete", "同步完成", 100, 100);
+        refresh_fingerprints_with_progress(app.as_ref(), &data_dir, &set_name)?;
+        emit_repo_phase(app.as_ref(), &set_name, "complete", "同步完成", 100, 100);
         return Ok(RepoStatus {
             cloned: false,
             local_path: dest.to_string_lossy().into_owned(),
@@ -1905,7 +1930,7 @@ pub async fn sync_software_set(
         };
         let current = (index as u32) + 1;
         let ctx = DownloadProgressCtx {
-            app: &app,
+            app: app.as_ref(),
             set_name: &set_name,
             current,
             total,
@@ -1958,7 +1983,7 @@ pub async fn sync_software_set(
     }
 
     emit_repo_phase(
-        &app,
+        app.as_ref(),
         &set_name,
         "cleanup",
         "下载完成，正在清理本地多余文件…",
@@ -1968,7 +1993,7 @@ pub async fn sync_software_set(
     prune_extra_files(&dest, &expected)?;
 
     emit_repo_phase(
-        &app,
+        app.as_ref(),
         &set_name,
         "verify",
         "正在检查软件集完整性…",
@@ -1991,8 +2016,8 @@ pub async fn sync_software_set(
         });
     }
 
-    refresh_fingerprints_with_progress(&app, &data_dir, &set_name)?;
-    emit_repo_phase(&app, &set_name, "complete", "同步完成", 100, 100);
+    refresh_fingerprints_with_progress(app.as_ref(), &data_dir, &set_name)?;
+    emit_repo_phase(app.as_ref(), &set_name, "complete", "同步完成", 100, 100);
 
     Ok(RepoStatus {
         cloned,

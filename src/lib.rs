@@ -42,6 +42,22 @@ pub(crate) struct AppState {
     pub(crate) data_dir: PathBuf,
 }
 
+pub(crate) trait EventSink: Send + Sync {
+    fn emit_json(&self, event: &str, payload: serde_json::Value);
+}
+
+impl EventSink for AppHandle {
+    fn emit_json(&self, event: &str, payload: serde_json::Value) {
+        let _ = self.emit(event, payload);
+    }
+}
+
+pub(crate) fn emit_event<T: serde::Serialize>(sink: &dyn EventSink, event: &str, payload: &T) {
+    if let Ok(payload) = serde_json::to_value(payload) {
+        sink.emit_json(event, payload);
+    }
+}
+
 fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&data_dir)?;
     let keys_dir = data_dir.join("keys");
@@ -1266,8 +1282,8 @@ struct UpdateApplyProgress {
 }
 
 async fn ssh_run_apply_progress(
-    app: &AppHandle,
-    state: &State<'_, AppState>,
+    app: std::sync::Arc<dyn EventSink>,
+    state: &AppState,
     host_id: &str,
     command: String,
 ) -> Result<ssh::ExecOutput, String> {
@@ -1293,9 +1309,10 @@ async fn ssh_run_apply_progress(
             return;
         }
         last_emit = now;
-        let _ = app.emit(
+        emit_event(
+            app.as_ref(),
             "cangling-update-progress",
-            UpdateApplyProgress {
+            &UpdateApplyProgress {
                 host_id: hid.clone(),
                 phase: p.phase,
                 message: p.message,
@@ -1410,7 +1427,16 @@ async fn run_cangling_update(
     host_id: String,
     port: Option<u16>,
 ) -> Result<host_actions::UpdateApplyResult, String> {
-    let probe = run_probe(&state, &host_id).await?;
+    run_cangling_update_core(std::sync::Arc::new(app), &state, host_id, port).await
+}
+
+async fn run_cangling_update_core(
+    app: std::sync::Arc<dyn EventSink>,
+    state: &AppState,
+    host_id: String,
+    port: Option<u16>,
+) -> Result<host_actions::UpdateApplyResult, String> {
+    let probe = run_probe(state, &host_id).await?;
     if !probe.supported {
         return Err(format!("unsupported CPU arch: {}", probe.arch));
     }
@@ -1469,9 +1495,10 @@ async fn run_cangling_update(
                 } else {
                     ((done.saturating_mul(80) / package_size).min(80)) as u8
                 };
-                let _ = progress_app.emit(
+                emit_event(
+                    progress_app.as_ref(),
                     "cangling-update-progress",
-                    UpdateApplyProgress {
+                    &UpdateApplyProgress {
                         host_id: progress_host_id.clone(),
                         phase: "upload".into(),
                         message: "正在从本地软件仓库上传".into(),
@@ -1483,7 +1510,7 @@ async fn run_cangling_update(
         .await?;
         (String::new(), staged)
     } else {
-        let remote_port = require_injected(&state, &host_id)?;
+        let remote_port = require_injected(state, &host_id)?;
         (host_actions::inject_proxy_url(remote_port), String::new())
     };
     let cmd = host_actions::wrap_apply_command(
@@ -1493,9 +1520,10 @@ async fn run_cangling_update(
         install_port,
         &staged_package,
     );
-    let _ = app.emit(
+    emit_event(
+        app.as_ref(),
         "cangling-update-progress",
-        UpdateApplyProgress {
+        &UpdateApplyProgress {
             host_id: host_id.clone(),
             phase: "download".into(),
             message: if action == "install" {
@@ -1512,7 +1540,7 @@ async fn run_cangling_update(
             pct: 0,
         },
     );
-    let out = ssh_run_apply_progress(&app, &state, &host_id, cmd).await?;
+    let out = ssh_run_apply_progress(app.clone(), state, &host_id, cmd).await?;
     if out.exit_status != 0 {
         let err = format!(
             "{action} failed (exit {}): {}\n{}",
@@ -1520,9 +1548,10 @@ async fn run_cangling_update(
             out.stderr.trim(),
             out.stdout.trim()
         );
-        let _ = app.emit(
+        emit_event(
+            app.as_ref(),
             "cangling-update-progress",
-            UpdateApplyProgress {
+            &UpdateApplyProgress {
                 host_id: host_id.clone(),
                 phase: "error".into(),
                 message: "更新失败".into(),
@@ -1531,9 +1560,10 @@ async fn run_cangling_update(
         );
         return Err(err);
     }
-    let _ = app.emit(
+    emit_event(
+        app.as_ref(),
         "cangling-update-progress",
-        UpdateApplyProgress {
+        &UpdateApplyProgress {
             host_id,
             phase: "done".into(),
             message: if action == "install" {

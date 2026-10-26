@@ -5,13 +5,13 @@ use std::time::{Duration, Instant};
 
 use russh_sftp::{client::SftpSession, protocol::OpenFlags};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use crate::host::Host;
 use crate::ssh;
 use crate::ssh::ResolvedAuth;
-use crate::{AppState, resolve_auth};
+use crate::{AppState, EventSink, emit_event, resolve_auth};
 
 const SKIP_DIRS: &[&str] = &[".git"];
 const REMOTE_REPO_NAME: &str = "repo";
@@ -361,8 +361,8 @@ fn configured_set_names(state: &AppState, data_dir: &Path) -> Vec<String> {
     crate::repo::list_configured_set_names(&store, data_dir).unwrap_or_default()
 }
 
-fn emit_progress(app: &AppHandle, p: &SyncProgress) {
-    let _ = app.emit("host-software-sync-progress", p);
+fn emit_progress(app: &dyn EventSink, p: &SyncProgress) {
+    emit_event(app, "host-software-sync-progress", p);
 }
 
 /// Open an SFTP session. Some SSH servers accept the subsystem request and
@@ -865,7 +865,7 @@ async fn publish_remote_fingerprint_database(
 }
 
 async fn initialize_remote_fingerprint_database(
-    app: &AppHandle,
+    app: &dyn EventSink,
     host_id: &str,
     session: &russh::client::Handle<crate::ssh::SshClient>,
     sftp: &SftpSession,
@@ -977,6 +977,24 @@ pub async fn sync_host_software(
     host_id: String,
     paths: Option<Vec<String>>,
 ) -> Result<HostSoftwareSyncResult, String> {
+    sync_host_software_core(std::sync::Arc::new(app), &state, host_id, paths).await
+}
+
+pub(crate) async fn web_sync_host_software(
+    app: std::sync::Arc<dyn EventSink>,
+    state: &AppState,
+    host_id: String,
+    paths: Option<Vec<String>>,
+) -> Result<HostSoftwareSyncResult, String> {
+    sync_host_software_core(app, state, host_id, paths).await
+}
+
+async fn sync_host_software_core(
+    app: std::sync::Arc<dyn EventSink>,
+    state: &AppState,
+    host_id: String,
+    paths: Option<Vec<String>>,
+) -> Result<HostSoftwareSyncResult, String> {
     let data_dir = state.data_dir.clone();
     let all_files = collect_local_software(&data_dir)?;
     let all_sets = collect_set_names(&all_files);
@@ -1047,7 +1065,7 @@ pub async fn sync_host_software(
         };
 
     emit_progress(
-        &app,
+        app.as_ref(),
         &SyncProgress {
             host_id: host_id.clone(),
             current: 0,
@@ -1072,7 +1090,7 @@ pub async fn sync_host_software(
             Ok(Some(fingerprints)) => (fingerprints, true),
             Ok(None) | Err(_) => (
                 initialize_remote_fingerprint_database(
-                    &app,
+                    app.as_ref(),
                     &host_id,
                     &session,
                     &sftp,
@@ -1128,11 +1146,11 @@ pub async fn sync_host_software(
             progress.action = "skip".into();
             progress.bytes_done = file.size;
             progress.overall_done = overall_done;
-            emit_progress(&app, &progress);
+            emit_progress(app.as_ref(), &progress);
             continue;
         }
 
-        emit_progress(&app, &progress);
+        emit_progress(app.as_ref(), &progress);
         let fingerprint = local_fingerprints
             .get(&file.rel)
             .cloned()
@@ -1152,7 +1170,7 @@ pub async fn sync_host_software(
                     last_emit = now;
                     progress.bytes_done = done;
                     progress.overall_done = overall_done.saturating_add(done);
-                    emit_progress(&app, &progress);
+                    emit_progress(app.as_ref(), &progress);
                 }
             },
         )
@@ -1178,13 +1196,13 @@ pub async fn sync_host_software(
                 progress.action = "upload".into();
                 progress.bytes_done = file.size;
                 progress.overall_done = overall_done;
-                emit_progress(&app, &progress);
+                emit_progress(app.as_ref(), &progress);
             }
             Err(e) => {
                 failed += 1;
                 last_error = format!("{}: {e}", file.rel);
                 progress.action = "fail".into();
-                emit_progress(&app, &progress);
+                emit_progress(app.as_ref(), &progress);
             }
         }
     }

@@ -39,9 +39,18 @@ use crate::{
 struct UiAssets;
 
 #[derive(Clone)]
-struct WebState {
+pub(crate) struct WebState {
     core: Arc<AppState>,
     events: broadcast::Sender<WebEvent>,
+}
+
+impl crate::EventSink for WebState {
+    fn emit_json(&self, event: &str, payload: Value) {
+        let _ = self.events.send(WebEvent {
+            event: event.into(),
+            payload,
+        });
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -278,6 +287,20 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
         "probe_cangling_update" => {
             value(crate::probe_cangling_update_core(core, &arg::<String>(&args, "hostId")?).await?)
         }
+        "run_cangling_update" => value(
+            crate::run_cangling_update_core(
+                std::sync::Arc::new(state.clone()),
+                core,
+                arg(&args, "hostId")?,
+                args.get("port")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| e.to_string())?
+                    .flatten(),
+            )
+            .await?,
+        ),
         "cluster_console_url" => {
             value(crate::cluster_console_url_core(core, &arg::<String>(&args, "hostId")?).await?)
         }
@@ -499,6 +522,14 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             value(())
         }
         "repo_status" => value(crate::repo::web_repo_status(core)),
+        "sync_software_set" => value(
+            crate::repo::web_sync_software_set(
+                std::sync::Arc::new(state.clone()),
+                core,
+                arg(&args, "setName")?,
+            )
+            .await?,
+        ),
         "list_software_sets" => value(crate::repo::web_list_software_sets(core)?),
         "add_software_set" => value(crate::repo::web_add_software_set(
             core,
@@ -531,6 +562,20 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
         "preview_host_software_sync" => {
             value(crate::host_sync::web_preview_host_software_sync(core)?)
         }
+        "sync_host_software" => value(
+            crate::host_sync::web_sync_host_software(
+                std::sync::Arc::new(state.clone()),
+                core,
+                arg(&args, "hostId")?,
+                args.get("paths")
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|e| e.to_string())?
+                    .flatten(),
+            )
+            .await?,
+        ),
         "open_local_path" => {
             crate::open_local_path(arg(&args, "path")?)?;
             value(())
