@@ -70,17 +70,14 @@ impl WebState {
 }
 
 pub(crate) fn run_from_args() -> Result<(), String> {
-    let mut listen = "127.0.0.1:4301".to_string();
+    let listen = listen_from_args()?;
     let mut data_dir = default_data_dir()?;
     let mut open = true;
     let args: Vec<String> = std::env::args().collect();
     let mut index = 1;
     while index < args.len() {
         match args[index].as_str() {
-            "--listen" => {
-                index += 1;
-                listen = args.get(index).ok_or("--listen 缺少地址")?.clone();
-            }
+            "--listen" => index += 1,
             "--data-dir" => {
                 index += 1;
                 data_dir = PathBuf::from(args.get(index).ok_or("--data-dir 缺少目录")?);
@@ -98,6 +95,30 @@ pub(crate) fn run_from_args() -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     runtime.block_on(run(address, data_dir, open))
+}
+
+pub(crate) fn home_url_from_args() -> Result<String, String> {
+    let mut address: SocketAddr = listen_from_args()?
+        .parse()
+        .map_err(|error| format!("无效监听地址：{error}"))?;
+    if address.ip().is_unspecified() {
+        address.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    }
+    Ok(format!("http://{address}"))
+}
+
+fn listen_from_args() -> Result<String, String> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut listen = "127.0.0.1:4301".to_string();
+    let mut index = 1;
+    while index < args.len() {
+        if args[index] == "--listen" {
+            index += 1;
+            listen = args.get(index).ok_or("--listen 缺少地址")?.clone();
+        }
+        index += 1;
+    }
+    Ok(listen)
 }
 
 fn default_data_dir() -> Result<PathBuf, String> {

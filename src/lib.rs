@@ -1,5 +1,6 @@
 mod auth;
 mod certificate;
+mod desktop_shortcut;
 mod fingerprints;
 mod host;
 mod host_actions;
@@ -94,7 +95,20 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
 
 /// Start the browser-based service.
 pub fn run_web_from_args() -> Result<(), String> {
-    let _instance_guard = single_instance::acquire()?;
+    match desktop_shortcut::ensure_exists() {
+        Ok(Some(path)) => println!("已创建桌面快捷方式：{}", path.display()),
+        Ok(None) => {}
+        Err(error) => eprintln!("创建桌面快捷方式失败：{error}"),
+    }
+    let _instance_guard = match single_instance::acquire() {
+        Ok(guard) => guard,
+        Err(single_instance::AcquireError::AlreadyRunning) => {
+            let url = web::home_url_from_args()?;
+            open_url(url)?;
+            return Ok(());
+        }
+        Err(error) => return Err(error.to_string()),
+    };
     web::run_from_args()
 }
 

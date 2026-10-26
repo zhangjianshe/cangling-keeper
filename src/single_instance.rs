@@ -1,3 +1,18 @@
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AcquireError {
+    AlreadyRunning,
+    Other(String),
+}
+
+impl std::fmt::Display for AcquireError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AlreadyRunning => write!(formatter, "cangling-keeper 已经在运行"),
+            Self::Other(message) => formatter.write_str(message),
+        }
+    }
+}
+
 #[cfg(unix)]
 mod platform {
     use std::fs::{File, OpenOptions};
@@ -16,31 +31,31 @@ mod platform {
         _file: File,
     }
 
-    fn acquire_path(path: &Path) -> Result<SingleInstanceGuard, String> {
+    fn acquire_path(path: &Path) -> Result<SingleInstanceGuard, super::AcquireError> {
         let mut file = OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
             .open(path)
-            .map_err(|e| format!("无法打开单实例锁 {}：{e}", path.display()))?;
+            .map_err(|e| super::AcquireError::Other(format!("无法打开单实例锁 {}：{e}", path.display())))?;
 
         // SAFETY: `file` owns a valid descriptor for the duration of this call.
         let result = unsafe { flock(file.as_raw_fd(), LOCK_EX | LOCK_NB) };
         if result != 0 {
             let error = io::Error::last_os_error();
             if error.kind() == io::ErrorKind::WouldBlock {
-                return Err("cangling-keeper 已经在运行，本次启动已取消".into());
+                return Err(super::AcquireError::AlreadyRunning);
             }
-            return Err(format!("无法获取 cangling-keeper 单实例锁：{error}"));
+            return Err(super::AcquireError::Other(format!("无法获取 cangling-keeper 单实例锁：{error}")));
         }
 
         file.set_len(0)
             .and_then(|_| write!(file, "{}\n", std::process::id()))
-            .map_err(|e| format!("无法记录 cangling-keeper 进程号：{e}"))?;
+            .map_err(|e| super::AcquireError::Other(format!("无法记录 cangling-keeper 进程号：{e}")))?;
         Ok(SingleInstanceGuard { _file: file })
     }
 
-    pub fn acquire() -> Result<SingleInstanceGuard, String> {
+    pub fn acquire() -> Result<SingleInstanceGuard, super::AcquireError> {
         acquire_path(&std::env::temp_dir().join("cangling-keeper.lock"))
     }
 
@@ -91,7 +106,7 @@ mod platform {
         }
     }
 
-    pub fn acquire() -> Result<SingleInstanceGuard, String> {
+    pub fn acquire() -> Result<SingleInstanceGuard, super::AcquireError> {
         let name: Vec<u16> = "Global\\cangling-keeper-single-instance\0"
             .encode_utf16()
             .collect();
@@ -99,17 +114,17 @@ mod platform {
         // returned handle is retained by the guard.
         let handle = unsafe { CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr()) };
         if handle.is_null() {
-            return Err(format!(
+            return Err(super::AcquireError::Other(format!(
                 "无法创建 cangling-keeper 单实例锁：{}",
                 io::Error::last_os_error()
-            ));
+            )));
         }
         // SAFETY: GetLastError has no preconditions and must be read directly
         // after CreateMutexW.
         if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
             // SAFETY: the returned handle is valid even when the mutex exists.
             unsafe { CloseHandle(handle) };
-            return Err("cangling-keeper 已经在运行，本次启动已取消".into());
+            return Err(super::AcquireError::AlreadyRunning);
         }
         Ok(SingleInstanceGuard { handle })
     }

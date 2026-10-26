@@ -353,6 +353,12 @@ This embeds the frontend, starts the local service and opens the system browser:
 cargo run
 ```
 
+On startup, Keeper creates a desktop shortcut if one does not already exist
+(`cangling-keeper.lnk` on Windows or `cangling-keeper.desktop` on Linux). Opening
+the shortcut starts the service and opens its home page. If Keeper is already
+running, the second process exits after opening the existing home page instead
+of starting another service instance.
+
 The default URL is `http://127.0.0.1:4301`. Optional arguments:
 
 ```sh
