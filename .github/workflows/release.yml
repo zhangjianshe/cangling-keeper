@@ -17,9 +17,11 @@ jobs:
           - platform: ubuntu-22.04
             os-name: linux
             arch-name: amd64
+            rust-target: x86_64-unknown-linux-gnu
           - platform: windows-latest
             os-name: windows
             arch-name: x86_64
+            rust-target: x86_64-win7-windows-msvc
 
     runs-on: ${{ matrix.platform }}
 
@@ -36,26 +38,52 @@ jobs:
             curl
 
       - name: Install Rust (stable)
+        if: matrix.os-name == 'linux'
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Install Rust (nightly with standard library sources)
+        if: matrix.os-name == 'windows'
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './ -> target'
 
-      - name: Build release binary
-        run: cargo build --release --locked
+      - name: Build Linux release binary
+        if: matrix.os-name == 'linux'
+        run: cargo build --release --locked --target ${{ matrix.rust-target }}
+
+      - name: Build Windows 7-compatible release binary
+        if: matrix.os-name == 'windows'
+        run: cargo +nightly build --release --locked -Z build-std=std,panic_abort --target ${{ matrix.rust-target }}
 
       - name: Stage release binary
         shell: bash
         run: |
           mkdir -p dist
           if [[ "${{ matrix.os-name }}" == "windows" ]]; then
-            cp target/release/cangling-keeper.exe dist/cangling-keeper-windows-x86_64.exe
+            cp target/${{ matrix.rust-target }}/release/cangling-keeper.exe dist/cangling-keeper-windows-x86_64.exe
           else
-            cp target/release/cangling-keeper dist/cangling-keeper-linux-amd64
+            cp target/${{ matrix.rust-target }}/release/cangling-keeper dist/cangling-keeper-linux-amd64
             chmod +x dist/cangling-keeper-linux-amd64
           fi
+
+      - name: Verify Windows 7 compatibility
+        if: matrix.os-name == 'windows'
+        shell: pwsh
+        run: |
+          $exe = "dist/cangling-keeper-windows-x86_64.exe"
+          $content = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
+          if ($content.Contains("ProcessPrng") -or $content.Contains("bcryptprimitives.dll")) {
+            Write-Error "Windows binary imports ProcessPrng and cannot run on Windows 7"
+            exit 1
+          }
+          Write-Host "Windows 7 RNG compatibility check passed"
 
       - name: Upload GitHub release asset
         uses: softprops/action-gh-release@v2

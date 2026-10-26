@@ -336,6 +336,9 @@ sudo apt install build-essential pkg-config
 
 ### Windows
 
+- Windows 7 SP1 or newer is supported by release binaries. The release workflow
+  uses Rust's `x86_64-win7-windows-msvc` target so the executable does not
+  import the Windows 10-only `ProcessPrng` entry point.
 - Microsoft Visual Studio **C++ Build Tools** with the "Desktop development
   with C++" workload (MSVC).
 - Rust **MSVC** toolchain (`rustup default stable-msvc`).
