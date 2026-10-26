@@ -60,6 +60,8 @@ jobs:
 
       - name: Build Windows 7-compatible release binary
         if: matrix.os-name == 'windows'
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo +nightly build --release --locked -Z build-std=std,panic_abort --target ${{ matrix.rust-target }}
 
       - name: Stage release binary
@@ -79,7 +81,13 @@ jobs:
         run: |
           $exe = "dist/cangling-keeper-windows-x86_64.exe"
           $content = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
-          $forbidden = @("ProcessPrng", "bcryptprimitives.dll", "combase.dll")
+          $forbidden = @(
+            "ProcessPrng",
+            "bcryptprimitives.dll",
+            "combase.dll",
+            "VCRUNTIME140.dll",
+            "api-ms-win-crt-"
+          )
           $found = $forbidden | Where-Object { $content.Contains($_) }
           if ($found) {
             Write-Error "Windows binary imports APIs unavailable on Windows 7: $($found -join ', ')"
