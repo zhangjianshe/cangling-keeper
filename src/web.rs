@@ -636,12 +636,32 @@ async fn connect_tunnel(state: &WebState, tunnel_id: String) -> Result<(), Strin
         let ResolvedAuth::Key(key) = auth else {
             return Err("WebSocket tunnel requires certificate authentication".into());
         };
-        let established = crate::websocket_tunnel::establish(&tunnel, &key).await?;
         let rx = register_active_tunnel(&state.core, &tunnel_id)?;
-        tokio::spawn(async move {
-            crate::websocket_tunnel::accept_loop(established, rx).await;
-            tunnel_finished(&web, &tunnel_id);
-        });
+        if tunnel.direction == "remote" {
+            let established = crate::websocket_tunnel::establish_reverse(&tunnel, &key).await;
+            match established {
+                Ok(established) => tokio::spawn(async move {
+                    crate::websocket_tunnel::hold_reverse(established, rx).await;
+                    tunnel_finished(&web, &tunnel_id);
+                }),
+                Err(error) => {
+                    state.core.active_tunnels.lock().map_err(|e| e.to_string())?.remove(&tunnel_id);
+                    return Err(error);
+                }
+            };
+        } else {
+            let established = crate::websocket_tunnel::establish(&tunnel, &key).await;
+            match established {
+                Ok(established) => tokio::spawn(async move {
+                    crate::websocket_tunnel::accept_loop(established, rx).await;
+                    tunnel_finished(&web, &tunnel_id);
+                }),
+                Err(error) => {
+                    state.core.active_tunnels.lock().map_err(|e| e.to_string())?.remove(&tunnel_id);
+                    return Err(error);
+                }
+            };
+        }
     } else if tunnel.direction == "remote" {
         let established = ssh::establish_reverse_tunnel(&tunnel, &auth).await?;
         let rx = register_active_tunnel(&state.core, &tunnel_id)?;

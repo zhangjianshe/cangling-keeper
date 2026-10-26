@@ -6,14 +6,16 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use futures_util::{SinkExt, StreamExt};
 use russh::keys::ssh_key::{HashAlg, Signature};
 use russh::keys::{Algorithm, PrivateKey};
+use russh::{Disconnect, client};
 use signature::Signer;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
 
 use crate::tunnel::Tunnel;
+use crate::ssh::{self, ResolvedAuth};
 
 const SIGNATURE_DOMAIN: &str = "cangling-tunnel-v1";
 const KEY_HEADER: &str = "x-cangling-tunnel-key";
@@ -25,6 +27,49 @@ pub struct Established {
     listener: TcpListener,
     url: String,
     private_key: Arc<PrivateKey>,
+}
+
+struct ReverseWebSocketClient {
+    url: String,
+    private_key: Arc<PrivateKey>,
+}
+
+impl client::Handler for ReverseWebSocketClient {
+    type Error = russh::Error;
+
+    async fn check_server_key(
+        &mut self,
+        _server_public_key: &russh::keys::PublicKeyOrCertificate,
+    ) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<russh::client::Msg>,
+        _connected_address: &str,
+        _connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
+        _session: &mut russh::client::Session,
+    ) -> Result<(), Self::Error> {
+        reply.accept().await;
+        let url = self.url.clone();
+        let private_key = self.private_key.clone();
+        tokio::spawn(async move {
+            if let Err(error) = forward(channel.into_stream(), &url, &private_key).await {
+                eprintln!("Remote WebSocket tunnel connection failed: {error}");
+            }
+        });
+        Ok(())
+    }
+}
+
+pub struct EstablishedReverse {
+    session: client::Handle<ReverseWebSocketClient>,
+    remote_host: String,
+    remote_port: u16,
 }
 
 pub async fn establish(tunnel: &Tunnel, private_key_path: &str) -> Result<Established, String> {
@@ -42,6 +87,74 @@ pub async fn establish(tunnel: &Tunnel, private_key_path: &str) -> Result<Establ
         url: tunnel.websocket_url.clone(),
         private_key: Arc::new(private_key),
     })
+}
+
+pub async fn establish_reverse(
+    tunnel: &Tunnel,
+    private_key_path: &str,
+) -> Result<EstablishedReverse, String> {
+    let private_key = russh::keys::load_secret_key(private_key_path, None)
+        .map_err(|e| format!("Failed to load WebSocket tunnel key '{private_key_path}': {e}"))?;
+    if private_key.algorithm() != Algorithm::Ed25519 {
+        return Err("WebSocket tunnel requires an Ed25519 certificate".into());
+    }
+    let handler = ReverseWebSocketClient {
+        url: tunnel.websocket_url.clone(),
+        private_key: Arc::new(private_key),
+    };
+    let mut session = ssh::connect_with(&tunnel.ssh_host, tunnel.ssh_port, handler).await?;
+    ssh::authenticate(
+        &mut session,
+        &tunnel.username,
+        &ResolvedAuth::Key(private_key_path.to_string()),
+    )
+    .await?;
+    let remote_host = tunnel.remote_host.trim().to_string();
+    session
+        .tcpip_forward(&remote_host, tunnel.local_port as u32)
+        .await
+        .map_err(|error| {
+            let hint = if remote_host == "0.0.0.0" {
+                "; 请检查远端 sshd 是否启用 GatewayPorts clientspecified（或 yes）"
+            } else {
+                ""
+            };
+            format!(
+                "远端监听 {remote_host}:{} 失败: {error:?}{hint}",
+                tunnel.local_port
+            )
+        })?;
+    Ok(EstablishedReverse {
+        session,
+        remote_host,
+        remote_port: tunnel.local_port,
+    })
+}
+
+pub async fn hold_reverse(
+    established: EstablishedReverse,
+    mut stop: tokio::sync::oneshot::Receiver<()>,
+) {
+    let EstablishedReverse {
+        session,
+        remote_host,
+        remote_port,
+    } = established;
+    loop {
+        tokio::select! {
+            _ = &mut stop => break,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                if session.is_closed() {
+                    break;
+                }
+                let _ = session.send_keepalive(false).await;
+            }
+        }
+    }
+    let _ = session.cancel_tcpip_forward(&remote_host, remote_port as u32).await;
+    let _ = session
+        .disconnect(Disconnect::ByApplication, "tunnel stopped", "en")
+        .await;
 }
 
 pub async fn accept_loop(established: Established, mut stop: tokio::sync::oneshot::Receiver<()>) {
@@ -69,7 +182,10 @@ pub async fn accept_loop(established: Established, mut stop: tokio::sync::onesho
     }
 }
 
-async fn forward(tcp: TcpStream, url: &str, private_key: &PrivateKey) -> Result<(), String> {
+async fn forward<S>(tcp: S, url: &str, private_key: &PrivateKey) -> Result<(), String>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let mut request = url
         .into_client_request()
         .map_err(|e| format!("Invalid WebSocket URL: {e}"))?;
@@ -85,7 +201,7 @@ async fn forward(tcp: TcpStream, url: &str, private_key: &PrivateKey) -> Result<
     }
 
     let (mut ws_out, mut ws_in) = socket.split();
-    let (mut tcp_in, mut tcp_out) = tcp.into_split();
+    let (mut tcp_in, mut tcp_out) = tokio::io::split(tcp);
     let mut buffer = vec![0_u8; 64 * 1024];
     loop {
         tokio::select! {

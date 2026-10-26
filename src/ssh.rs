@@ -44,7 +44,7 @@ impl client::Handler for SshClient {
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
-async fn connect_with<H>(host: &str, port: u16, handler: H) -> Result<client::Handle<H>, String>
+pub(crate) async fn connect_with<H>(host: &str, port: u16, handler: H) -> Result<client::Handle<H>, String>
 where
     H: client::Handler + Send + 'static,
     H::Error: From<russh::Error> + Send + std::fmt::Debug,

@@ -66,6 +66,25 @@ impl Tunnel {
             if !matches!(self.auth, Auth::Certificate { .. }) {
                 return Err("WebSocket tunnel requires certificate authentication".into());
             }
+            if self.local_port == 0 {
+                return Err("Listen port must be between 1 and 65535".into());
+            }
+            if self.direction == "remote" {
+                if self.remote_host.trim().is_empty() {
+                    return Err("Remote listen IP is required".into());
+                }
+                if self.ssh_host.trim().is_empty() {
+                    return Err("SSH host is required".into());
+                }
+                if self.ssh_port == 0 {
+                    return Err("SSH port must be between 1 and 65535".into());
+                }
+                if self.username.trim().is_empty() {
+                    return Err("Username is required".into());
+                }
+            } else if self.local_host.trim().is_empty() {
+                return Err("Local host / IP is required".into());
+            }
             return Ok(());
         }
         if !matches!(self.direction.as_str(), "local" | "remote") {
@@ -265,6 +284,30 @@ mod tests {
             ssh_host: String::new(),
             ssh_port: 0,
             username: String::new(),
+            auth: Auth::Certificate {
+                certificate_id: "cert-1".into(),
+            },
+        };
+        assert!(tunnel.validate().is_ok());
+    }
+
+    #[test]
+    fn validates_remote_websocket_tunnel() {
+        let tunnel = Tunnel {
+            id: String::new(),
+            remote_id: String::new(),
+            user_id: 0,
+            name: "remote-ws".into(),
+            tunnel_type: "websocket".into(),
+            websocket_url: "wss://update.example.test/api/tunnel/ws".into(),
+            direction: "remote".into(),
+            local_host: "127.0.0.1".into(),
+            local_port: 10022,
+            remote_host: "0.0.0.0".into(),
+            remote_port: 0,
+            ssh_host: "gateway.example.test".into(),
+            ssh_port: 22,
+            username: "root".into(),
             auth: Auth::Certificate {
                 certificate_id: "cert-1".into(),
             },

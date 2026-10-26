@@ -1640,12 +1640,13 @@ function renderTunnelList() {
   }
   for (const t of state.tunnels) {
     const isWebSocket = t.tunnelType === "websocket";
+    const isRemoteWebSocket = isWebSocket && t.direction === "remote";
     tunnelListEl.appendChild(
       makeItem({
         selected: t.id === state.selectedTunnelId,
         name: t.name,
         sub: isWebSocket
-          ? `WEBSOCKET ${t.localHost}:${t.localPort}`
+          ? `WEBSOCKET ${isRemoteWebSocket ? "Remote " : ""}${isRemoteWebSocket ? t.remoteHost : t.localHost}:${t.localPort}`
           : t.direction === "remote"
           ? `Remote ${t.remoteHost}:${t.localPort} ← ${t.localHost}:${t.remotePort}`
           : `Local ${t.localHost}:${t.localPort} → ${t.remoteHost}:${t.remotePort}`,
@@ -1810,12 +1811,14 @@ function renderTunnelDetail() {
   tunnelStatusEl.textContent = t.active ? "Connected" : "Disconnected";
   tunnelStatusEl.className = "status " + (t.active ? "on" : "off");
   const isWebSocket = t.tunnelType === "websocket";
-  const reverse = !isWebSocket && t.direction === "remote";
+  const reverse = t.direction === "remote";
   tLocalLabelEl.textContent = reverse ? "Remote listen" : "Local listen";
   tRemoteLabelEl.textContent = isWebSocket ? "WebSocket endpoint" : (reverse ? "Local target" : "Remote target");
   tLocalEl.textContent = `${reverse ? t.remoteHost : t.localHost}:${t.localPort}`;
   tRemoteEl.textContent = isWebSocket ? t.websocketUrl : `${reverse ? t.localHost : t.remoteHost}:${t.remotePort}`;
-  tSshEl.textContent = isWebSocket ? "WEBSOCKET → SSH :22" : `${t.username}@${t.sshHost}:${t.sshPort}`;
+  tSshEl.textContent = isWebSocket
+    ? reverse ? `${t.username}@${t.sshHost}:${t.sshPort}` : "WEBSOCKET → SSH :22"
+    : `${t.username}@${t.sshHost}:${t.sshPort}`;
   tAuthEl.textContent =
     t.auth.method === "certificate"
       ? `Certificate · ${certNameById(t.auth.certificateId)}`
@@ -2476,14 +2479,21 @@ function openTunnelModal(tunnel) {
   f.name.value = tunnel ? tunnel.name : "";
   f.tunnel_type.value = tunnel ? tunnel.tunnelType || "ssh" : "ssh";
   f.websocket_url.value = tunnel ? tunnel.websocketUrl || "" : "";
+  const websocketRemote = Boolean(tunnel && tunnel.tunnelType === "websocket" && tunnel.direction === "remote");
+  $("#websocket-listen-mode").value = websocketRemote ? "remote" : "local";
   f.direction.value = tunnel ? tunnel.direction || "local" : "local";
-  f.local_host.value = tunnel ? tunnel.localHost || "127.0.0.1" : "127.0.0.1";
+  f.local_host.value = websocketRemote
+    ? tunnel.remoteHost || "127.0.0.1"
+    : tunnel ? tunnel.localHost || "127.0.0.1" : "127.0.0.1";
   f.local_port.value = tunnel ? tunnel.localPort : "";
   f.remote_host.value = tunnel ? tunnel.remoteHost : "";
   f.remote_port.value = tunnel ? tunnel.remotePort : "";
   f.ssh_host.value = tunnel ? tunnel.sshHost : "";
   f.ssh_port.value = tunnel ? tunnel.sshPort : 22;
   f.username.value = tunnel ? tunnel.username : "";
+  f.websocket_ssh_host.value = websocketRemote ? tunnel.sshHost : "";
+  f.websocket_ssh_port.value = websocketRemote ? tunnel.sshPort || 22 : 22;
+  f.websocket_username.value = websocketRemote ? tunnel.username : "";
   sshCmdInputEl.value = "";
 
   if (tunnel && tunnel.auth && tunnel.auth.method === "certificate") {
@@ -2575,11 +2585,22 @@ function updateTunnelAuthFields() {
 function updateTunnelTypeFields() {
   const f = tunnelFormEl.elements;
   const websocket = f.tunnel_type.value === "websocket";
+  const websocketRemote = websocket && $("#websocket-listen-mode").value === "remote";
   document.querySelectorAll(".tunnel-ssh-only").forEach((el) => el.classList.toggle("hidden", websocket));
   $("#tunnel-websocket-fields").classList.toggle("hidden", !websocket);
+  $("#websocket-ssh-fields").classList.toggle("hidden", !websocketRemote);
   $("#tunnel-auth-password-option").classList.toggle("hidden", websocket);
+  $("#tunnel-listen-host-label").textContent = websocketRemote ? "远端监听 IP" : "Local host / IP";
+  $("#tunnel-listen-port-label").textContent = websocketRemote ? "远端监听端口" : "Local port";
+  f.local_host.placeholder = websocketRemote ? "127.0.0.1 或 0.0.0.0" : "127.0.0.1";
   f.websocket_url.required = websocket;
   f.websocket_url.disabled = !websocket;
+  f.websocket_ssh_host.required = websocketRemote;
+  f.websocket_ssh_port.required = websocketRemote;
+  f.websocket_username.required = websocketRemote;
+  ["websocket_ssh_host", "websocket_ssh_port", "websocket_username"].forEach((name) => {
+    f[name].disabled = !websocketRemote;
+  });
   ["direction", "remote_host", "remote_port", "ssh_host", "ssh_port", "username"].forEach((name) => {
     f[name].disabled = websocket;
   });
@@ -3375,6 +3396,7 @@ tunnelFormEl.querySelectorAll('input[name="auth_method"]').forEach((r) => {
   r.addEventListener("change", updateTunnelAuthFields);
 });
 tunnelFormEl.elements.tunnel_type.addEventListener("change", updateTunnelTypeFields);
+$("#websocket-listen-mode").addEventListener("change", updateTunnelTypeFields);
 
 hostFormEl.addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -3415,18 +3437,20 @@ tunnelFormEl.addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = tunnelFormEl.elements;
   const method = f.auth_method.value;
+  const websocket = f.tunnel_type.value === "websocket";
+  const websocketRemote = websocket && $("#websocket-listen-mode").value === "remote";
   const tunnel = {
     name: f.name.value.trim(),
-    tunnelType: f.tunnel_type.value === "websocket" ? "websocket" : "ssh",
+    tunnelType: websocket ? "websocket" : "ssh",
     websocketUrl: f.websocket_url.value.trim(),
-    direction: f.direction.value || "local",
-    localHost: f.local_host.value.trim() || "127.0.0.1",
+    direction: websocket ? (websocketRemote ? "remote" : "local") : f.direction.value || "local",
+    localHost: websocketRemote ? "127.0.0.1" : f.local_host.value.trim() || "127.0.0.1",
     localPort: parseInt(f.local_port.value, 10) || 0,
-    remoteHost: f.remote_host.value.trim(),
+    remoteHost: websocketRemote ? f.local_host.value.trim() : f.remote_host.value.trim(),
     remotePort: parseInt(f.remote_port.value, 10) || 0,
-    sshHost: f.ssh_host.value.trim(),
-    sshPort: parseInt(f.ssh_port.value, 10) || 22,
-    username: f.username.value.trim(),
+    sshHost: websocketRemote ? f.websocket_ssh_host.value.trim() : f.ssh_host.value.trim(),
+    sshPort: websocketRemote ? parseInt(f.websocket_ssh_port.value, 10) || 22 : parseInt(f.ssh_port.value, 10) || 22,
+    username: websocketRemote ? f.websocket_username.value.trim() : f.username.value.trim(),
     auth:
       method === "certificate"
         ? { method: "certificate", certificateId: f.certificate_id.value }

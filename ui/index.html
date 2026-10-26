@@ -452,7 +452,18 @@
             <label>WebSocket URL
               <input name="websocket_url" type="url" placeholder="wss://server/update/api/tunnel/ws" />
             </label>
-            <p class="hint">使用所选 Ed25519 证书签名连接 cangling-update；服务端固定转发到其本机 SSH 22 端口。</p>
+            <label>监听位置
+              <select id="websocket-listen-mode">
+                <option value="local">本地</option>
+                <option value="remote">远程 SSH 主机</option>
+              </select>
+            </label>
+            <div id="websocket-ssh-fields" class="grid-2 hidden">
+              <label>SSH host <input name="websocket_ssh_host" type="text" placeholder="server.example.com" /></label>
+              <label>SSH port <input name="websocket_ssh_port" type="number" min="1" max="65535" value="22" /></label>
+              <label>Username <input name="websocket_username" type="text" placeholder="root" /></label>
+            </div>
+            <p class="hint">使用所选 Ed25519 证书签名连接 cangling-update；服务端固定转发到其本机 SSH 22 端口。远程监听时，同一证书公钥还需加入远程 SSH 用户的 authorized_keys。</p>
           </div>
 
           <div class="parse-box tunnel-ssh-only">
@@ -477,8 +488,8 @@
           </label>
 
           <div class="grid-2">
-            <label>Local host / IP <input name="local_host" type="text" value="127.0.0.1" required placeholder="127.0.0.1" /></label>
-            <label>Local port <input name="local_port" type="number" min="1" max="65535" required /></label>
+            <label><span id="tunnel-listen-host-label">Local host / IP</span> <input name="local_host" type="text" value="127.0.0.1" required placeholder="127.0.0.1" /></label>
+            <label><span id="tunnel-listen-port-label">Local port</span> <input name="local_port" type="number" min="1" max="65535" required /></label>
           </div>
           <div class="grid-2 tunnel-ssh-only">
             <label>Remote host <input name="remote_host" type="text" required placeholder="10.1.1.1" /></label>
