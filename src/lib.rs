@@ -6,6 +6,7 @@ mod host;
 mod host_actions;
 mod host_cmd;
 mod host_sync;
+mod platform_dirs;
 mod proxy;
 mod repo;
 mod single_instance;

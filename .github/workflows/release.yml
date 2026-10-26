@@ -79,11 +79,13 @@ jobs:
         run: |
           $exe = "dist/cangling-keeper-windows-x86_64.exe"
           $content = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
-          if ($content.Contains("ProcessPrng") -or $content.Contains("bcryptprimitives.dll")) {
-            Write-Error "Windows binary imports ProcessPrng and cannot run on Windows 7"
+          $forbidden = @("ProcessPrng", "bcryptprimitives.dll", "combase.dll")
+          $found = $forbidden | Where-Object { $content.Contains($_) }
+          if ($found) {
+            Write-Error "Windows binary imports APIs unavailable on Windows 7: $($found -join ', ')"
             exit 1
           }
-          Write-Host "Windows 7 RNG compatibility check passed"
+          Write-Host "Windows 7 import compatibility check passed"
 
       - name: Upload GitHub release asset
         uses: softprops/action-gh-release@v2

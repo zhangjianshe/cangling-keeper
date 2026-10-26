@@ -123,7 +123,7 @@ fn listen_from_args() -> Result<String, String> {
 }
 
 fn default_data_dir() -> Result<PathBuf, String> {
-    dirs::data_dir()
+    crate::platform_dirs::data_dir()
         .map(|dir| dir.join("cn.cangling.keeper"))
         .ok_or_else(|| "无法确定用户数据目录，请使用 --data-dir 指定".into())
 }

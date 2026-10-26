@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 const APP_NAME: &str = "cangling-keeper";
 
 pub fn ensure_exists() -> Result<Option<PathBuf>, String> {
-    let desktop = dirs::desktop_dir().ok_or("无法确定桌面目录")?;
+    let desktop = crate::platform_dirs::desktop_dir().ok_or("无法确定桌面目录")?;
     std::fs::create_dir_all(&desktop)
         .map_err(|error| format!("无法创建桌面目录 {}：{error}", desktop.display()))?;
     ensure_platform_shortcut(&desktop)
