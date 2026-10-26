@@ -1,6 +1,6 @@
 [package]
 name = "cangling-keeper"
-version = "0.0.87"
+version = "0.0.88"
 description = "A browser-based Rust service for host and repository maintenance"
 authors = ["satway"]
 edition = "2024"
