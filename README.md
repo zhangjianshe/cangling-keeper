@@ -353,10 +353,10 @@ This embeds the frontend, starts the local service and opens the system browser:
 cargo run
 ```
 
-The default URL is `http://127.0.0.1:18080`. Optional arguments:
+The default URL is `http://127.0.0.1:4301`. Optional arguments:
 
 ```sh
-cangling-keeper --listen 127.0.0.1:18080 --no-open
+cangling-keeper --listen 127.0.0.1:4301 --no-open
 cangling-keeper --data-dir D:\cangling-keeper-data
 ```
 

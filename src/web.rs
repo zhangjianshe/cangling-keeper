@@ -70,7 +70,7 @@ impl WebState {
 }
 
 pub(crate) fn run_from_args() -> Result<(), String> {
-    let mut listen = "127.0.0.1:18080".to_string();
+    let mut listen = "127.0.0.1:4301".to_string();
     let mut data_dir = default_data_dir()?;
     let mut open = true;
     let args: Vec<String> = std::env::args().collect();
@@ -984,7 +984,7 @@ mod tests {
 
     #[test]
     fn default_server_is_loopback_only() {
-        let address: SocketAddr = "127.0.0.1:18080".parse().unwrap();
+        let address: SocketAddr = "127.0.0.1:4301".parse().unwrap();
         assert!(address.ip().is_loopback());
     }
 }
