@@ -2084,6 +2084,171 @@ pub fn read_repo_file(state: State<'_, AppState>, path: String) -> Result<RepoFi
     })
 }
 
+// Browser-server entry points.  These mirror the read-only/metadata Tauri
+// commands without requiring a Tauri `State` wrapper.
+pub(crate) fn web_repo_status(state: &AppState) -> RepoStatus {
+    current_status(state)
+}
+
+pub(crate) fn web_list_software_sets(
+    state: &AppState,
+) -> Result<Vec<SoftwareSetInfo>, String> {
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    list_set_infos(&store, &state.data_dir)
+}
+
+pub(crate) fn web_add_software_set(
+    state: &AppState,
+    set_name: String,
+    kind: String,
+    git_url: String,
+    git_username: String,
+    git_token: String,
+    git_branch: String,
+) -> Result<Vec<SoftwareSetInfo>, String> {
+    let record = build_record(set_name, kind, git_url, git_username, git_token, git_branch)?;
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let mut records = ensure_set_records(&store, &state.data_dir)?;
+    if records.iter().any(|item| item.name.eq_ignore_ascii_case(&record.name)) {
+        return Err(format!("软件集 {} 已存在", record.name));
+    }
+    let name = record.name.clone();
+    records.push(record);
+    save_set_records(&store, &records)?;
+    store.set_setting(SETTING_SOFTWARE_SET, &name)?;
+    list_set_infos(&store, &state.data_dir)
+}
+
+pub(crate) fn web_update_software_set(
+    state: &AppState,
+    set_name: String,
+    kind: String,
+    git_url: String,
+    git_username: String,
+    git_token: String,
+    git_branch: String,
+) -> Result<Vec<SoftwareSetInfo>, String> {
+    let record = build_record(set_name, kind, git_url, git_username, git_token, git_branch)?;
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let mut records = ensure_set_records(&store, &state.data_dir)?;
+    let existing = records
+        .iter_mut()
+        .find(|item| item.name.eq_ignore_ascii_case(&record.name))
+        .ok_or_else(|| format!("软件集 {} 不存在", record.name))?;
+    *existing = record.clone();
+    save_set_records(&store, &records)?;
+    store.set_setting(SETTING_SOFTWARE_SET, &record.name)?;
+    list_set_infos(&store, &state.data_dir)
+}
+
+pub(crate) fn web_remove_software_set(
+    state: &AppState,
+    set_name: String,
+) -> Result<Vec<SoftwareSetInfo>, String> {
+    let name = normalize_set_name(&set_name)?;
+    let dest = set_dir(&state.data_dir, &name)?;
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let mut records = ensure_set_records(&store, &state.data_dir)?;
+        records.retain(|record| !record.name.eq_ignore_ascii_case(&name));
+        if records.is_empty() {
+            records.extend(default_sets());
+        }
+        save_set_records(&store, &records)?;
+        let current = store.get_setting(SETTING_SOFTWARE_SET)?.unwrap_or_default();
+        if current == name || !records.iter().any(|record| record.name == current) {
+            store.set_setting(SETTING_SOFTWARE_SET, &records[0].name)?;
+        }
+    }
+    if dest.is_dir() {
+        std::fs::remove_dir_all(&dest).map_err(|e| format!("删除本地文件失败：{e}"))?;
+    }
+    web_list_software_sets(state)
+}
+
+pub(crate) fn web_select_software_set(
+    state: &AppState,
+    set_name: String,
+) -> Result<RepoStatus, String> {
+    let name = normalize_set_name(&set_name)?;
+    {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let records = ensure_set_records(&store, &state.data_dir)?;
+        if !records.iter().any(|record| record.name == name) {
+            return Err(format!("软件集 {name} 不存在"));
+        }
+        store.set_setting(SETTING_SOFTWARE_SET, &name)?;
+    }
+    Ok(current_status(state))
+}
+
+pub(crate) fn web_list_repo_files(
+    state: &AppState,
+    path: String,
+) -> Result<Vec<RepoEntry>, String> {
+    let set_name = current_set_name(state);
+    if set_name.trim().is_empty() {
+        return Err("尚未同步软件集".into());
+    }
+    let root = set_dir(&state.data_dir, &set_name)?;
+    let base = resolve_relative(&root, &path)?;
+    let mut entries = Vec::new();
+    for item in std::fs::read_dir(&base).map_err(|e| format!("读取目录失败：{e}"))? {
+        let item = item.map_err(|e| e.to_string())?;
+        let file_type = item.file_type().map_err(|e| e.to_string())?;
+        let name = item.file_name().to_string_lossy().into_owned();
+        if name == ".git" || name.ends_with(".part") {
+            continue;
+        }
+        let Ok(path) = relative_path(&root, &item.path()) else {
+            continue;
+        };
+        entries.push(RepoEntry {
+            name,
+            path,
+            is_dir: file_type.is_dir(),
+            size: if file_type.is_dir() {
+                0
+            } else {
+                item.metadata().map(|meta| meta.len()).unwrap_or(0)
+            },
+        });
+    }
+    entries.sort_by(|left, right| {
+        right
+            .is_dir
+            .cmp(&left.is_dir)
+            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
+    });
+    Ok(entries)
+}
+
+pub(crate) fn web_read_repo_file(state: &AppState, path: String) -> Result<RepoFile, String> {
+    let set_name = current_set_name(state);
+    if set_name.trim().is_empty() {
+        return Err("尚未同步软件集".into());
+    }
+    let root = set_dir(&state.data_dir, &set_name)?;
+    let full = resolve_relative(&root, &path)?;
+    if !full.is_file() {
+        return Err("不是文件".into());
+    }
+    let meta = full.metadata().map_err(|e| e.to_string())?;
+    if meta.len() > MAX_PREVIEW_SIZE {
+        return Err("文件过大，不支持在线预览".into());
+    }
+    let bytes = std::fs::read(&full).map_err(|e| format!("读取文件失败：{e}"))?;
+    if bytes.contains(&0) {
+        return Err("二进制文件不支持预览".into());
+    }
+    Ok(RepoFile {
+        path: relative_path(&root, &full)?,
+        size: meta.len(),
+        content: String::from_utf8(bytes)
+            .map_err(|_| "文件不是 UTF-8 文本，不支持预览".to_string())?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

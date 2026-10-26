@@ -14,6 +14,7 @@ mod store;
 mod sync;
 mod tunnel;
 mod websocket_tunnel;
+mod web;
 mod window_state;
 
 use std::collections::{HashMap, HashSet};
@@ -39,6 +40,36 @@ pub(crate) struct AppState {
     proxy: Mutex<ProxyRuntime>,
     injected_proxies: Mutex<HashMap<String, InjectedHandle>>,
     pub(crate) data_dir: PathBuf,
+}
+
+fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::Error>> {
+    std::fs::create_dir_all(&data_dir)?;
+    let keys_dir = data_dir.join("keys");
+    std::fs::create_dir_all(&keys_dir)?;
+    let store = Store::load(data_dir.join("data.sql"))?;
+    if store.list_certificates().map_err(err_box)?.is_empty() {
+        let cert = create_certificate(&keys_dir, &local_hostname()).map_err(err_box)?;
+        store.add_certificate(&cert).map_err(err_box)?;
+    }
+    let proxy_settings = store.get_proxy_settings().unwrap_or_default();
+    Ok(AppState {
+        store: Mutex::new(store),
+        clipboard: Mutex::new(None),
+        active_tunnels: Mutex::new(HashMap::new()),
+        active_terminals: Mutex::new(HashMap::new()),
+        proxy: Mutex::new(ProxyRuntime {
+            settings: proxy_settings,
+            stop_tx: None,
+        }),
+        injected_proxies: Mutex::new(HashMap::new()),
+        data_dir,
+    })
+}
+
+/// Start the browser-based edition. The desktop Tauri entry point remains
+/// available when `--web` is not supplied.
+pub fn run_web_from_args() -> Result<(), String> {
+    web::run_from_args()
 }
 
 struct InjectedHandle {
@@ -283,8 +314,12 @@ async fn check_host_env(
     state: State<'_, AppState>,
     host_id: String,
 ) -> Result<HostEnvCheck, String> {
+    check_host_env_core(&state, &host_id).await
+}
+
+async fn check_host_env_core(state: &AppState, host_id: &str) -> Result<HostEnvCheck, String> {
     // 1) Fix sshd TCP forwarding (existing behaviour).
-    let out = ssh_run(&state, &host_id, host_actions::wrap_check_ssh_env_command()).await?;
+    let out = ssh_run(state, host_id, host_actions::wrap_check_ssh_env_command()).await?;
     // The script restarts sshd in the background, so the channel may be
     // dropped before an exit status is reported; rely on the marker line.
     let ssh = host_actions::parse_check_ssh_env(&out.stdout)?;
@@ -298,7 +333,7 @@ async fn check_host_env(
 
     // 2) Open the cangling-update listen port in the host firewall so the
     //    master can reach this node over HTTP (check cluster / account sync).
-    let probe = run_probe(&state, &host_id).await?;
+    let probe = run_probe(state, host_id).await?;
     let port = host_actions::console_remote_port(probe.port);
     let (stored_role, peers) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -1207,7 +1242,7 @@ fn require_injected(state: &AppState, host_id: &str) -> Result<u16, String> {
 }
 
 async fn ssh_run(
-    state: &State<'_, AppState>,
+    state: &AppState,
     host_id: &str,
     command: String,
 ) -> Result<ssh::ExecOutput, String> {
@@ -1272,7 +1307,7 @@ async fn ssh_run_apply_progress(
 }
 
 async fn run_probe(
-    state: &State<'_, AppState>,
+    state: &AppState,
     host_id: &str,
 ) -> Result<host_actions::UpdateProbe, String> {
     let out = ssh_run(state, host_id, host_actions::wrap_probe_command()).await?;
@@ -1287,7 +1322,7 @@ async fn run_probe(
 }
 
 async fn fetch_latest_version(
-    state: &State<'_, AppState>,
+    state: &AppState,
     host_id: &str,
     remote_port: u16,
 ) -> Result<String, String> {
@@ -1308,7 +1343,14 @@ async fn probe_cangling_update(
     state: State<'_, AppState>,
     host_id: String,
 ) -> Result<host_actions::UpdateProbe, String> {
-    let mut probe = run_probe(&state, &host_id).await?;
+    probe_cangling_update_core(&state, &host_id).await
+}
+
+async fn probe_cangling_update_core(
+    state: &AppState,
+    host_id: &str,
+) -> Result<host_actions::UpdateProbe, String> {
+    let mut probe = run_probe(state, host_id).await?;
     let local_package = repo::local_cangling_update_package(&state.data_dir, &probe.arch);
     match local_package {
         Ok(Some(package)) => {
@@ -1328,8 +1370,8 @@ async fn probe_cangling_update(
             }
         }
         Ok(None) if probe.installed && probe.supported => {
-            if let Ok(remote_port) = require_injected(&state, &host_id) {
-                match fetch_latest_version(&state, &host_id, remote_port).await {
+            if let Ok(remote_port) = require_injected(state, host_id) {
+                match fetch_latest_version(state, host_id, remote_port).await {
                     Ok(latest) => {
                         probe.latest = latest.clone();
                         probe.update_available = host_actions::is_newer(&latest, &probe.version);
@@ -1519,6 +1561,17 @@ async fn set_cangling_role(
     master: Option<String>,
     port: Option<u16>,
 ) -> Result<host_actions::SetRoleResult, String> {
+    set_cangling_role_core(&state, &host_id, &role, token, master, port).await
+}
+
+async fn set_cangling_role_core(
+    state: &AppState,
+    host_id: &str,
+    role: &str,
+    token: Option<String>,
+    master: Option<String>,
+    port: Option<u16>,
+) -> Result<host_actions::SetRoleResult, String> {
     let role = host_actions::normalize_role(&role)?;
     let token = token.unwrap_or_default();
     let master = master.unwrap_or_default();
@@ -1532,7 +1585,7 @@ async fn set_cangling_role(
         0
     };
     let cmd = host_actions::wrap_set_role_command(role, token.trim(), master.trim(), selected_port);
-    let out = ssh_run(&state, &host_id, cmd).await?;
+    let out = ssh_run(state, host_id, cmd).await?;
     if out.exit_status != 0 {
         return Err(format!(
             "切换运行模式失败 (exit {}): {}\n{}",
@@ -1557,7 +1610,7 @@ async fn set_cangling_role(
     // A missing login/temporary server error must not undo a successful role
     // change on the host itself; the normal sync will retry it later.
     if host_for_sync.owned {
-        if let Err(err) = push_host_to_server(&state, &host_for_sync).await {
+        if let Err(err) = push_host_to_server(state, &host_for_sync).await {
             eprintln!("同步主机类型到服务器失败（{}）: {err}", host_for_sync.name);
         }
     }
@@ -1631,7 +1684,14 @@ async fn cluster_console_url(
     state: State<'_, AppState>,
     host_id: String,
 ) -> Result<ClusterConsole, String> {
-    let probe = run_probe(&state, &host_id).await?;
+    cluster_console_url_core(&state, &host_id).await
+}
+
+async fn cluster_console_url_core(
+    state: &AppState,
+    host_id: &str,
+) -> Result<ClusterConsole, String> {
+    let probe = run_probe(state, host_id).await?;
     if !probe.installed {
         return Err("该主机尚未安装 cangling-update，请先安装更新程序".into());
     }
@@ -1642,7 +1702,7 @@ async fn cluster_console_url(
     let port = host_actions::console_remote_port(probe.port);
     let mut url = host_actions::console_url(&host.hostname, port);
     let cmd = host_actions::wrap_issue_session_command(&probe.binary);
-    if let Ok(out) = ssh_run(&state, &host_id, cmd).await {
+    if let Ok(out) = ssh_run(state, host_id, cmd).await {
         if let Ok(session) = host_actions::parse_console_session(&out.stdout) {
             url = host_actions::console_url_with_token(&host.hostname, port, &session.token);
         }
@@ -2042,30 +2102,7 @@ pub fn run() {
                 }
             }
 
-            let keys_dir = data_dir.join("keys");
-            std::fs::create_dir_all(&keys_dir)?;
-
-            let store = Store::load(data_dir.join("data.sql"))?;
-
-            // Ensure at least one certificate exists on startup.
-            if store.list_certificates().map_err(err_box)?.is_empty() {
-                let cert = create_certificate(&keys_dir, &local_hostname()).map_err(err_box)?;
-                store.add_certificate(&cert).map_err(err_box)?;
-            }
-
-            let proxy_settings = store.get_proxy_settings().unwrap_or_default();
-            app.manage(AppState {
-                store: Mutex::new(store),
-                clipboard: Mutex::new(None),
-                active_tunnels: Mutex::new(HashMap::new()),
-                active_terminals: Mutex::new(HashMap::new()),
-                proxy: Mutex::new(ProxyRuntime {
-                    settings: proxy_settings,
-                    stop_tx: None,
-                }),
-                injected_proxies: Mutex::new(HashMap::new()),
-                data_dir,
-            });
+            app.manage(create_app_state(data_dir)?);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

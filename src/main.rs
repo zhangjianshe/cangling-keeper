@@ -2,6 +2,14 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--web") {
+        if let Err(error) = cangling_keeper_lib::run_web_from_args() {
+            eprintln!("无法启动 cangling-keeper Web 服务：{error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     // GTK/WebKit's native Wayland path can fail with a protocol error on some
     // compositor versions. Prefer the available X11/XWayland display until
     // that stack is known to be stable for this application.

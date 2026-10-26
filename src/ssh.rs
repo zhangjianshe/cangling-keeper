@@ -605,11 +605,29 @@ pub struct TerminalData {
 /// Run the terminal session until it is cancelled or the remote side closes.
 pub async fn terminal_loop(
     pty: PtySession,
-    mut input_rx: tokio::sync::mpsc::UnboundedReceiver<TerminalMsg>,
-    mut cancel: tokio::sync::oneshot::Receiver<()>,
+    input_rx: tokio::sync::mpsc::UnboundedReceiver<TerminalMsg>,
+    cancel: tokio::sync::oneshot::Receiver<()>,
     app: tauri::AppHandle,
     term_id: String,
 ) {
+    terminal_loop_with(pty, input_rx, cancel, term_id, move |payload| {
+        let _ = app.emit("terminal-data", payload);
+    })
+    .await;
+}
+
+/// Run a terminal and forward output through an arbitrary event sink.  The
+/// browser server uses this while the desktop build keeps using Tauri events.
+pub async fn terminal_loop_with<F>(
+    pty: PtySession,
+    mut input_rx: tokio::sync::mpsc::UnboundedReceiver<TerminalMsg>,
+    mut cancel: tokio::sync::oneshot::Receiver<()>,
+    term_id: String,
+    mut emit: F,
+)
+where
+    F: FnMut(TerminalData) + Send + 'static,
+{
     let (mut read_half, write_half) = pty.channel.split();
     let _session = pty.session; // keep the SSH connection alive
 
@@ -619,13 +637,13 @@ pub async fn terminal_loop(
             msg = read_half.wait() => {
                 match msg {
                     Some(ChannelMsg::Data { data }) => {
-                        let _ = app.emit("terminal-data", TerminalData {
+                        emit(TerminalData {
                             id: term_id.clone(),
                             data: String::from_utf8_lossy(&data).into_owned(),
                         });
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
-                        let _ = app.emit("terminal-data", TerminalData {
+                        emit(TerminalData {
                             id: term_id.clone(),
                             data: String::from_utf8_lossy(&data).into_owned(),
                         });

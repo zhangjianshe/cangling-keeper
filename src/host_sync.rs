@@ -1245,6 +1245,24 @@ pub fn preview_host_software_sync(
     })
 }
 
+pub(crate) fn web_preview_host_software_sync(
+    state: &AppState,
+) -> Result<HostSoftwareSyncPreview, String> {
+    let files = collect_local_software(&state.data_dir)?;
+    let sets = summarize_sets(&files);
+    let entries = summarize_entries(&files);
+    let names: Vec<String> = sets.iter().map(|set| set.name.clone()).collect();
+    let configured = configured_set_names(state, &state.data_dir);
+    let incomplete_sets = incomplete_set_names(&state.data_dir, &names, &configured);
+    Ok(HostSoftwareSyncPreview {
+        total_files: files.len() as u32,
+        total_bytes: files.iter().map(|file| file.size).sum(),
+        sets,
+        entries,
+        incomplete_sets,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

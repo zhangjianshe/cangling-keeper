@@ -387,6 +387,27 @@ cargo tauri dev
 
 This opens the window and serves `ui/` with hot reload.
 
+### Browser/Web service mode
+
+The same executable can run without a Tauri window or WebView2. It embeds the
+frontend, listens on loopback by default, and opens the system browser:
+
+```sh
+cargo run -- --web
+```
+
+The default URL is `http://127.0.0.1:18080`. Optional arguments:
+
+```sh
+cangling-keeper --web --listen 127.0.0.1:18080 --no-open
+cangling-keeper --web --data-dir D:\cangling-keeper-data
+```
+
+Keep the listener on `127.0.0.1` unless authentication and HTTPS are provided
+by a trusted reverse proxy. The Web service uses the same platform data
+directory and SQLite database as the desktop edition. Browser-to-server calls
+use JSON and live terminal/status events use WebSocket.
+
 ## Build a release bundle
 
 ```sh
