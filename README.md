@@ -404,3 +404,16 @@ created automatically on first launch.
 Older builds stored data in `./config/` relative to the working directory.
 That directory is migrated into the data directory automatically on first
 launch, if the data directory does not already contain a database.
+
+## 隧道诊断与 Windows 日志
+
+本地隧道详情显示最近连接的阶段、错误和时间。监听成功只代表转发端口已经建立；
+WSS 会在有连接访问时握手，成功后继续等待目标 SSH 的响应。错误保留在详情和
+隧道列表中，下一次连接活动会更新状态；刷新页面可重新读取当前进程的状态。
+程序重启后的历史记录可通过“查看日志”查看（显示最近 64 KB）。
+
+日志路径为 `<app_data_dir>/logs/cangling-keeper.log`。Windows 默认是
+`%LOCALAPPDATA%\cn.cangling.keeper\logs\cangling-keeper.log`，使用 `--data-dir`
+时位于指定目录下。日志使用本地时间 `yyyy-MM-dd HH:mm:ss`，达到 5 MB 时轮转，
+另保留 `.log.1` 至 `.log.3`。记录服务启动、监听状态、WSS 握手与传输错误，
+不记录私钥、签名头、TCP 数据内容或认证口令。

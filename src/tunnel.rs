@@ -121,6 +121,16 @@ pub struct TunnelInfo {
     #[serde(flatten)]
     pub tunnel: Tunnel,
     pub active: bool,
+    pub diagnostic: Option<TunnelDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TunnelDiagnostic {
+    pub run_id: String,
+    pub phase: String,
+    pub message: String,
+    pub updated_at: String,
 }
 
 /// Parse an SSH command such as:

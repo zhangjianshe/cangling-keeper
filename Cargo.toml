@@ -1,6 +1,6 @@
 [package]
 name = "cangling-keeper"
-version = "0.0.92"
+version = "0.0.93"
 description = "A browser-based Rust service for host and repository maintenance"
 authors = ["satway"]
 edition = "2024"
@@ -10,6 +10,7 @@ name = "cangling_keeper_lib"
 crate-type = ["rlib"]
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 serde = { version = "1", features = ["derive"] }
 russh = { version = "0.63", default-features = false, features = ["ring", "flate2", "rsa"] }
 russh-sftp = "2.4"

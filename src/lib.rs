@@ -1,4 +1,5 @@
 mod auth;
+mod logging;
 mod certificate;
 mod desktop_shortcut;
 mod fingerprints;
@@ -33,6 +34,7 @@ use uuid::Uuid;
 pub(crate) struct AppState {
     pub(crate) store: Mutex<Store>,
     active_tunnels: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    tunnel_diagnostics: Mutex<HashMap<String, tunnel::TunnelDiagnostic>>,
     active_terminals: Mutex<HashMap<String, TerminalHandle>>,
     proxy: Mutex<ProxyRuntime>,
     injected_proxies: Mutex<HashMap<String, InjectedHandle>>,
@@ -84,6 +86,7 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
     Ok(AppState {
         store: Mutex::new(store),
         active_tunnels: Mutex::new(HashMap::new()),
+        tunnel_diagnostics: Mutex::new(HashMap::new()),
         active_terminals: Mutex::new(HashMap::new()),
         proxy: Mutex::new(ProxyRuntime {
             settings: proxy_settings,
@@ -481,6 +484,7 @@ fn list_tunnels(state: State<'_, AppState>) -> Result<Vec<TunnelInfo>, String> {
             TunnelInfo {
                 tunnel,
                 active: is_active,
+                diagnostic: None,
             }
         })
         .collect())
@@ -577,7 +581,7 @@ async fn tunnel_connect(
                 return Err("WebSocket tunnel requires certificate authentication".into());
             }
         };
-        let established = websocket_tunnel::establish(&tunnel, &key_path).await?;
+        let established = websocket_tunnel::establish(&tunnel, &key_path, None).await?;
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
         {
             let mut active = state.active_tunnels.lock().map_err(|e| e.to_string())?;
@@ -2048,3 +2052,6 @@ async fn sync_public_hosts(state: State<'_, AppState>) -> Result<(), String> {
     // pull-only synchronization would otherwise leave it local forever.
     sync_now(&state).await
 }
+
+/// Record fatal startup errors in the initialized application log.
+pub fn log_error(message: &str) { logging::error(message); }

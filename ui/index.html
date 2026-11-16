@@ -222,10 +222,16 @@
                 <span id="tunnel-status" class="status off">Disconnected</span>
               </div>
               <div class="actions">
+                <button id="tunnel-logs-btn" class="btn" type="button">查看日志</button>
                 <button id="toggle-tunnel-btn" class="btn primary" type="button">Connect</button>
               </div>
             </div>
             <div class="detail-body">
+              <div id="tunnel-diagnostic" class="tunnel-diagnostic" role="status" aria-live="polite" hidden>
+                <strong id="tunnel-diagnostic-title"></strong>
+                <p id="tunnel-diagnostic-message"></p>
+                <small id="tunnel-diagnostic-time"></small>
+              </div>
               <div class="info-grid">
                 <div class="info-item">
                   <span id="t-local-label" class="info-label">Local</span>

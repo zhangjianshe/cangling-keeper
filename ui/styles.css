@@ -1882,3 +1882,17 @@ body {
   gap: 8px;
   padding: 0 16px 16px;
 }
+
+/* Tunnel diagnostics remain readable beside the connection controls. */
+.tunnel-diagnostic { padding: 14px 16px; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); overflow-wrap: anywhere; }
+.tunnel-diagnostic.error { border-color: #d97878; background: color-mix(in srgb, var(--card) 94%, #dc2626); }
+.tunnel-diagnostic.error strong { color: #dc4848; }
+.tunnel-diagnostic p { margin: 8px 0; white-space: pre-wrap; }
+.tunnel-diagnostic small { color: var(--fg-muted); }
+.keeper-log-dialog { z-index: 2000; }
+.keeper-log-dialog .dialog-box { width: min(960px, 94vw); max-width: 960px; padding: 22px; }
+.keeper-log-dialog h2 { margin: 0 0 12px; font-size: 18px; }
+.keeper-log-dialog p { overflow-wrap: anywhere; color: var(--fg-muted); }
+.keeper-log-dialog pre { max-height: 60vh; overflow: auto; padding: 14px; border: 1px solid var(--border); border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+
+.status.tunnel-error { color: #dc4848; }

@@ -88,6 +88,7 @@ pub(crate) fn run_from_args() -> Result<(), String> {
         }
         index += 1;
     }
+    crate::logging::init(&data_dir)?;
     let address: SocketAddr = listen
         .parse()
         .map_err(|error| format!("无效监听地址 {listen}：{error}"))?;
@@ -149,7 +150,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
         .map_err(|error| format!("监听 {address} 失败：{error}"))?;
     let actual = listener.local_addr().map_err(|error| error.to_string())?;
     let url = format!("http://{actual}");
-    println!("cangling-keeper Web 服务已启动：{url}");
+    crate::logging::info(&format!("cangling-keeper Web 服务已启动：{url}"));
     println!("按 Ctrl+C 停止服务");
     if open {
         let url = url.clone();
@@ -372,6 +373,7 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             )
             .await?,
         ),
+        "read_logs" => value(crate::logging::snapshot()?),
         "list_tunnels" => value(list_tunnels(core)?),
         "add_tunnel" => {
             let mut tunnel: Tunnel = arg(&args, "tunnel")?;
@@ -655,13 +657,101 @@ fn list_tunnels(core: &AppState) -> Result<Vec<TunnelInfo>, String> {
     Ok(tunnels
         .into_iter()
         .map(|tunnel| TunnelInfo {
+            diagnostic: core
+                .tunnel_diagnostics
+                .lock()
+                .ok()
+                .and_then(|items| items.get(&tunnel.id).cloned()),
             active: active.contains_key(&tunnel.id),
             tunnel,
         })
         .collect())
 }
 
+fn report_tunnel(state: &WebState, id: &str, run_id: &str, phase: &str, message: &str) {
+    let message = message.chars().take(2000).collect::<String>();
+    let diagnostic = crate::tunnel::TunnelDiagnostic {
+        run_id: run_id.into(),
+        phase: phase.into(),
+        message: message.clone(),
+        updated_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+    };
+    let Ok(mut diagnostics) = state.core.tunnel_diagnostics.lock() else {
+        return;
+    };
+    if diagnostics
+        .get(id)
+        .is_some_and(|entry| entry.run_id != run_id)
+    {
+        return;
+    }
+    diagnostics.insert(id.into(), diagnostic.clone());
+    drop(diagnostics);
+    let line = format!("隧道 {id} [{phase}] {message}");
+    if phase == "error" {
+        crate::logging::error(&line);
+    } else {
+        crate::logging::info(&line);
+    }
+    state.emit(
+        "tunnel-diagnostic",
+        json!({"id": id, "diagnostic": diagnostic}),
+    );
+}
+
 async fn connect_tunnel(state: &WebState, tunnel_id: String) -> Result<(), String> {
+    if state
+        .core
+        .active_tunnels
+        .lock()
+        .map_err(|e| e.to_string())?
+        .contains_key(&tunnel_id)
+    {
+        return Err("Tunnel is already connected".into());
+    }
+    let run_id = Uuid::new_v4().to_string();
+    state
+        .core
+        .tunnel_diagnostics
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&tunnel_id);
+    report_tunnel(state, &tunnel_id, &run_id, "starting", "正在启动隧道…");
+    let web = state.clone();
+    let id = tunnel_id.clone();
+    let generation = run_id.clone();
+    let reporter: crate::websocket_tunnel::Reporter =
+        Arc::new(move |phase, message| report_tunnel(&web, &id, &generation, phase, message));
+    let result = connect_tunnel_inner(state, tunnel_id.clone(), reporter).await;
+    match &result {
+        Ok(()) => {
+            let starting = state
+                .core
+                .tunnel_diagnostics
+                .lock()
+                .ok()
+                .and_then(|d| d.get(&tunnel_id).cloned())
+                .is_some_and(|d| d.phase == "starting");
+            if starting {
+                report_tunnel(
+                    state,
+                    &tunnel_id,
+                    &run_id,
+                    "listening",
+                    "监听已建立，等待访问；WSS 隧道将在有连接时握手",
+                );
+            }
+        }
+        Err(error) => report_tunnel(state, &tunnel_id, &run_id, "error", error),
+    }
+    result
+}
+
+async fn connect_tunnel_inner(
+    state: &WebState,
+    tunnel_id: String,
+    reporter: crate::websocket_tunnel::Reporter,
+) -> Result<(), String> {
     if state
         .core
         .active_tunnels
@@ -684,26 +774,39 @@ async fn connect_tunnel(state: &WebState, tunnel_id: String) -> Result<(), Strin
         };
         let rx = register_active_tunnel(&state.core, &tunnel_id)?;
         if tunnel.direction == "remote" {
-            let established = crate::websocket_tunnel::establish_reverse(&tunnel, &key).await;
+            let established =
+                crate::websocket_tunnel::establish_reverse(&tunnel, &key, Some(reporter.clone()))
+                    .await;
             match established {
                 Ok(established) => tokio::spawn(async move {
                     crate::websocket_tunnel::hold_reverse(established, rx).await;
                     tunnel_finished(&web, &tunnel_id);
                 }),
                 Err(error) => {
-                    state.core.active_tunnels.lock().map_err(|e| e.to_string())?.remove(&tunnel_id);
+                    state
+                        .core
+                        .active_tunnels
+                        .lock()
+                        .map_err(|e| e.to_string())?
+                        .remove(&tunnel_id);
                     return Err(error);
                 }
             };
         } else {
-            let established = crate::websocket_tunnel::establish(&tunnel, &key).await;
+            let established =
+                crate::websocket_tunnel::establish(&tunnel, &key, Some(reporter.clone())).await;
             match established {
                 Ok(established) => tokio::spawn(async move {
                     crate::websocket_tunnel::accept_loop(established, rx).await;
                     tunnel_finished(&web, &tunnel_id);
                 }),
                 Err(error) => {
-                    state.core.active_tunnels.lock().map_err(|e| e.to_string())?.remove(&tunnel_id);
+                    state
+                        .core
+                        .active_tunnels
+                        .lock()
+                        .map_err(|e| e.to_string())?
+                        .remove(&tunnel_id);
                     return Err(error);
                 }
             };
@@ -745,6 +848,17 @@ fn tunnel_finished(state: &WebState, tunnel_id: &str) {
     if let Ok(mut active) = state.core.active_tunnels.lock() {
         active.remove(tunnel_id);
     }
+    if let Ok(mut diagnostics) = state.core.tunnel_diagnostics.lock() {
+        if let Some(entry) = diagnostics.get_mut(tunnel_id) {
+            entry.run_id = Uuid::new_v4().to_string();
+            entry.updated_at = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            if entry.phase != "error" {
+                entry.phase = "stopped".into();
+                entry.message = "隧道监听已停止".into();
+            }
+        }
+    }
+    crate::logging::info(&format!("隧道 {tunnel_id} 监听已停止"));
     state.emit("tunnel-stopped", tunnel_id);
 }
 

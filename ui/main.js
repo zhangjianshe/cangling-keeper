@@ -1645,7 +1645,7 @@ function renderTunnelList() {
     tunnelListEl.appendChild(
       makeItem({
         selected: t.id === state.selectedTunnelId,
-        name: t.name,
+        name: t.diagnostic?.phase === "error" ? `${t.name} · 连接错误` : t.name,
         sub: isWebSocket
           ? `WEBSOCKET ${isRemoteWebSocket ? "Remote " : ""}${isRemoteWebSocket ? t.remoteHost : t.localHost}:${t.localPort}`
           : t.direction === "remote"
@@ -1809,8 +1809,8 @@ function renderTunnelDetail() {
   const t = tunnelById(state.selectedTunnelId);
   if (!t) return;
   tunnelNameEl.textContent = t.name;
-  tunnelStatusEl.textContent = t.active ? "Connected" : "Disconnected";
-  tunnelStatusEl.className = "status " + (t.active ? "on" : "off");
+  tunnelStatusEl.textContent = t.diagnostic?.phase === "error" ? "连接错误" : t.active ? "监听中" : "未连接";
+  tunnelStatusEl.className = "status " + (t.diagnostic?.phase === "error" ? "tunnel-error" : t.active ? "on" : "off");
   const isWebSocket = t.tunnelType === "websocket";
   const reverse = t.direction === "remote";
   tLocalLabelEl.textContent = reverse ? "Remote listen" : "Local listen";
@@ -1824,6 +1824,14 @@ function renderTunnelDetail() {
     t.auth.method === "certificate"
       ? `Certificate · ${certNameById(t.auth.certificateId)}`
       : "Password";
+  const diagnostic = t.diagnostic;
+  const diagnosticBox = $("#tunnel-diagnostic");
+  diagnosticBox.hidden = !diagnostic;
+  diagnosticBox.classList.toggle("error", diagnostic?.phase === "error");
+  const phaseNames = { starting: "启动中", listening: "监听已建立", connecting: "WSS 连接中", connected: "WSS 握手成功", forwarding: "转发正常", closed: "连接已结束", stopped: "监听已停止", error: "连接错误" };
+  $("#tunnel-diagnostic-title").textContent = phaseNames[diagnostic?.phase] || "最近连接状态";
+  $("#tunnel-diagnostic-message").textContent = diagnostic?.message || "";
+  $("#tunnel-diagnostic-time").textContent = diagnostic?.updatedAt || "";
   toggleTunnelBtnEl.textContent = t.active ? "Disconnect" : "Connect";
   toggleTunnelBtnEl.className = "btn " + (t.active ? "danger" : "primary");
 }
@@ -3505,6 +3513,39 @@ certFormEl.addEventListener("submit", async (e) => {
 certFormEl.querySelectorAll('input[name="key_source"]').forEach((el) => {
   el.addEventListener("change", updateCertificateSourceFields);
 });
+
+listen("tunnel-diagnostic", (event) => {
+  const { id, diagnostic } = event.payload || {};
+  const tunnel = state.tunnels.find(t => t.id === id);
+  if (!tunnel) return;
+  tunnel.diagnostic = diagnostic;
+  renderTunnelList();
+  if (state.selectedTunnelId === id) renderTunnelDetail();
+});
+
+$("#tunnel-logs-btn").onclick = async () => {
+  try {
+    const log = await invoke("read_logs");
+    const modal = document.createElement("div");
+    modal.className = "dialog keeper-log-dialog";
+    const box = document.createElement("div");
+    box.className = "dialog-box";
+    box.setAttribute("role", "dialog"); box.setAttribute("aria-modal", "true"); box.setAttribute("aria-label", "运行日志");
+    const title = document.createElement("h2"); title.textContent = "运行日志";
+    const path = document.createElement("p"); path.className = "mono"; path.textContent = log.path;
+    const output = document.createElement("pre"); output.textContent = log.content || "暂无日志";
+    const close = document.createElement("button"); close.className = "btn"; close.textContent = "关闭";
+    const previousFocus = document.activeElement;
+    const dismiss = () => { modal.remove(); previousFocus?.focus(); };
+    close.onclick = dismiss;
+    modal.onkeydown = e => {
+      if (e.key === "Escape") { e.stopPropagation(); dismiss(); }
+      if (e.key === "Tab") { e.preventDefault(); close.focus(); }
+    };
+    box.append(title, path, output, close); modal.append(box); document.body.append(modal);
+    close.focus(); output.scrollTop = output.scrollHeight;
+  } catch (error) { uiAlert(`读取日志失败：${error}`); }
+};
 
 listen("tunnel-stopped", async () => {
   await loadTunnels();
