@@ -441,6 +441,7 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             disconnect_tunnel(core, &arg::<String>(&args, "tunnelId")?)?;
             value(())
         }
+        "sync_certificates" => value(crate::certificate_sync::synchronize(core).await?),
         "list_certificates" => {
             let store = core.store.lock().map_err(|e| e.to_string())?;
             value(store.list_certificates()?)
@@ -474,6 +475,7 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             }
             let store = core.store.lock().map_err(|e| e.to_string())?;
             store.update_certificate_name(&id, name.trim())?;
+            store.set_setting(&format!("certificate_name_changed:{id}"), name.trim())?;
             value(store.get_certificate(&id)?)
         }
         "delete_certificate" => {

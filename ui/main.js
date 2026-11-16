@@ -1263,7 +1263,7 @@ async function onSyncClick() {
   }
   syncBtnEl.disabled = true;
   syncBtnEl.textContent = "同步中…";
-  syncBtnEl.title = "正在同步主机和隧道…";
+  syncBtnEl.title = "正在同步主机、隧道和证书…";
   try {
     await invoke("sync_hosts");
     await loadHosts();
@@ -3505,6 +3505,7 @@ certFormEl.addEventListener("submit", async (e) => {
     closeCertModal();
     await loadCertificates();
     selectCert(cert.id);
+    if (state.login?.loggedIn) await syncCertificates();
   } catch (err) {
     uiAlert(`Error: ${err}`);
   }
@@ -3945,3 +3946,23 @@ document.addEventListener("keydown", (e) => {
   autoSyncIfLoggedIn();
   applySidebarVisibility();
 })();
+
+$("#rename-cert-btn").addEventListener("click", () => {
+  const cert = certById(state.selectedCertId);
+  if (cert) openCertModal(cert);
+});
+
+async function syncCertificates() {
+  const button = $("#sync-cert-btn");
+  const status = $("#cert-sync-status");
+  button.disabled = true; status.textContent = "正在同步证书…";
+  try {
+    const result = await invoke("sync_certificates");
+    await loadCertificates();
+    if (state.selectedCertId) selectCert(state.selectedCertId);
+    status.textContent = `证书同步完成：上传 ${result.uploaded}，下载 ${result.downloaded}，更新名称 ${result.renamed}。`;
+  } catch (error) {
+    status.textContent = `证书同步失败：${error}。本地证书已保留。`;
+  } finally { button.disabled = false; }
+}
+$("#sync-cert-btn").addEventListener("click", syncCertificates);

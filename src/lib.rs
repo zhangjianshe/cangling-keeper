@@ -1,6 +1,7 @@
 mod auth;
 mod logging;
 mod certificate;
+mod certificate_sync;
 mod desktop_shortcut;
 mod fingerprints;
 mod host;
@@ -1877,6 +1878,7 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
     };
 
     pull_sync(state, &url, &token).await?;
+    let certificate_result = certificate_sync::synchronize(state).await;
 
     // Push local-only hosts. Keep trying the remaining hosts after one fails,
     // but report every failure so the UI never claims that an incomplete sync
@@ -1890,6 +1892,7 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
             .collect()
     };
     let mut push_errors = Vec::new();
+    if let Err(error) = certificate_result { push_errors.push(format!("证书同步：{error}")); }
     for local in to_push {
         let sync_host = {
             let store = state.store.lock().map_err(|e| e.to_string())?;

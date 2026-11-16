@@ -298,6 +298,10 @@ fn handshake_error(error: tokio_tungstenite::tungstenite::Error) -> String {
     use tokio_tungstenite::tungstenite::Error;
     match error {
         Error::Http(response) => {
+            let detail = response
+                .body()
+                .as_deref()
+                .and_then(handshake_response_detail);
             let hint = match response.status().as_u16() {
                 401 | 403 => {
                     "请检查服务端授权公钥、所选证书及 Windows 与服务器的时间（签名允许相差 60 秒）"
@@ -309,7 +313,16 @@ fn handshake_error(error: tokio_tungstenite::tungstenite::Error) -> String {
                 502 | 503 | 504 => "请检查反向代理是否能连接 cangling-update 服务",
                 _ => "请检查服务端和反向代理日志",
             };
-            format!("WSS 握手失败：HTTP {}；{hint}", response.status().as_u16())
+            match detail {
+                Some(detail) => format!(
+                    "WSS 握手失败：HTTP {}；服务端：{detail}；{hint}",
+                    response.status().as_u16()
+                ),
+                None => format!(
+                    "WSS 握手失败：HTTP {}；服务端未返回可读取的错误详情；{hint}",
+                    response.status().as_u16()
+                ),
+            }
         }
         Error::Tls(error) => {
             format!(
@@ -317,6 +330,30 @@ fn handshake_error(error: tokio_tungstenite::tungstenite::Error) -> String {
             )
         }
         other => format!("WSS 握手失败：{other}"),
+    }
+}
+
+// Tungstenite includes any response body received with the handshake headers.
+// Accept structured error text only, not proxy HTML or headers containing secrets.
+fn handshake_response_detail(body: &[u8]) -> Option<String> {
+    if body.len() > 16 * 1024 {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_slice(body).ok()?;
+    let text = value
+        .get("error")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| value.get("message").and_then(serde_json::Value::as_str))?;
+    let text = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(500)
+        .collect::<String>();
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
     }
 }
 
@@ -406,6 +443,41 @@ mod tests {
         server.await.unwrap();
         Arc::try_unwrap(events).unwrap().into_inner().unwrap()
     }
+    #[test]
+    fn includes_specific_server_authentication_reason() {
+        for reason in ["隧道公钥未授权", "隧道签名已过期", "隧道签名验证失败"]
+        {
+            let response = tokio_tungstenite::tungstenite::http::Response::builder()
+                .status(401)
+                .body(Some(
+                    serde_json::to_vec(&serde_json::json!({"error": reason})).unwrap(),
+                ))
+                .unwrap();
+            let text = handshake_error(tokio_tungstenite::tungstenite::Error::Http(Box::new(
+                response,
+            )));
+            assert!(text.contains(reason));
+            assert!(text.contains("401"));
+        }
+    }
+
+    #[test]
+    fn handles_absent_partial_and_proxy_error_bodies() {
+        for body in [b"".as_slice(), b"{\"error\":", b"<html>proxy login</html>"] {
+            assert!(handshake_response_detail(body).is_none());
+        }
+        let response = tokio_tungstenite::tungstenite::http::Response::builder()
+            .status(401)
+            .body(None)
+            .unwrap();
+        assert!(
+            handshake_error(tokio_tungstenite::tungstenite::Error::Http(Box::new(
+                response
+            )))
+            .contains("未返回")
+        );
+    }
+
     #[tokio::test]
     async fn reports_auth_failure_to_tunnel_panel() {
         let events = run_mock(false).await;

@@ -484,7 +484,10 @@ fn import_certificate(
 
     // Reuse a local certificate that already has this public key.
     for cert in store.list_certificates()? {
-        if cert.public_key.trim() == public_key {
+        if crate::certificate_sync::identity(&cert.public_key).ok()
+            == crate::certificate_sync::identity(&public_key).ok()
+            && crate::certificate_sync::identity(&public_key).is_ok()
+        {
             return Ok(cert);
         }
     }
@@ -569,4 +572,63 @@ mod tests {
         assert_eq!(data.nick_name, "");
         assert_eq!(data.user_id, 0);
     }
+}
+
+/// An independent certificate catalog, scoped by the authenticated server account.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncCertificate {
+    #[serde(default)]
+    pub id: String,
+    pub name: String,
+    pub public_key: String,
+    pub private_key: String,
+}
+#[derive(Deserialize)]
+struct CertificateListData {
+    certificates: Vec<SyncCertificate>,
+}
+#[derive(Deserialize)]
+struct SaveCertificateData {
+    certificate: SyncCertificate,
+}
+pub async fn pull_certificates(url: &str, token: &str) -> Result<Vec<SyncCertificate>, String> {
+    let response = client()?
+        .get(format!("{}/api/v1/certificate/list", base_url(url)))
+        .header("API-TOKEN", token)
+        .send()
+        .await
+        .map_err(|_| "无法连接证书同步服务器".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "证书接口 HTTP {}，请确认服务器已安装证书同步接口",
+            response.status()
+        ));
+    }
+    Ok(unwrap_envelope::<CertificateListData>(
+        response.text().await.map_err(|_| "无法读取证书同步响应")?,
+    )
+    .await?
+    .certificates)
+}
+pub async fn push_certificate(
+    url: &str,
+    token: &str,
+    certificate: &SyncCertificate,
+) -> Result<SyncCertificate, String> {
+    let response = client()?
+        .post(format!("{}/api/v1/certificate/save", base_url(url)))
+        .header("API-TOKEN", token)
+        .json(&serde_json::json!({"certificate":certificate}))
+        .send()
+        .await
+        .map_err(|_| "无法连接证书同步服务器".to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("保存证书 HTTP {}", response.status()));
+    }
+    Ok(unwrap_envelope::<SaveCertificateData>(
+        response.text().await.map_err(|_| "无法读取证书同步响应")?,
+    )
+    .await?
+    .certificate)
 }

@@ -417,3 +417,19 @@ WSS 会在有连接访问时握手，成功后继续等待目标 SSH 的响应�
 时位于指定目录下。日志使用本地时间 `yyyy-MM-dd HH:mm:ss`，达到 5 MB 时轮转，
 另保留 `.log.1` 至 `.log.3`。记录服务启动、监听状态、WSS 握手与传输错误，
 不记录私钥、签名头、TCP 数据内容或认证口令。
+
+
+### Named certificate synchronization
+
+In **本地证书**, use **修改名称** to rename an existing key without regenerating it.
+**同步到账号服务器** synchronizes certificate names and both key files under the
+current login account. Login synchronization and the main sync button also include
+certificates. New/imported certificates and names saved while logged in are synced
+automatically. Offline name edits remain local until the next successful sync.
+Keys are matched by their Ed25519 public-key fingerprint, independent of comments.
+
+This requires the matching `gwt-template` server update providing
+`GET /api/v1/certificate/list` and `POST /api/v1/certificate/save`.
+The server initializes `cangling_certificate` on startup and isolates records by
+login user. This account synchronization does not authorize WSS access on a host;
+that still requires its `tunnel_authorized_keys` configuration.

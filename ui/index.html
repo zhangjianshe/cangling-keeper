@@ -261,10 +261,14 @@
                 <span class="status off">ed25519</span>
               </div>
               <div class="actions">
-                <button id="delete-cert-btn" class="btn danger" type="button">Delete</button>
+                <button id="sync-cert-btn" class="btn primary" type="button">同步证书</button>
+                <button id="rename-cert-btn" class="btn" type="button">修改名称</button>
+                <button id="delete-cert-btn" class="btn danger" type="button">删除</button>
               </div>
             </div>
             <div class="detail-body">
+              <p class="hint">同步证书会将名称、公钥和私钥保存到当前登录账号服务器，供同一账号的其他 Keeper 使用。</p>
+              <p id="cert-sync-status" class="hint" role="status" aria-live="polite"></p>
               <div class="info-grid">
                 <div class="info-item">
                   <span class="info-label">Private key</span>
@@ -543,7 +547,7 @@
         <h2 id="cert-modal-title">新建本地证书</h2>
         <button class="modal-close" data-close="cert-modal" type="button" aria-label="关闭">×</button>
         <form id="cert-form">
-          <label>Name <input name="name" type="text" required placeholder="e.g. My Laptop" /></label>
+          <label>证书名称 <input name="name" type="text" required placeholder="例如：河南维护证书" /></label>
           <fieldset id="cert-source-fields" class="auth-fieldset">
             <legend>密钥来源</legend>
             <div class="radio-row">
@@ -553,7 +557,7 @@
           </fieldset>
           <div id="cert-import-fields" class="hidden">
             <label>私钥文件 <input name="private_key_file" type="file" /></label>
-            <p class="hint">仅支持未加密的 OpenSSH Ed25519 私钥。私钥只复制到 Keeper 本地目录，不会上传服务器。</p>
+            <p class="hint">仅支持未加密的 OpenSSH Ed25519 私钥。导入时保存到 Keeper 本地；执行证书同步时会同时上传公钥和私钥到登录账号服务器。</p>
           </div>
           <p id="cert-modal-hint" class="hint">Generates a new ed25519 key pair.</p>
           <div class="modal-actions">
