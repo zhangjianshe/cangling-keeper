@@ -633,7 +633,7 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             crate::open_url(arg(&args, "url")?)?;
             value(())
         }
-        "check_app_update" => value(Value::Null),
+        "check_app_update" => value(crate::app_update::check().await?),
         _ => Err(format!("Web 模式暂不支持命令：{command}")),
     }
 }

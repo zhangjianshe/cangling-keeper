@@ -1115,10 +1115,10 @@ function renderAppUpdate() {
     appUpdateBtnEl.disabled = false;
     appUpdateBtnEl.title = `${s.error}（当前 ${s.current}）· 点击重试`;
   } else if (s.updateAvailable) {
-    appUpdateBtnEl.textContent = `更新到 ${s.latest}`;
+    appUpdateBtnEl.textContent = `下载 ${s.latest}`;
     appUpdateBtnEl.className = "btn app-update-btn primary";
     appUpdateBtnEl.disabled = false;
-    appUpdateBtnEl.title = `当前 ${s.current} · 服务器最新 ${s.latest} · 点击更新`;
+    appUpdateBtnEl.title = `当前 ${s.current} · 服务器最新 ${s.latest} · 点击下载`;
   } else {
     appUpdateBtnEl.textContent = "已是最新";
     appUpdateBtnEl.className = "btn app-update-btn up-to-date";
@@ -1181,18 +1181,17 @@ async function onAppUpdateClick() {
     await checkAppUpdate();
     return;
   }
-  if (!(await uiConfirm(`发现新版本 ${s.latest}（当前 ${s.current}），现在下载并更新？`))) {
+  if (!s.downloadUrl) {
+    uiAlert("当前平台没有可用的更新包");
     return;
   }
-  state.appUpdateBusy = true;
-  applyAppUpdateProgress({ phase: "download", received: 0, total: 0, pct: 0 });
-  try {
-    await invoke("apply_app_update");
-  } catch (err) {
-    state.appUpdateBusy = false;
-    uiAlert(`更新失败: ${err}`);
-    renderAppUpdate();
-  }
+  const link = document.createElement("a");
+  link.href = s.downloadUrl;
+  link.rel = "noopener";
+  link.target = "_blank";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 // ---- login & host sync -----------------------------------------------------

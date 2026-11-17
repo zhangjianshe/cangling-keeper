@@ -18,6 +18,10 @@ jobs:
             os-name: linux
             arch-name: amd64
             rust-target: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm
+            os-name: linux
+            arch-name: arm64
+            rust-target: aarch64-unknown-linux-gnu
           - platform: windows-latest
             os-name: windows
             arch-name: x86_64
@@ -30,7 +34,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install Linux build dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.os-name == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -71,8 +75,8 @@ jobs:
           if [[ "${{ matrix.os-name }}" == "windows" ]]; then
             cp target/${{ matrix.rust-target }}/release/cangling-keeper.exe dist/cangling-keeper-windows-x86_64.exe
           else
-            cp target/${{ matrix.rust-target }}/release/cangling-keeper dist/cangling-keeper-linux-amd64
-            chmod +x dist/cangling-keeper-linux-amd64
+            cp target/${{ matrix.rust-target }}/release/cangling-keeper dist/cangling-keeper-linux-${{ matrix.arch-name }}
+            chmod +x dist/cangling-keeper-linux-${{ matrix.arch-name }}
           fi
 
       - name: Verify Windows 7 compatibility
@@ -118,12 +122,12 @@ jobs:
             if [[ "${{ matrix.os-name }}" == "windows" ]]; then
               stable="cangling-keeper-windows-x86_64.exe"
             else
-              stable="cangling-keeper-linux-amd64"
+              stable="cangling-keeper-linux-${{ matrix.arch-name }}"
             fi
             echo "::group::Uploading $stable ($f)"
-            RESP="$(curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
+            RESP="$(curl -k -X POST "https://dev.cangling.cn/api/v1/software/upload" \
               -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
-              -F "token=63cef07f4ee54823b25c652b0268f71d" \
+              -F "token=${{ secrets.KEEPER_SOFTWARE_TOKEN }}" \
               -F "version=latest" \
               -F "name=$stable" \
               -F "summary=Automatic release for version $TAG" \
@@ -148,13 +152,13 @@ jobs:
         run: |
           set -euo pipefail
           echo "${{ github.ref_name }}" > version.txt
-          # Publish the marker only after both Linux and Windows binaries have
+          # Publish the marker only after all Linux (AMD64/ARM64) and Windows binaries have
           # succeeded, so clients can never see a new version with an old EXE.
-          RESP="$(curl -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
+          RESP="$(curl -k -X POST "https://dev.cangling.cn/api/v1/software/upload" \
             -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
-            -F "token=63cef07f4ee54823b25c652b0268f71d" \
+            -F "token=${{ secrets.KEEPER_SOFTWARE_TOKEN }}" \
             -F "version=latest" \
-            -F "name=cangling-keeper-version" \
+            -F "name=version.txt" \
             -F "summary=${{ github.ref_name }}" \
             -F "os=app" \
             -F "arch=all" \

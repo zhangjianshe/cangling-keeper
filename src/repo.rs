@@ -15,13 +15,9 @@ use crate::sync::SETTING_SERVER_URL;
 const SETTING_SOFTWARE_SET: &str = "software_set";
 const SETTING_SOFTWARE_SETS: &str = "software_sets";
 const SETTING_SOFTWARE_SETS_SEED: &str = "software_sets_seed";
-const SOFTWARE_SETS_SEED: &str = "4";
-const DEFAULT_SET_NAME: &str = "np4";
-const DEFAULT_IMAGES_SET_NAME: &str = "images";
+const SOFTWARE_SETS_SEED: &str = "5";
 const DEFAULT_GIT_SET_NAME: &str = "cangling-repo";
 const DEFAULT_GIT_URL: &str = "https://code.cangling.cn:22002/operation/cangling-repo.git";
-const DEFAULT_GIT_NP4_SET_NAME: &str = "cangling-np4";
-const DEFAULT_GIT_NP4_URL: &str = "https://code.cangling.cn:22002/operation/cangling-np4.git";
 const DEFAULT_GIT_USER: &str = "cangling-update";
 const DEFAULT_GIT_TOKEN: &str = "94894bb4dbedb33707c868872081bd6e8c02bc8b";
 const KIND_MANIFEST: &str = "manifest";
@@ -158,28 +154,6 @@ fn default_kind() -> String {
     KIND_MANIFEST.to_string()
 }
 
-fn default_np4() -> SoftwareSetRecord {
-    SoftwareSetRecord {
-        name: DEFAULT_SET_NAME.to_string(),
-        kind: KIND_MANIFEST.to_string(),
-        git_url: String::new(),
-        git_username: String::new(),
-        git_token: String::new(),
-        git_branch: String::new(),
-    }
-}
-
-fn default_images() -> SoftwareSetRecord {
-    SoftwareSetRecord {
-        name: DEFAULT_IMAGES_SET_NAME.to_string(),
-        kind: KIND_MANIFEST.to_string(),
-        git_url: String::new(),
-        git_username: String::new(),
-        git_token: String::new(),
-        git_branch: String::new(),
-    }
-}
-
 fn default_git_repo() -> SoftwareSetRecord {
     SoftwareSetRecord {
         name: DEFAULT_GIT_SET_NAME.to_string(),
@@ -191,24 +165,8 @@ fn default_git_repo() -> SoftwareSetRecord {
     }
 }
 
-fn default_git_np4() -> SoftwareSetRecord {
-    SoftwareSetRecord {
-        name: DEFAULT_GIT_NP4_SET_NAME.to_string(),
-        kind: KIND_GIT.to_string(),
-        git_url: DEFAULT_GIT_NP4_URL.to_string(),
-        git_username: DEFAULT_GIT_USER.to_string(),
-        git_token: DEFAULT_GIT_TOKEN.to_string(),
-        git_branch: String::new(),
-    }
-}
-
 fn default_sets() -> Vec<SoftwareSetRecord> {
-    vec![
-        default_np4(),
-        default_images(),
-        default_git_repo(),
-        default_git_np4(),
-    ]
+    vec![default_git_repo()]
 }
 
 fn ensure_named(records: &mut Vec<SoftwareSetRecord>, rec: SoftwareSetRecord, index: usize) {
@@ -235,14 +193,8 @@ fn ensure_named(records: &mut Vec<SoftwareSetRecord>, rec: SoftwareSetRecord, in
 }
 
 fn apply_default_sets(records: &mut Vec<SoftwareSetRecord>) {
-    ensure_named(records, default_np4(), 0);
-    ensure_named(records, default_images(), 1);
-    let git_index = records
-        .iter()
-        .position(|record| record.name.eq_ignore_ascii_case(DEFAULT_IMAGES_SET_NAME))
-        .map_or(0, |index| index + 1);
-    ensure_named(records, default_git_repo(), git_index);
-    ensure_named(records, default_git_np4(), git_index + 1);
+    records.retain(|record| record.name.eq_ignore_ascii_case(DEFAULT_GIT_SET_NAME));
+    ensure_named(records, default_git_repo(), 0);
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -578,7 +530,9 @@ fn ensure_set_records(store: &Store, data_dir: &Path) -> Result<Vec<SoftwareSetR
         .unwrap_or_default();
     let mut records = load_set_records(store);
     for rec in discover_set_records(data_dir) {
-        unique_push_record(&mut records, rec);
+        if rec.name.eq_ignore_ascii_case(DEFAULT_GIT_SET_NAME) {
+            unique_push_record(&mut records, rec);
+        }
     }
     if !initialized || seed != SOFTWARE_SETS_SEED {
         apply_default_sets(&mut records);
@@ -685,7 +639,7 @@ fn current_set_name(state: &AppState) -> String {
         .ok()
         .flatten()
         .and_then(|s| normalize_set_name(&s).ok())
-        .unwrap_or_else(|| DEFAULT_SET_NAME.to_string())
+        .unwrap_or_else(|| DEFAULT_GIT_SET_NAME.to_string())
 }
 
 fn current_record(state: &AppState) -> Option<SoftwareSetRecord> {
@@ -707,7 +661,7 @@ fn current_record(state: &AppState) -> Option<SoftwareSetRecord> {
 }
 
 fn current_status(state: &AppState) -> RepoStatus {
-    let rec = current_record(state).unwrap_or_else(default_np4);
+    let rec = current_record(state).unwrap_or_else(default_git_repo);
     let dest = set_dir(&state.data_dir, &rec.name).unwrap_or_else(|_| sets_root(&state.data_dir));
     let (branch, commit) = git_head(&dest);
     RepoStatus {
@@ -2315,43 +2269,53 @@ mod tests {
     }
 
     #[test]
-    fn default_sets_include_images_manifest() {
-        let records = default_sets();
-        let images = records
-            .iter()
-            .find(|record| record.name == DEFAULT_IMAGES_SET_NAME)
-            .expect("images should be a default software set");
-        assert_eq!(images.kind, KIND_MANIFEST);
-        assert!(images.git_url.is_empty());
-        assert_eq!(
-            records
-                .iter()
-                .filter(|record| record.name == DEFAULT_IMAGES_SET_NAME)
-                .count(),
-            1
-        );
+    fn defaults_and_migration_keep_only_repo_and_preserve_configuration() {
+        let mut repo = default_git_repo();
+        repo.git_url = "https://example.invalid/custom.git".into();
+        repo.git_branch = "release".into();
+        let mut records = vec![repo];
+        for name in ["np4", "images", "cangling-np4"] {
+            let mut legacy = default_git_repo();
+            legacy.name = name.into();
+            records.push(legacy);
+        }
+        apply_default_sets(&mut records);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].name, "cangling-repo");
+        assert_eq!(records[0].git_url, "https://example.invalid/custom.git");
+        assert_eq!(records[0].git_branch, "release");
+        assert_eq!(default_sets().len(), 1);
+        assert_eq!(default_sets()[0].name, "cangling-repo");
     }
 
     #[test]
-    fn applying_defaults_preserves_existing_images_set() {
-        let mut records = vec![SoftwareSetRecord {
-            name: DEFAULT_IMAGES_SET_NAME.to_string(),
-            kind: KIND_GIT.to_string(),
-            git_url: "https://example.invalid/images.git".to_string(),
-            git_username: String::new(),
-            git_token: String::new(),
-            git_branch: String::new(),
-        }];
-
-        apply_default_sets(&mut records);
-
-        let images: Vec<_> = records
-            .iter()
-            .filter(|record| record.name == DEFAULT_IMAGES_SET_NAME)
-            .collect();
-        assert_eq!(images.len(), 1);
-        assert_eq!(images[0].kind, KIND_GIT);
-        assert_eq!(images[0].git_url, "https://example.invalid/images.git");
+    fn migration_does_not_rediscover_retired_directories_or_delete_files() {
+        let root = std::env::temp_dir().join(format!("ck-repo-migrate-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = Store::load(root.join("data.sql")).unwrap();
+        let mut records = default_sets();
+        for name in ["np4", "images", "cangling-np4"] {
+            let mut old = default_git_repo();
+            old.name = name.into();
+            records.push(old);
+            let dir = sets_root(&root).join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("keep.txt"), b"existing download").unwrap();
+        }
+        save_set_records(&store, &records).unwrap();
+        store.set_setting(SETTING_SOFTWARE_SETS_SEED, "4").unwrap();
+        store.set_setting(SETTING_SOFTWARE_SET, "images").unwrap();
+        for _ in 0..2 {
+            let migrated = ensure_set_records(&store, &root).unwrap();
+            assert_eq!(migrated.len(), 1);
+            assert_eq!(migrated[0].name, "cangling-repo");
+        }
+        assert_eq!(store.get_setting(SETTING_SOFTWARE_SET).unwrap().unwrap(), "cangling-repo");
+        for name in ["np4", "images", "cangling-np4"] {
+            assert!(sets_root(&root).join(name).join("keep.txt").is_file());
+        }
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
