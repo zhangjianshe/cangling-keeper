@@ -24,6 +24,7 @@ jobs:
           gh release download $env:SOURCE_RELEASE --repo $env:GITHUB_REPOSITORY --pattern 'cangling-keeper-windows-x86_64.exe' --dir dist
           if ($LASTEXITCODE -ne 0) { throw 'Could not download the test input.' }
       - name: Sign and verify Windows EXE
+        timeout-minutes: 5
         shell: pwsh
         env:
           KEEPER_WINDOWS_SIGNING_PFX: ${{ secrets.KEEPER_WINDOWS_SIGNING_PFX }}

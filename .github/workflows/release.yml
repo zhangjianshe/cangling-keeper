@@ -100,6 +100,7 @@ jobs:
           Write-Host "Windows 7 import compatibility check passed"
 
       - name: Sign and verify Windows EXE
+        timeout-minutes: 5
         if: matrix.os-name == 'windows'
         shell: pwsh
         env:

@@ -23,10 +23,11 @@ $pfxPath = Join-Path ([IO.Path]::GetTempPath()) ("keeper-signing-" + [guid]::New
 $signer = $null
 $rootAdded = $false
 $root = [Security.Cryptography.X509Certificates.X509Certificate2]::new($rootPath)
-$rootStorePath = "Cert:/CurrentUser/Root/$($root.Thumbprint)"
+$rootStorePath = "Cert:/LocalMachine/Root/$($root.Thumbprint)"
 try {
     [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:KEEPER_WINDOWS_SIGNING_PFX))
     $password = ConvertTo-SecureString $env:KEEPER_WINDOWS_SIGNING_PASSWORD -AsPlainText -Force
+    Write-Host 'Importing the dedicated signing certificate.'
     $imported = @(Import-PfxCertificate -FilePath $pfxPath -Password $password -CertStoreLocation Cert:/CurrentUser/My)
     $signers = @($imported | Where-Object { $_.HasPrivateKey })
     if ($signers.Count -ne 1) { throw 'PFX must contain exactly one signing private key.' }
@@ -40,12 +41,15 @@ try {
     # Private-CA trust is installed only on this ephemeral verification runner.
     # It does not grant public Windows trust to customer machines.
     if (!(Test-Path $rootStorePath)) {
-        Import-Certificate -FilePath $rootPath -CertStoreLocation Cert:/CurrentUser/Root | Out-Null
+        Write-Host 'Installing temporary private-CA trust on the ephemeral runner.'
+        Import-Certificate -FilePath $rootPath -CertStoreLocation Cert:/LocalMachine/Root | Out-Null
         $rootAdded = $true
     }
+    Write-Host 'Signing the EXE and requesting an RFC3161 timestamp.'
     & $signTool.FullName sign /s My /sha1 $signer.Thumbprint /fd SHA256 `
         /tr http://timestamp.digicert.com /td SHA256 /d 'Cangling Keeper' $exe
     if ($LASTEXITCODE -ne 0) { throw "Authenticode signing/timestamping failed (exit $LASTEXITCODE)." }
+    Write-Host 'Verifying the signed EXE.'
     & $signTool.FullName verify /pa /all /v /tw $exe
     if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed (exit $LASTEXITCODE)." }
     $signature = Get-AuthenticodeSignature -LiteralPath $exe

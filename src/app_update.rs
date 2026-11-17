@@ -1,9 +1,7 @@
 use serde::Serialize;
 use std::time::Duration;
 
-const VERSION_URL: &str =
-    "https://dev.cangling.cn/software/1def62c273cd47eea1495c098ba34496/latest/version.txt";
-const CURRENT_VERSION_URL: &str = "https://dev.cangling.cn/software/operator/latest/version.txt";
+const VERSION_URL: &str = "https://dev.cangling.cn/software/operator/latest/version.txt";
 const DOWNLOAD_BASE: &str = "https://dev.cangling.cn/software/operator/latest";
 
 #[derive(Serialize)]
@@ -59,33 +57,12 @@ async fn fetch_version(client: &reqwest::Client, url: &str) -> Result<String, St
     parse_version(std::str::from_utf8(&bytes).map_err(|_| "版本号编码错误")?)
 }
 
-fn newest_version(
-    legacy: Result<String, String>,
-    current: Result<String, String>,
-) -> Result<String, String> {
-    match (legacy, current) {
-        (Ok(a), Ok(b)) => Ok(if crate::host_actions::is_newer(&b, &a) {
-            b
-        } else {
-            a
-        }),
-        (Ok(version), Err(_)) | (Err(_), Ok(version)) => Ok(version),
-        (Err(a), Err(b)) => Err(format!("{a}；{b}")),
-    }
-}
-
 pub(crate) async fn check() -> Result<UpdateStatus, String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
         .build()
         .map_err(|error| error.to_string())?;
-    // The legacy ID directory may remain as a stale snapshot after the software
-    // is moved to its code directory. Query both without requiring both online.
-    let (legacy, current) = tokio::join!(
-        fetch_version(&client, VERSION_URL),
-        fetch_version(&client, CURRENT_VERSION_URL)
-    );
-    let latest = newest_version(legacy, current)?;
+    let latest = fetch_version(&client, VERSION_URL).await?;
     let current = format!("v{}", env!("CARGO_PKG_VERSION"));
     Ok(UpdateStatus {
         update_available: crate::host_actions::is_newer(&latest, &current),
@@ -112,33 +89,6 @@ mod tests {
         ] {
             assert!(parse_version(invalid).is_err(), "{invalid}");
         }
-    }
-
-    #[test]
-    fn version_migration_accepts_newest_available_marker() {
-        assert_eq!(
-            newest_version(Ok("v0.0.94".into()), Ok("v0.0.96".into())).unwrap(),
-            "v0.0.96"
-        );
-        assert_eq!(
-            newest_version(Ok("v0.0.97".into()), Ok("v0.0.96".into())).unwrap(),
-            "v0.0.97"
-        );
-        assert_eq!(
-            newest_version(Err("legacy unavailable".into()), Ok("v0.0.96".into())).unwrap(),
-            "v0.0.96"
-        );
-        assert_eq!(
-            newest_version(Ok("v0.0.96".into()), Err("current unavailable".into())).unwrap(),
-            "v0.0.96"
-        );
-        assert!(
-            newest_version(
-                Err("legacy unavailable".into()),
-                Err("current unavailable".into())
-            )
-            .is_err()
-        );
     }
 
     #[test]
