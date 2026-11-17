@@ -58,6 +58,7 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: './ -> target'
+          cache-on-failure: true
 
       - name: Build Linux release binary
         if: matrix.os-name == 'linux'

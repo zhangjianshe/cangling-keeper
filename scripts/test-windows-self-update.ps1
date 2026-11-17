@@ -10,7 +10,9 @@ foreach ($rollback in @($false, $true)) {
     $helper = Join-Path $work 'helper.exe'
     Copy-Item $source $target
     Copy-Item $source $helper
-    if ($rollback) { Set-Content -Path $staged -Value 'not an executable' } else { Copy-Item $source $staged }
+    # Malformed EXEs are rejected during download validation. Use a valid PE
+    # that exits on Keeper's arguments to exercise installation-time rollback.
+    if ($rollback) { Copy-Item "$env:SystemRoot/System32/where.exe" $staged } else { Copy-Item $source $staged }
     Set-Content -Path "$work/data/sentinel.txt" -Value 'keep user data'
     $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
     $listener.Start(); $port = $listener.LocalEndpoint.Port; $listener.Stop()
@@ -32,7 +34,7 @@ foreach ($rollback in @($false, $true)) {
             result = "$work/result.json"
         }
         $plan | ConvertTo-Json -Depth 5 | Set-Content -Path "$work/plan.json" -Encoding utf8NoBOM
-        $updater = Start-Process -FilePath $helper -ArgumentList @('--apply-self-update', "`"$work/plan.json`"") -PassThru
+        $updater = Start-Process -FilePath $helper -ArgumentList @('--apply-self-update', "`"$work/plan.json`"") -PassThru -RedirectStandardOutput "$work/helper.stdout.log" -RedirectStandardError "$work/helper.stderr.log"
         Start-Sleep -Milliseconds 300
         Stop-Process -Id $old.Id -Force
         $old.WaitForExit()
@@ -51,6 +53,7 @@ foreach ($rollback in @($false, $true)) {
         if ($phase -ne $expectedPhase) {
             if (Test-Path "$work/result.json") { Get-Content "$work/result.json" -Raw | Write-Host }
             if (Test-Path "$work/data/app-update.log") { Get-Content "$work/data/app-update.log" -Raw | Write-Host }
+            foreach ($log in @("$work/helper.stdout.log", "$work/helper.stderr.log")) { if (Test-Path $log) { Get-Content $log -Raw | Write-Host } }
             throw "Unexpected updater result: $phase (expected $expectedPhase)"
         }
         $ready = $false
