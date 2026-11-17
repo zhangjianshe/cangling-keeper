@@ -436,7 +436,7 @@ that still requires its `tunnel_authorized_keys` configuration.
 
 ## Keeper 更新
 
-“检查更新”读取 `https://dev.cangling.cn/software/1def62c273cd47eea1495c098ba34496/latest/version.txt`。
+“检查更新”同时读取 `https://dev.cangling.cn/software/1def62c273cd47eea1495c098ba34496/latest/version.txt` 和 `https://dev.cangling.cn/software/operator/latest/version.txt`，使用较新的有效版本；任一路径不可用时使用另一路径，兼容旧 ID 目录中的历史版本。
 发现新版本时，按 Keeper 服务运行的平台提供下载链接（浏览器所在平台不影响选择）：
 
 - Linux AMD64：`https://dev.cangling.cn/software/operator/latest/cangling-keeper-linux-amd64`
