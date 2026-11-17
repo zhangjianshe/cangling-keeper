@@ -48,7 +48,11 @@ foreach ($rollback in @($false, $true)) {
             Start-Sleep -Milliseconds 300
         }
         $expectedPhase = if ($rollback) { 'rolled_back' } else { 'complete' }
-        if ($phase -ne $expectedPhase) { throw "Unexpected updater result: $phase (expected $expectedPhase)" }
+        if ($phase -ne $expectedPhase) {
+            if (Test-Path "$work/result.json") { Get-Content "$work/result.json" -Raw | Write-Host }
+            if (Test-Path "$work/data/app-update.log") { Get-Content "$work/data/app-update.log" -Raw | Write-Host }
+            throw "Unexpected updater result: $phase (expected $expectedPhase)"
+        }
         $ready = $false
         for ($i = 0; $i -lt 100; $i++) {
             try { $health = Invoke-RestMethod "$base/api/health" -TimeoutSec 1; $ready = $true; break } catch { Start-Sleep -Milliseconds 200 }

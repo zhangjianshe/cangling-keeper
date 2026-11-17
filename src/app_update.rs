@@ -283,7 +283,7 @@ fn install_and_restart(plan: &InstallPlan) -> Result<(), String> {
     #[cfg(windows)]
     {
         let script = format!(
-            "$p = Get-Process -Id {} -ErrorAction SilentlyContinue; if ($p -and -not $p.WaitForExit(30000)) {{ exit 1 }}",
+            "$p = Get-Process -Id {} -ErrorAction SilentlyContinue; if ($p -and -not $p.WaitForExit(30000)) {{ exit 1 }}; exit 0",
             plan.pid
         );
         let status = std::process::Command::new("powershell.exe")
