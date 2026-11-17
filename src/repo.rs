@@ -1833,7 +1833,7 @@ async fn sync_software_set_core(
     set_name: String,
 ) -> Result<RepoStatus, String> {
     let set_name = normalize_set_name(&set_name)?;
-    let _activity = crate::repo_activity::begin_sync(&set_dir(&state.data_dir, &set_name)?)?;
+    let activity = crate::repo_activity::begin_sync(&set_dir(&state.data_dir, &set_name)?)?;
     let rec = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let records = ensure_set_records(&store, &state.data_dir)?;
@@ -1848,11 +1848,17 @@ async fn sync_software_set_core(
     if rec.kind == KIND_GIT {
         let data_dir = state.data_dir.clone();
         let app2 = app.clone();
-        return tokio::task::spawn_blocking(move || sync_git_set(app2.as_ref(), &data_dir, &rec))
+        return tokio::task::spawn_blocking(move || {
+            // The blocking Git job may outlive an HTTP request (page closed or
+            // network disconnected). Keep update protection with that job.
+            let _activity = activity;
+            sync_git_set(app2.as_ref(), &data_dir, &rec)
+        })
             .await
             .map_err(|e| format!("后台任务失败：{e}"))?;
     }
 
+    let _activity = activity;
     let server_url = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         store
@@ -2328,6 +2334,48 @@ mod tests {
         assert!(sync_git_set(&events,&data,&rec).unwrap().cloned);
         assert_eq!(std::fs::read(dest.join("big file.bin")).unwrap(),payload);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn closed_http_request_does_not_release_running_git_update_protection() {
+        struct BlockingEvents {
+            entered: tokio::sync::Notify,
+            first: std::sync::atomic::AtomicBool,
+            release: (std::sync::Mutex<bool>,std::sync::Condvar),
+        }
+        impl EventSink for BlockingEvents {
+            fn emit_json(&self,_:&str,_:serde_json::Value) {
+                if !self.first.swap(true,std::sync::atomic::Ordering::SeqCst) {
+                    self.entered.notify_one();
+                    let (lock,condition)=&self.release;
+                    let mut released=lock.lock().unwrap();
+                    while !*released {released=condition.wait(released).unwrap();}
+                }
+            }
+        }
+        let root=std::env::temp_dir().join(format!("keeper-cancel-sync-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        run_git(&root,&["init","--initial-branch=main","upstream"]).unwrap();
+        let upstream=root.join("upstream");
+        run_git(&upstream,&["-c","user.name=Test","-c","user.email=test@example.invalid","commit","--allow-empty","-m","fixture"]).unwrap();
+        let state=std::sync::Arc::new(crate::create_app_state(root.join("data")).unwrap());
+        web_list_software_sets(&state).unwrap();
+        web_update_software_set(&state,"cangling-repo".into(),"git".into(),format!("file://{}",upstream.display()),String::new(),String::new(),String::new()).unwrap();
+        let events=std::sync::Arc::new(BlockingEvents{entered:tokio::sync::Notify::new(),first:std::sync::atomic::AtomicBool::new(false),release:(std::sync::Mutex::new(false),std::sync::Condvar::new())});
+        let app=events.clone();let app_state=state.clone();
+        let request=tokio::spawn(async move{sync_software_set_core(app,&app_state,"cangling-repo".into()).await});
+        events.entered.notified().await;
+        request.abort();let _=request.await;
+        let update_blocked=crate::repo_activity::pause_if_idle().is_err();
+        {let (lock,condition)=&events.release;*lock.lock().unwrap()=true;condition.notify_all();}
+        let mut finished=false;
+        for _ in 0..100 {
+            if let Ok(pause)=crate::repo_activity::pause_if_idle(){drop(pause);finished=true;break;}
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(update_blocked,"A detached Git job must still prevent self-update");
+        assert!(finished,"Git worker should release protection on completion");
+        drop(state);std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
