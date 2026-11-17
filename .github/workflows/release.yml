@@ -99,6 +99,14 @@ jobs:
           }
           Write-Host "Windows 7 import compatibility check passed"
 
+      - name: Sign and verify Windows EXE
+        if: matrix.os-name == 'windows'
+        shell: pwsh
+        env:
+          KEEPER_WINDOWS_SIGNING_PFX: ${{ secrets.KEEPER_WINDOWS_SIGNING_PFX }}
+          KEEPER_WINDOWS_SIGNING_PASSWORD: ${{ secrets.KEEPER_WINDOWS_SIGNING_PASSWORD }}
+        run: ./scripts/sign-windows.ps1
+
       - name: Upload GitHub release asset
         uses: softprops/action-gh-release@v2
         with:

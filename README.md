@@ -449,3 +449,5 @@ GitHub Actions 使用原生 Linux AMD64、ARM64 和 Windows runner 构建；所�
 软件中心上传使用 `CANGLING_TOKEN`（API 凭证）和 `KEEPER_SOFTWARE_TOKEN`（soft 软件中心 operator 软件的上传 Token）。下载地址中的软件 ID 不作为上传 Token。
 
 发布上传入口：`https://soft.cangling.cn:22002/api/v1/software/upload`；客户端版本检查和下载仍使用上面的 dev 地址。
+
+Windows 发布现已接入现有苍灵根 CA 签发的独立代码签名证书；上传前自动签名、添加时间戳并验证。部署到受管理的 Windows 电脑时仍需信任苍灵根 CA。证书、Secrets 配置和测试方式见 [Windows 签名说明](docs/windows-signing.md)。
