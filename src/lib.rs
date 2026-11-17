@@ -432,9 +432,21 @@ fn open_directory(path: &Path) -> Result<(), String> {
     }
     let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
     let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    let result = unsafe { ShellExecuteW(std::ptr::null_mut(),operation.as_ptr(),path.as_ptr(),std::ptr::null(),std::ptr::null(),1) } as isize;
-    if result<=32 { return Err(format!("Windows 无法打开目录（Shell 错误码 {result}）")); }
-    Ok(())
+    #[link(name = "ole32")]
+    unsafe extern "system" {
+        fn CoInitializeEx(reserved: *mut c_void, flags: u32) -> i32;
+        fn CoUninitialize();
+    }
+    // The HTTP worker may have a different COM apartment. Use a dedicated STA
+    // for Shell extensions, including Explorer folder activation on Windows 7.
+    std::thread::spawn(move || {
+        let initialized = unsafe { CoInitializeEx(std::ptr::null_mut(), 2 | 4) };
+        if initialized < 0 { return Err(format!("无法初始化 Windows Shell（HRESULT {initialized:#x}）")); }
+        let result = unsafe { ShellExecuteW(std::ptr::null_mut(),operation.as_ptr(),path.as_ptr(),std::ptr::null(),std::ptr::null(),1) } as isize;
+        unsafe { CoUninitialize(); }
+        if result<=32 { return Err(format!("Windows 无法打开目录（Shell 错误码 {result}）")); }
+        Ok(())
+    }).join().map_err(|_| "Windows 目录打开线程异常".to_string())?
 }
 
 #[cfg(not(target_os = "windows"))]

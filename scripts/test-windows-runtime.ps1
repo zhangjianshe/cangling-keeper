@@ -33,7 +33,11 @@ try {
     $sets = Invoke-Keeper 'list_software_sets' @{}
     $repo = @($sets.result | Where-Object { $_.name -eq 'cangling-repo' })
     if (!$sets.ok -or $repo.Count -ne 1 -or !(Test-Path -LiteralPath $repo[0].localPath -PathType Container) -or $repo[0].cloned) { throw 'First-visit repository directory was not created correctly.' }
-    Write-Host 'Windows runtime: root status, real installation, repeated installation, and first-visit repository path passed.'
+    $folder = Join-Path $work 'directory with spaces 中文'
+    New-Item -ItemType Directory -Path $folder | Out-Null
+    $opened = Invoke-Keeper 'open_local_path' @{ path = $folder }
+    if (!$opened.ok) { throw 'Windows Shell did not accept the directory-open request.' }
+    Write-Host 'Windows runtime: root installation, repeated installation, first-visit repository path and Unicode directory opening passed.' 
 } catch {
     foreach ($file in @("$work/stdout.log", "$work/stderr.log")) {
         if (Test-Path $file) { Get-Content $file | Select-Object -Last 30 | Write-Host }
