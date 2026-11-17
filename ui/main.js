@@ -1160,10 +1160,10 @@ function renderAppUpdate() {
     appUpdateBtnEl.disabled = false;
     appUpdateBtnEl.title = `${s.error}（当前 ${s.current}）· 点击重试`;
   } else if (s.updateAvailable) {
-    appUpdateBtnEl.textContent = `下载 ${s.latest}`;
+    appUpdateBtnEl.textContent = `更新至 ${s.latest}`;
     appUpdateBtnEl.className = "btn app-update-btn primary";
     appUpdateBtnEl.disabled = false;
-    appUpdateBtnEl.title = `当前 ${s.current} · 服务器最新 ${s.latest} · 点击下载`;
+    appUpdateBtnEl.title = `当前 ${s.current} · 服务器最新 ${s.latest} · 更新并重启当前 Keeper`;
   } else {
     appUpdateBtnEl.textContent = "已是最新";
     appUpdateBtnEl.className = "btn app-update-btn up-to-date";
@@ -1230,13 +1230,36 @@ async function onAppUpdateClick() {
     uiAlert("当前平台没有可用的更新包");
     return;
   }
-  const link = document.createElement("a");
-  link.href = s.downloadUrl;
-  link.rel = "noopener";
-  link.target = "_blank";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+  state.appUpdateBusy = true;
+  applyAppUpdateProgress({phase: "download"});
+  try {
+    const result = await invoke("apply_app_update");
+    applyAppUpdateProgress({phase: "install"});
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    for (let attempt = 0; attempt < 90; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 2000);
+        const health = await fetch("/api/health", {cache: "no-store", signal: controller.signal}).then(r => r.json());
+        clearTimeout(timeout);
+        const status = await invoke("app_update_result");
+        if (health.version === result.latest.replace(/^v/, "") && status?.phase === "complete") {
+          location.reload(); return;
+        }
+        if (status?.version === result.latest && (status.phase === "rolled_back" || status.phase === "error")) {
+          const error = new Error(status.message); error.updateFailed = true; throw error;
+        }
+      } catch (error) {
+        if (error.updateFailed) throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    throw new Error("等待更新重启超时，请刷新页面检查程序状态");
+  } catch (error) {
+    state.appUpdateBusy = false;
+    await checkAppUpdate();
+    uiAlert(`更新失败：${error}`);
+  }
 }
 
 // ---- login & host sync -----------------------------------------------------

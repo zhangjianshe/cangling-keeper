@@ -85,6 +85,12 @@ jobs:
         shell: pwsh
         run: ./scripts/test-windows-runtime.ps1
 
+      - name: Verify Windows running-program update and rollback
+        if: matrix.os-name == 'windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: ./scripts/test-windows-self-update.ps1
+
       - name: Verify Windows 7 compatibility
         if: matrix.os-name == 'windows'
         shell: pwsh

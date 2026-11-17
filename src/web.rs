@@ -71,6 +71,7 @@ impl WebState {
 }
 
 pub(crate) fn run_from_args() -> Result<(), String> {
+    if let Some(result) = crate::app_update::helper_mode() { return result; }
     let listen = listen_from_args()?;
     let mut data_dir = default_data_dir()?;
     let mut open = true;
@@ -140,7 +141,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
         shutdown: Arc::new(Mutex::new(Some(shutdown_tx))),
     };
     let app = Router::new()
-        .route("/api/health", get(|| async { Json(json!({ "ok": true })) }))
+        .route("/api/health", get(|| async { Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id() })) }))
         .route("/api/events", get(events_socket))
         .route("/api/invoke/{command}", post(invoke))
         .fallback(static_asset)
@@ -240,6 +241,11 @@ async fn invoke(
     AxumPath(command): AxumPath<String>,
     Json(args): Json<Value>,
 ) -> InvokeResponse {
+    if command == "apply_app_update" {
+        if authorize_root_install(peer, &headers).is_err() {
+            return fail(StatusCode::FORBIDDEN, "只能从 Keeper 本机同源页面更新程序");
+        }
+    }
     if command == "install_root_certificate" {
         if let Err(error) = authorize_root_install(peer, &headers) {
             return fail(StatusCode::FORBIDDEN, error);
@@ -660,6 +666,16 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
         "install_root_certificate" => {
             if !arg::<bool>(&args, "confirmed")? { return Err("请先确认安装根证书".into()); }
             value(tokio::task::spawn_blocking(crate::root_certificate::install).await.map_err(|e| e.to_string())??)
+        }
+        "apply_app_update" => {
+            let (_, latest) = crate::app_update::prepare(&core.data_dir, |progress| state.emit("app-update-progress", progress)).await?;
+            tokio::spawn(async { tokio::time::sleep(std::time::Duration::from_millis(700)).await; std::process::exit(0); });
+            value(json!({"restarting":true,"latest":latest}))
+        }
+        "app_update_result" => {
+            let path = core.data_dir.join("app-update-result.json");
+            let result: Value = std::fs::read(&path).ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            value(result)
         }
         "check_app_update" => value(crate::app_update::check().await?),
         _ => Err(format!("Web 模式暂不支持命令：{command}")),
