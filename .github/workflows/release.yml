@@ -125,7 +125,7 @@ jobs:
               stable="cangling-keeper-linux-${{ matrix.arch-name }}"
             fi
             echo "::group::Uploading $stable ($f)"
-            RESP="$(curl -k -X POST "https://dev.cangling.cn/api/v1/software/upload" \
+            RESP="$(curl --fail-with-body --connect-timeout 20 --max-time 600 -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
               -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
               -F "token=${{ secrets.KEEPER_SOFTWARE_TOKEN }}" \
               -F "version=latest" \
@@ -154,7 +154,7 @@ jobs:
           echo "${{ github.ref_name }}" > version.txt
           # Publish the marker only after all Linux (AMD64/ARM64) and Windows binaries have
           # succeeded, so clients can never see a new version with an old EXE.
-          RESP="$(curl -k -X POST "https://dev.cangling.cn/api/v1/software/upload" \
+          RESP="$(curl --fail-with-body --connect-timeout 20 --max-time 600 -k -X POST "https://soft.cangling.cn:22002/api/v1/software/upload" \
             -H "API-TOKEN: ${{ secrets.CANGLING_TOKEN }}" \
             -F "token=${{ secrets.KEEPER_SOFTWARE_TOKEN }}" \
             -F "version=latest" \

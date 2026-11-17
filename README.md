@@ -446,4 +446,6 @@ that still requires its `tunnel_authorized_keys` configuration.
 下载后停止服务并替换程序，数据目录保持不变。页面不自动覆盖正在运行的服务。
 GitHub Actions 使用原生 Linux AMD64、ARM64 和 Windows runner 构建；所有软件包上传成功后才发布版本标记。
 
-软件中心上传使用 `CANGLING_TOKEN`（API 凭证）和 `KEEPER_SOFTWARE_TOKEN`（dev 软件中心 operator 软件的上传 Token）。下载地址中的软件 ID 不作为上传 Token。
+软件中心上传使用 `CANGLING_TOKEN`（API 凭证）和 `KEEPER_SOFTWARE_TOKEN`（soft 软件中心 operator 软件的上传 Token）。下载地址中的软件 ID 不作为上传 Token。
+
+发布上传入口：`https://soft.cangling.cn:22002/api/v1/software/upload`；客户端版本检查和下载仍使用上面的 dev 地址。
