@@ -32,6 +32,7 @@ const state = {
   selectedSetName: "",
   repoPath: "", // relative path inside the synced set ("" = root)
   repoSyncing: false,
+  repoRefreshing: false,
   hostSyncing: false,
   clusterPorts: {}, // hostId -> cangling-update listen port
   clusterFrameUrl: "",
@@ -2046,7 +2047,8 @@ function repoProgressActionLabel(action) {
     download: "下载",
     skip: "跳过",
     fail: "失败",
-    "git-clone": "克隆",
+    "git-clone": "索引克隆",
+    "git-lfs": "大文件下载",
     "git-fetch": "拉取",
     git: "Git",
     manifest: "获取清单",
@@ -2078,7 +2080,7 @@ function renderRepoProgress(p) {
     pct = Math.min(100, (current / total) * 100);
   }
   const git =
-    p.action === "git" || p.action === "git-clone" || p.action === "git-fetch";
+    p.action === "git" || p.action === "git-clone" || p.action === "git-fetch" || p.action === "git-lfs";
   const action = repoProgressActionLabel(p.action);
   const finishing = [
     "manifest",
@@ -2127,8 +2129,8 @@ function renderRepoStatus() {
   const setName = s.setName || state.selectedSetName || "软件仓库";
   const kind = (set && set.kind) || s.kind || "manifest";
   repoSetTitleEl.textContent = setName;
-  repoCloneUpdateBtnEl.textContent = state.repoSyncing ? "同步中…" : "同步";
-  repoCloneUpdateBtnEl.disabled = state.repoSyncing || !setName;
+  repoCloneUpdateBtnEl.textContent = state.repoSyncing ? "同步中…" : state.repoRefreshing ? "刷新中…" : "同步";
+  repoCloneUpdateBtnEl.disabled = state.repoSyncing || state.repoRefreshing || !setName;
   repoPathEl.textContent = s.localPath || "同步后自动填充";
   repoPathEl.title = s.localPath || "";
   repoOpenPathBtnEl.disabled = !s.localPath;
@@ -2369,6 +2371,7 @@ function repoUp() {
 }
 
 async function onRepoCloneUpdateClick() {
+  if (state.repoSyncing || state.repoRefreshing) return;
   const setName = state.selectedSetName || (state.repoStatus && state.repoStatus.setName) || "";
   if (!setName) {
     uiAlert("请先选择软件集");
@@ -2393,28 +2396,18 @@ async function onRepoCloneUpdateClick() {
   renderRepoStatus();
   try {
     state.repoStatus = await invoke("sync_software_set", { setName });
+    // Transfer and integrity verification have ended. Do not keep the progress
+    // panel open while refreshing the sidebar and local directory listing.
+    state.repoSyncing = false;
+    state.repoRefreshing = true;
+    hideRepoProgress();
+    renderRepoStatus();
     state.selectedSetName = setName;
     state.repoPath = "";
-    renderRepoProgress({
-      current: 100,
-      total: 100,
-      action: "refresh",
-      file: "正在刷新软件集状态…",
-      overallDone: 100,
-      overallTotal: 100,
-    });
     await loadSoftwareSets();
     renderSetList();
     renderRepoStatus();
     if (state.repoStatus.cloned) {
-      renderRepoProgress({
-        current: 100,
-        total: 100,
-        action: "browse",
-        file: "正在读取本地软件目录…",
-        overallDone: 100,
-        overallTotal: 100,
-      });
       await loadRepoDir();
     } else {
       showRepoUnsynced();
@@ -2423,34 +2416,23 @@ async function onRepoCloneUpdateClick() {
       uiAlert(`部分文件同步失败: ${state.repoStatus.error}`);
     }
   } catch (err) {
+    state.repoSyncing = false;
+    state.repoRefreshing = true;
+    hideRepoProgress();
+    renderRepoStatus();
     uiAlert(`Error: ${err}`);
-    renderRepoProgress({
-      current: 100,
-      total: 100,
-      action: "refresh",
-      file: "正在重新读取软件仓库状态…",
-      overallDone: 100,
-      overallTotal: 100,
-    });
     await loadSoftwareSets();
     await loadRepoStatus();
     renderSetList();
     renderRepoStatus();
     if (state.repoStatus && state.repoStatus.cloned) {
-      renderRepoProgress({
-        current: 100,
-        total: 100,
-        action: "browse",
-        file: "正在读取本地软件目录…",
-        overallDone: 100,
-        overallTotal: 100,
-      });
       await loadRepoDir();
     } else {
       showRepoUnsynced();
     }
   } finally {
     state.repoSyncing = false;
+    state.repoRefreshing = false;
     hideRepoProgress();
     renderRepoStatus();
   }
@@ -2875,6 +2857,32 @@ $("#edit-tunnel-btn").addEventListener("click", () => {
   const t = tunnelById(state.selectedTunnelId);
   if (t) openTunnelModal(t);
 });
+let tunnelUploadBusy = false;
+async function uploadSelectedTunnel() {
+  hideTunnelMoreMenu();
+  if (tunnelUploadBusy) return;
+  const tunnel = tunnelById(state.selectedTunnelId);
+  if (!tunnel) return;
+  if (!state.login?.loggedIn) { await uiAlert("请先登录维护中心"); return; }
+  if (!(await uiConfirm(`用本地「${tunnel.name}」的配置覆盖服务器上的对应隧道？\n会上传隧道地址、端口和认证配置，不会中断当前连接。`, "上传同步"))) return;
+  tunnelUploadBusy = true;
+  const button = $("#upload-tunnel-btn");
+  button.disabled = true;
+  button.textContent = "上传中…";
+  try {
+    await invoke("upload_tunnel", { id: tunnel.id });
+    await loadTunnels();
+    renderTunnelDetail();
+    await uiAlert("隧道配置已上传，并已从服务器读回核对。", "上传成功");
+  } catch (error) {
+    await uiAlert(`上传同步失败：${error}`, "上传同步");
+  } finally {
+    tunnelUploadBusy = false;
+    button.disabled = false;
+    button.textContent = "上传同步";
+  }
+}
+$("#upload-tunnel-btn").addEventListener("click", uploadSelectedTunnel);
 $("#copy-tunnel-btn").addEventListener("click", () => {
   hideTunnelMoreMenu();
   const t = tunnelById(state.selectedTunnelId);
@@ -3672,7 +3680,7 @@ listen("repo-sync-progress", (e) => {
   if (!state.repoSyncing) return;
   renderRepoProgress(p);
   const git =
-    p.action === "git" || p.action === "git-clone" || p.action === "git-fetch";
+    p.action === "git" || p.action === "git-clone" || p.action === "git-fetch" || p.action === "git-lfs";
   const action = repoProgressActionLabel(p.action);
   const bytes =
     (p.action === "download" || git) && (p.bytesDone || p.bytesTotal)

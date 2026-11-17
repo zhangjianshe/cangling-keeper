@@ -594,7 +594,10 @@ pub(crate) fn dir_has_complete_files(dir: &Path) -> bool {
 
 fn set_cloned(dest: &Path, kind: &str) -> bool {
     if kind == KIND_GIT {
-        dest.join(".git").is_dir()
+        let marker = dest.join(".git/cangling-keeper-sync-complete");
+        std::fs::read_to_string(marker).ok().is_some_and(|head| {
+            run_git(dest, &["rev-parse", "HEAD"]).is_ok_and(|current| current.trim() == head.trim())
+        })
     } else {
         dest.is_dir() && dir_has_complete_files(dest)
     }
@@ -1278,6 +1281,7 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
         .args(GIT_HTTP_CFG)
         .args(args)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_LFS_SKIP_SMUDGE", "1")
         .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
         .env("GIT_HTTP_LOW_SPEED_TIME", "60")
         .stdin(Stdio::null())
@@ -1359,7 +1363,7 @@ fn emit_git_progress(
     if let Some(pct) = parse_git_percent(line) {
         *last_pct = pct;
     }
-    let bytes_done = parse_git_bytes(line).unwrap_or(0);
+    let bytes_done = parse_git_bytes(line.split('|').next().unwrap_or(line)).unwrap_or(0);
     emit_event(
         app,
         "repo-sync-progress",
@@ -1378,88 +1382,122 @@ fn emit_git_progress(
 }
 
 fn run_git_progress(
-    app: &dyn EventSink,
-    set_name: &str,
-    rec: &SoftwareSetRecord,
-    cwd: Option<&Path>,
-    args: &[&str],
-    phase: &str,
+    app: &dyn EventSink, set_name: &str, rec: &SoftwareSetRecord,
+    cwd: Option<&Path>, args: &[&str], phase: &str,
 ) -> Result<(), String> {
     let mut cmd = crate::host_cmd::command("git");
-    if let Some(cwd) = cwd {
-        cmd.current_dir(cwd);
-    }
-    cmd.args(GIT_HTTP_CFG)
-        .args(args)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GIT_FLUSH", "1")
-        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000")
-        .env("GIT_HTTP_LOW_SPEED_TIME", "60")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped());
+    if let Some(cwd) = cwd { cmd.current_dir(cwd); }
+    cmd.args(GIT_HTTP_CFG).args(args)
+        .env("GIT_TERMINAL_PROMPT", "0").env("GIT_FLUSH", "1")
+        .env("GIT_LFS_SKIP_SMUDGE", "1").env("GIT_LFS_FORCE_PROGRESS", "1")
+        .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000").env("GIT_HTTP_LOW_SPEED_TIME", "60")
+        .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(map_git_spawn_err)?;
-    let mut last_pct = 0u32;
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let mut tail = String::new();
+    let mut last_pct = 0;
     let mut last_emit = Instant::now() - Duration::from_secs(1);
-    let mut stderr_text = String::new();
-    if let Some(stderr) = child.stderr.take() {
-        let mut reader = stderr;
-        let mut buf = Vec::new();
-        let mut byte = [0u8; 1];
+    std::thread::scope(|scope| -> Result<(), String> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let out_tx = tx.clone();
+        scope.spawn(move || stream_git_lines(stdout, out_tx));
+        scope.spawn(move || stream_git_lines(stderr, tx));
         loop {
-            match reader.read(&mut byte) {
-                Ok(0) => {
-                    if !buf.is_empty() {
-                        let line = String::from_utf8_lossy(&buf);
-                        stderr_text.push_str(&line);
-                        stderr_text.push('\n');
-                        emit_git_progress(
-                            app,
-                            set_name,
-                            phase,
-                            &redact_git_text(&line, rec),
-                            &mut last_pct,
-                        );
+            match rx.recv_timeout(Duration::from_secs(3)) {
+                Ok(line) => {
+                    let line = line.map_err(|e| format!("读取 Git 输出失败：{e}"))?;
+                    let safe = redact_git_text(&line, rec);
+                    tail.push_str(&safe); tail.push('\n');
+                    if tail.len() > 32768 {
+                        let mut cut = tail.len() - 16384;
+                        while !tail.is_char_boundary(cut) { cut += 1; }
+                        tail.drain(..cut);
                     }
-                    break;
-                }
-                Ok(_) => {
-                    if byte[0] == b'\n' || byte[0] == b'\r' {
-                        if !buf.is_empty() {
-                            let line = String::from_utf8_lossy(&buf);
-                            stderr_text.push_str(&line);
-                            stderr_text.push('\n');
-                            let now = Instant::now();
-                            if now.duration_since(last_emit) >= Duration::from_millis(120)
-                                || parse_git_percent(&line).is_some_and(|p| p == 100)
-                            {
-                                emit_git_progress(
-                                    app,
-                                    set_name,
-                                    phase,
-                                    &redact_git_text(&line, rec),
-                                    &mut last_pct,
-                                );
-                                last_emit = now;
-                            }
-                            buf.clear();
-                        }
-                    } else if buf.len() < 2048 {
-                        buf.push(byte[0]);
+                    if last_emit.elapsed() >= Duration::from_millis(120) || parse_git_percent(&safe)==Some(100) {
+                        emit_git_progress(app, set_name, phase, &safe, &mut last_pct);
+                        last_emit = Instant::now();
                     }
                 }
-                Err(e) => return Err(format!("读取 git 输出失败：{e}")),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    let message = if phase == "git-lfs" { "正在等待 Git LFS 大文件传输，请勿将 Git 检出 100% 视为同步完成…" } else { "Git 进程仍在运行，等待下一阶段输出…" };
+                    emit_git_progress(app, set_name, phase, message, &mut last_pct);
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
             }
         }
-    }
+        Ok(())
+    })?;
     let status = child.wait().map_err(|e| e.to_string())?;
-    if !status.success() {
-        let msg = redact_git_text(stderr_text.trim(), rec);
-        return Err(if msg.is_empty() {
-            format!("git 命令失败（退出码 {}）", status.code().unwrap_or(-1))
-        } else {
-            msg
-        });
+    if !status.success() { return Err(if tail.trim().is_empty() {
+        format!("Git 命令失败（退出码 {}）",status.code().unwrap_or(-1))
+    } else { tail.trim().to_string() }); }
+    Ok(())
+}
+
+fn stream_git_lines(mut reader: impl Read, tx: std::sync::mpsc::Sender<Result<String, std::io::Error>>) {
+    let mut line = Vec::new(); let mut bytes = [0u8; 4096];
+    loop {
+        match reader.read(&mut bytes) {
+            Ok(0) => { if !line.is_empty() { let _=tx.send(Ok(String::from_utf8_lossy(&line).into_owned())); } break; }
+            Ok(n) => for &b in &bytes[..n] {
+                if b==b'\n' || b==b'\r' {
+                    if !line.is_empty() { if tx.send(Ok(String::from_utf8_lossy(&line).into_owned())).is_err(){return;} line.clear(); }
+                } else if line.len()<8192 { line.push(b); }
+            },
+            Err(e) => { let _=tx.send(Err(e)); break; }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct LfsFile { name: String, size: u64, oid: String }
+#[derive(Deserialize)]
+struct LfsFiles { files: Vec<LfsFile> }
+
+fn git_lfs_files(dest: &Path) -> Result<Vec<LfsFile>, String> {
+    // Avoid requiring LFS for ordinary Git repositories. The attributes are
+    // tracked files; never recursively inspect the multi-GB .git object store.
+    let paths = run_git(dest, &["ls-files", "-z"])?;
+    let uses_lfs = paths.split('\0').filter(|p| p.ends_with(".gitattributes"))
+        .any(|p| std::fs::read_to_string(dest.join(p)).is_ok_and(|s| s.contains("filter=lfs")));
+    if !uses_lfs { return Ok(Vec::new()); }
+    let json = run_git(dest, &["lfs", "ls-files", "--json"])
+        .map_err(|_| "此仓库使用 Git LFS 大文件，请安装/升级 Git LFS 后重新同步（Git for Windows 安装时须包含 Git LFS）。".to_string())?;
+    let files: LfsFiles = serde_json::from_str(&json).map_err(|e| format!("读取 Git LFS 文件清单失败：{e}"))?;
+    Ok(files.files)
+}
+
+fn pull_git_lfs(app: &dyn EventSink, rec: &SoftwareSetRecord, dest: &Path) -> Result<Vec<LfsFile>, String> {
+    let files = git_lfs_files(dest)?;
+    if files.is_empty() { return Ok(files); }
+    emit_repo_phase(app,&rec.name,"git-lfs","Git 索引已完成，开始下载并检出 LFS 大文件…",0,0);
+    // Ignore user fetch include/exclude settings: this is a complete offline repo.
+    // Cached objects and Git LFS partial downloads are retained for retries.
+    run_git_progress(app,&rec.name,rec,Some(dest),
+        &["-c","lfs.activitytimeout=60","-c","lfs.dialtimeout=30","-c","lfs.transfer.maxretries=3","lfs","pull","--include=","--exclude=","origin"],"git-lfs")?;
+    for file in &files {
+        let path = resolve_relative(dest,&file.name)?;
+        if !path.is_file() || path.metadata().map_err(|e|e.to_string())?.len()!=file.size {
+            return Err(format!("Git LFS 大文件未下载完整：{}。请重新同步，将复用已下载缓存。",file.name));
+        }
+        let mut prefix=[0u8;43];
+        let count=std::fs::File::open(path).map_err(|e|e.to_string())?.read(&mut prefix).map_err(|e|e.to_string())?;
+        if prefix[..count].starts_with(b"version https://git-lfs.github.com/spec/v1") {
+            return Err(format!("{} 仍是 Git LFS 指针，不是实际文件；请重试同步。",file.name));
+        }
+    }
+    Ok(files)
+}
+
+fn verify_lfs_fingerprints(data_dir: &Path, rec: &SoftwareSetRecord, files: &[LfsFile]) -> Result<(), String> {
+    if files.is_empty(){return Ok(());}
+    let saved=crate::fingerprints::read_database(&crate::fingerprints::database_path(&sets_root(data_dir)))?;
+    let hashes: HashMap<_,_>=saved.into_iter().map(|f|(f.path,(f.size,f.sha256))).collect();
+    for file in files {
+        if hashes.get(&format!("{}/{}",rec.name,file.name))!=Some(&(file.size,file.oid.clone())) {
+            return Err(format!("Git LFS 文件 SHA-256 校验失败：{}。未标记为同步完成。",file.name));
+        }
     }
     Ok(())
 }
@@ -1470,7 +1508,7 @@ fn is_git_repo(path: &Path) -> bool {
 
 fn remove_incomplete_git(dest: &Path) {
     if dest.exists() && !is_git_repo(dest) {
-        let _ = std::fs::remove_dir_all(dest);
+        let _ = std::fs::remove_dir(dest);
     }
 }
 
@@ -1560,6 +1598,8 @@ fn sync_git_set(
     let parent = dest.parent().ok_or_else(|| "仓库路径无效".to_string())?;
     std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
 
+    let complete_marker = dest.join(".git/cangling-keeper-sync-complete");
+    if complete_marker.exists() { std::fs::remove_file(&complete_marker).map_err(|e|e.to_string())?; }
     let mut last_err = String::new();
     for attempt in 1..=GIT_ATTEMPTS {
         let updating = is_git_repo(&dest);
@@ -1605,6 +1645,7 @@ fn sync_git_set(
         return Err(format!("{last_err}（已自动重试 {GIT_ATTEMPTS} 次）"));
     }
 
+    let lfs_files = pull_git_lfs(app, rec, &dest)?;
     emit_repo_phase(
         app,
         &rec.name,
@@ -1615,6 +1656,8 @@ fn sync_git_set(
     );
     let (branch, commit) = git_head(&dest);
     refresh_fingerprints_with_progress(app, data_dir, &rec.name)?;
+    verify_lfs_fingerprints(data_dir,rec,&lfs_files)?;
+    std::fs::write(&complete_marker, run_git(&dest,&["rev-parse","HEAD"])?).map_err(|e|e.to_string())?;
     emit_repo_phase(app, &rec.name, "complete", "同步完成", 100, 100);
     Ok(RepoStatus {
         cloned: dest.join(".git").is_dir(),
@@ -2234,6 +2277,51 @@ pub(crate) fn web_read_repo_file(state: &AppState, path: String) -> Result<RepoF
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lfs_sync_requires_real_payload_and_resumes_after_missing_remote_object() {
+        struct Events(std::sync::Mutex<Vec<String>>);
+        impl EventSink for Events { fn emit_json(&self,_:&str,p:serde_json::Value){
+            if let Some(action)=p.get("action").and_then(|a|a.as_str()) {self.0.lock().unwrap().push(action.into());}
+        }}
+        let events=Events(std::sync::Mutex::new(Vec::new()));
+        let root=std::env::temp_dir().join(format!("keeper-lfs-test-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        run_git(&root,&["init","--initial-branch=main","upstream"]).unwrap();
+        let upstream=root.join("upstream");
+        run_git(&upstream,&["lfs","install","--local"]).expect("Git LFS is required for the LFS integration test");
+        std::fs::write(upstream.join(".gitattributes"),"*.bin filter=lfs diff=lfs merge=lfs -text\n").unwrap();
+        let mut payload=vec![42u8;1024*1024];
+        let commit=|payload:&[u8]|{
+            std::fs::write(upstream.join("big file.bin"),payload).unwrap();
+            run_git(&upstream,&["add","."]).unwrap();
+            run_git(&upstream,&["-c","user.name=Test","-c","user.email=test@example.invalid","commit","-m","payload"]).unwrap();
+        };
+        commit(&payload);
+        let data=root.join("data");
+        let rec=SoftwareSetRecord{name:"cangling-repo".into(),kind:KIND_GIT.into(),git_url:format!("file://{}",upstream.display()),git_username:String::new(),git_token:String::new(),git_branch:String::new()};
+        let dest=set_dir(&data,&rec.name).unwrap();
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        git_clone_once(&events,&rec,&dest,dest.parent().unwrap(),&rec.git_url).unwrap();
+        assert!(std::fs::read_to_string(dest.join("big file.bin")).unwrap().starts_with("version https://git-lfs.github.com/spec/v1"));
+        assert!(!set_cloned(&dest,KIND_GIT));
+        assert!(sync_git_set(&events,&data,&rec).unwrap().cloned);
+        assert_eq!(std::fs::read(dest.join("big file.bin")).unwrap(),payload);
+        assert!(set_cloned(&dest,KIND_GIT));
+        assert!(events.0.lock().unwrap().iter().any(|a|a=="git-lfs"));
+        payload[0]=99;
+        commit(&payload);
+        let oid=format!("{:x}",Sha256::digest(&payload));
+        let object=upstream.join(".git/lfs/objects").join(&oid[..2]).join(&oid[2..4]).join(&oid);
+        assert!(object.is_file());
+        std::fs::remove_file(&object).unwrap();
+        assert!(sync_git_set(&events,&data,&rec).is_err());
+        assert!(!set_cloned(&dest,KIND_GIT));
+        std::fs::write(&object,&payload).unwrap();
+        assert!(sync_git_set(&events,&data,&rec).unwrap().cloned);
+        assert_eq!(std::fs::read(dest.join("big file.bin")).unwrap(),payload);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn git_sync_keeps_only_latest_default_branch_without_tags() {

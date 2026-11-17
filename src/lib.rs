@@ -419,19 +419,29 @@ fn open_local_path(path: String) -> Result<(), String> {
     if !path.is_dir() {
         return Err(format!("目录不存在：{}", path.display()));
     }
-    let status = open_path_with_command(&path)?;
-    if !status.success() {
-        return Err("文件管理器未能打开该目录".into());
-    }
-    Ok(())
+    open_directory(&path)
 }
 
 #[cfg(target_os = "windows")]
-fn open_path_with_command(path: &Path) -> Result<std::process::ExitStatus, String> {
-    std::process::Command::new("explorer")
-        .arg(path)
-        .status()
-        .map_err(|e| format!("无法打开文件管理器：{e}"))
+fn open_directory(path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ffi::c_void;
+    #[link(name = "shell32")]
+    unsafe extern "system" {
+        fn ShellExecuteW(window: *mut c_void, operation: *const u16, file: *const u16, parameters: *const u16, directory: *const u16, show: i32) -> *mut c_void;
+    }
+    let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
+    let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let result = unsafe { ShellExecuteW(std::ptr::null_mut(),operation.as_ptr(),path.as_ptr(),std::ptr::null(),std::ptr::null(),1) } as isize;
+    if result<=32 { return Err(format!("Windows 无法打开目录（Shell 错误码 {result}）")); }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn open_directory(path: &Path) -> Result<(), String> {
+    let status = open_path_with_command(path)?;
+    if !status.success() { return Err("文件管理器未能打开该目录".into()); }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -525,9 +535,7 @@ async fn update_tunnel(state: State<'_, AppState>, mut tunnel: Tunnel) -> Result
         tunnel.remote_id = existing.remote_id;
         tunnel.user_id = existing.user_id;
         store.update_tunnel(&tunnel)?;
-    }
-    if tunnel.tunnel_type == "ssh" {
-        let _ = push_tunnel_to_server(&state, &tunnel).await;
+        store.set_setting(&tunnel_dirty_key(&tunnel.id), "1")?;
     }
     Ok(())
 }
@@ -1835,6 +1843,9 @@ async fn pull_sync(state: &AppState, url: &str, token: &str) -> Result<(), Strin
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let local_tunnels = store.list_tunnels()?;
         for local in &local_tunnels {
+            if store.get_setting(&tunnel_dirty_key(&local.id))?.as_deref() == Some("1") {
+                continue; // Local edits require explicit upload before a pull may replace them.
+            }
             // The server currently stores only SSH tunnels. A locally converted
             // WSS tunnel can retain its old remote_id; never restore its old SSH
             // listener address (which may not belong to this computer).
@@ -1983,6 +1994,52 @@ async fn delete_remote_host(state: &AppState, remote_id: &str) -> Result<(), Str
     sync::delete_remote(&url, &token, remote_id).await
 }
 
+fn tunnel_dirty_key(id: &str) -> String { format!("tunnel_pending_upload:{id}") }
+
+fn tunnel_config_matches(a: &sync::SyncTunnel, b: &sync::SyncTunnel) -> bool {
+    let kind = |s: &str| if s.is_empty() { "ssh".to_owned() } else { s.to_owned() };
+    a.name==b.name && kind(&a.tunnel_type)==kind(&b.tunnel_type) && a.websocket_url==b.websocket_url
+        && a.direction==b.direction && a.local_host==b.local_host && a.local_port==b.local_port
+        && a.remote_host==b.remote_host && a.remote_port==b.remote_port
+        && a.ssh_host==b.ssh_host && a.ssh_port==b.ssh_port && a.username==b.username
+        && a.auth_method==b.auth_method
+}
+
+async fn upload_tunnel_to_server(state: &AppState, id: &str) -> Result<(), String> {
+    let (url, token, mut snapshot, payload) = {
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let (url,token) = login_credentials(&store).ok_or("请先登录维护中心")?;
+        let tunnel = store.get_tunnel(id)?;
+        tunnel.validate()?;
+        let payload = sync::tunnel_to_sync(&store,&state.data_dir,&tunnel)?;
+        store.set_setting(&tunnel_dirty_key(id),"1")?;
+        (url,token,tunnel,payload)
+    };
+    let remote = sync::push_tunnel(&url,&token,&payload).await?;
+    if remote.id.is_empty() { return Err("服务器未返回隧道 ID，本地配置仍已保留".into()); }
+    // Preserve edits made while the network request was in flight. Only update
+    // relationship IDs here; never write the stale snapshot over current data.
+    {
+        let store=state.store.lock().map_err(|e|e.to_string())?;
+        let mut current=store.get_tunnel(id)?;
+        current.remote_id=remote.id.clone(); current.user_id=remote.user_id;
+        store.update_tunnel(&current)?;
+    }
+    let persisted=sync::pull_tunnels(&url,&token).await?.into_iter().find(|t|t.id==remote.id)
+        .ok_or("服务器未返回刚保存的隧道，本地修改仍受保护，请稍后重试上传")?;
+    if !tunnel_config_matches(&payload,&persisted) {
+        return Err("服务器没有完整保存隧道配置（可能尚不支持 WebSocket 字段），请更新维护中心后重试。本地配置已保留，普通同步不会覆盖。".into());
+    }
+    snapshot.remote_id=remote.id; snapshot.user_id=remote.user_id;
+    let store=state.store.lock().map_err(|e|e.to_string())?;
+    let current=store.get_tunnel(id)?;
+    if serde_json::to_value(&current).map_err(|e|e.to_string())? != serde_json::to_value(&snapshot).map_err(|e|e.to_string())? {
+        return Err("上传期间本地配置再次修改；已保留新修改，请再次点击上传同步".into());
+    }
+    store.delete_setting(&tunnel_dirty_key(id))?;
+    Ok(())
+}
+
 async fn push_tunnel_to_server(state: &AppState, tunnel: &Tunnel) -> Result<(String, i64), String> {
     let (url, token) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -2103,3 +2160,6 @@ mod tunnel_sync_regression {
         drop(store); drop(state); server.abort(); std::fs::remove_dir_all(directory).unwrap();
     }
 }
+
+#[cfg(test)]
+mod tunnel_sync_tests;

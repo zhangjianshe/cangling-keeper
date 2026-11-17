@@ -434,10 +434,12 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
                 tunnel.remote_id = existing.remote_id;
                 tunnel.user_id = existing.user_id;
                 store.update_tunnel(&tunnel)?;
+                store.set_setting(&crate::tunnel_dirty_key(&tunnel.id), "1")?;
             }
-            if tunnel.tunnel_type == "ssh" {
-                let _ = push_tunnel_to_server(core, &tunnel).await;
-            }
+            value(())
+        }
+        "upload_tunnel" => {
+            crate::upload_tunnel_to_server(core, &arg::<String>(&args,"id")?).await?;
             value(())
         }
         "delete_tunnel" => {
