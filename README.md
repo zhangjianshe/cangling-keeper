@@ -12,7 +12,7 @@ the local loopback address.
   to auto-fill the form, or fill the fields manually.
 - Connect/disconnect tunnels; the list shows live connection state.
 - Tunnel auth via password or an ed25519 key pair (generate one in-app).
-- 软件仓库：缺省仅保留 Git 仓库 `cangling-repo`。升级时清理旧列表项，保留已下载文件和现有 `cangling-repo` 连接配置。同步大文件时显示下载/克隆进度，并可浏览目录与文本文件内容。
+- 软件仓库：缺省仅保留 Git 仓库 `cangling-repo`。克隆和更新均使用 `--depth 1` 浅拉取，只同步指定分支（未指定时使用远端默认分支），不拉取标签；初次克隆显式使用 `--single-branch`。升级时清理旧列表项，保留已下载文件和现有 `cangling-repo` 连接配置。同步大文件时显示下载/克隆进度，并可浏览目录与文本文件内容。
 - 主机面板可将本地已拉取的软件同步到 Master 主机上 cangling-update 的 `repo/<软件集>/` 目录（按软件集名分目录，避免同名覆盖）。已存在且大小、SHA-256 都相同的文件会跳过，避免 `version.txt` 这类等长变更被漏传。
 - 集群管理：SSH 探测该主机 cangling-update 的实际监听端口后，用主机地址 + 服务端口直接打开 `/console`（`install-service` 后端口变化也会跟上；探测不到时缺省 5400）。
 - Hosts and tunnels persist to a SQLite database in the app data directory.

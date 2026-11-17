@@ -1486,12 +1486,17 @@ fn git_fetch_update(
         "fetch".to_string(),
         "--depth".to_string(),
         GIT_SHALLOW_DEPTH.to_string(),
+        "--no-tags".to_string(),
         "--progress".to_string(),
         "--prune".to_string(),
         "origin".to_string(),
     ];
     if !branch.is_empty() {
         fetch_args.push(branch.clone());
+    } else {
+        // Explicitly fetch the remote default branch, not every ref covered
+        // by an older clone's remote.origin.fetch configuration.
+        fetch_args.push("HEAD".to_string());
     }
     let fetch_refs: Vec<&str> = fetch_args.iter().map(|s| s.as_str()).collect();
     run_git_progress(app, &rec.name, rec, Some(dest), &fetch_refs, "git-fetch")?;
@@ -1530,6 +1535,8 @@ fn git_clone_once(
         "clone".to_string(),
         "--depth".to_string(),
         GIT_SHALLOW_DEPTH.to_string(),
+        "--single-branch".to_string(),
+        "--no-tags".to_string(),
         "--progress".to_string(),
     ];
     if !branch.is_empty() {
@@ -2227,6 +2234,46 @@ pub(crate) fn web_read_repo_file(state: &AppState, path: String) -> Result<RepoF
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn git_sync_keeps_only_latest_default_branch_without_tags() {
+        struct SilentEvents;
+        impl EventSink for SilentEvents {
+            fn emit_json(&self, _: &str, _: serde_json::Value) {}
+        }
+        let root = std::env::temp_dir().join(format!("ck-shallow-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        run_git(&root, &["init", "--initial-branch=main", "upstream"]).unwrap();
+        let upstream = root.join("upstream");
+        let commit = || {
+            run_git(&upstream, &["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "snapshot"]).unwrap();
+        };
+        commit();
+        run_git(&upstream, &["branch", "other"]).unwrap();
+        commit();
+        run_git(&upstream, &["tag", "before-clone"]).unwrap();
+        let dest = root.join("cache");
+        let url = format!("file://{}", upstream.display());
+        let rec = SoftwareSetRecord {
+            name: "cangling-repo".into(), kind: KIND_GIT.into(),
+            git_url: url.clone(), git_username: String::new(),
+            git_token: String::new(), git_branch: String::new(),
+        };
+        git_clone_once(&SilentEvents, &rec, &dest, &root, &url).unwrap();
+        assert_eq!(run_git(&dest, &["rev-list", "--count", "HEAD"]).unwrap().trim(), "1");
+        assert_eq!(run_git(&dest, &["rev-parse", "--is-shallow-repository"]).unwrap().trim(), "true");
+        assert!(run_git(&dest, &["tag", "--list"]).unwrap().trim().is_empty());
+        // Simulate an older clone configured to track every branch.
+        run_git(&dest, &["config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*"]).unwrap();
+        commit();
+        run_git(&upstream, &["tag", "after-clone"]).unwrap();
+        git_fetch_update(&SilentEvents, &rec, &dest, &url).unwrap();
+        assert_eq!(run_git(&dest, &["rev-list", "--count", "HEAD"]).unwrap().trim(), "1");
+        assert_eq!(run_git(&dest, &["rev-parse", "HEAD"]).unwrap(), run_git(&upstream, &["rev-parse", "HEAD"]).unwrap());
+        assert!(run_git(&dest, &["tag", "--list"]).unwrap().trim().is_empty());
+        assert!(run_git(&dest, &["show-ref", "--verify", "refs/remotes/origin/other"]).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn local_manifest_match_reuses_unchanged_cached_hash() {
