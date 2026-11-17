@@ -13,6 +13,8 @@ mod host_sync;
 mod platform_dirs;
 mod proxy;
 mod repo;
+mod repo_activity;
+mod git_lock;
 mod single_instance;
 mod ssh;
 mod store;

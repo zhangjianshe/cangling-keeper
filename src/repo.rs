@@ -1598,6 +1598,9 @@ fn sync_git_set(
     let parent = dest.parent().ok_or_else(|| "仓库路径无效".to_string())?;
     std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败：{e}"))?;
 
+    if crate::git_lock::recover_stale_index(&dest)? {
+        emit_repo_phase(app,&rec.name,"cleanup","确认没有 Git/LFS 进程后，已清理失效的索引锁",0,0);
+    }
     let complete_marker = dest.join(".git/cangling-keeper-sync-complete");
     if complete_marker.exists() { std::fs::remove_file(&complete_marker).map_err(|e|e.to_string())?; }
     let mut last_err = String::new();
@@ -1626,6 +1629,9 @@ fn sync_git_set(
             }
             Err(e) => {
                 last_err = e;
+                if last_err.contains("index.lock") {
+                    return Err(format!("{last_err}。仓库被 Git 索引锁占用，请等待现有 Git/LFS 操作结束后再同步；未删除活动锁。"));
+                }
                 if last_err.contains("未安装 Git") {
                     break;
                 }
@@ -1827,6 +1833,7 @@ async fn sync_software_set_core(
     set_name: String,
 ) -> Result<RepoStatus, String> {
     let set_name = normalize_set_name(&set_name)?;
+    let _activity = crate::repo_activity::begin_sync(&set_dir(&state.data_dir, &set_name)?)?;
     let rec = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let records = ensure_set_records(&store, &state.data_dir)?;

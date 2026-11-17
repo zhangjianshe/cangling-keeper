@@ -37,7 +37,24 @@ try {
     New-Item -ItemType Directory -Path $folder | Out-Null
     $opened = Invoke-Keeper 'open_local_path' @{ path = $folder }
     if (!$opened.ok) { throw 'Windows Shell did not accept the directory-open request.' }
-    Write-Host 'Windows runtime: root installation, repeated installation, first-visit repository path and Unicode directory opening passed.' 
+    $upstream = Join-Path $work 'upstream'
+    git init --initial-branch=main $upstream | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not create the local Git fixture.' }
+    [IO.File]::WriteAllText((Join-Path $upstream 'sample.txt'), 'fixture')
+    git -C $upstream add sample.txt
+    git -C $upstream -c user.name=KeeperTest -c user.email=test@example.invalid commit -m fixture | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw 'Could not commit the local Git fixture.' }
+    $url = ([Uri]$upstream).AbsoluteUri
+    $null = Invoke-Keeper 'update_software_set' @{ setName='cangling-repo'; kind='git'; gitUrl=$url; gitUsername=''; gitToken=''; gitBranch='' }
+    $firstSync = Invoke-Keeper 'sync_software_set' @{ setName='cangling-repo' }
+    if (!$firstSync.ok -or !$firstSync.result.cloned) { throw 'Local Git fixture sync failed.' }
+    $lockPath = Join-Path $firstSync.result.localPath '.git/index.lock'
+    [IO.File]::WriteAllText($lockPath, '')
+    (Get-Item -LiteralPath $lockPath).LastWriteTimeUtc = [DateTime]::UtcNow.AddMinutes(-2)
+    $recovered = Invoke-Keeper 'sync_software_set' @{ setName='cangling-repo' }
+    if (!$recovered.ok -or !$recovered.result.cloned -or (Test-Path -LiteralPath $lockPath)) { throw 'Verified stale Git lock recovery failed.' }
+    Write-Host 'Windows stale Git lock recovery and local Git synchronization passed.'
+    Write-Host 'Windows runtime: root installation, repeated installation, first-visit repository path and Unicode directory opening passed.'
 } catch {
     foreach ($file in @("$work/stdout.log", "$work/stderr.log")) {
         if (Test-Path $file) { Get-Content $file | Select-Object -Last 30 | Write-Host }

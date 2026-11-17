@@ -276,12 +276,14 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
     let core = &state.core;
     match command {
         "shutdown_app" => {
+            let repository_pause = crate::repo_activity::pause_if_idle()?;
             let sender = state
                 .shutdown
                 .lock()
                 .map_err(|error| error.to_string())?
                 .take()
                 .ok_or("服务正在关闭")?;
+            std::mem::forget(repository_pause);
             state.emit("service-shutdown", true);
             tokio::spawn(async move {
                 // Give the HTTP response enough time to reach the browser

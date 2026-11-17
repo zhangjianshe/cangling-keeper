@@ -2868,7 +2868,7 @@ async function uploadSelectedTunnel() {
   tunnelUploadBusy = true;
   const button = $("#upload-tunnel-btn");
   button.disabled = true;
-  button.textContent = "上传中…";
+  $("#upload-tunnel-label").textContent = "上传中…";
   try {
     await invoke("upload_tunnel", { id: tunnel.id });
     await loadTunnels();
@@ -2879,7 +2879,7 @@ async function uploadSelectedTunnel() {
   } finally {
     tunnelUploadBusy = false;
     button.disabled = false;
-    button.textContent = "上传同步";
+    $("#upload-tunnel-label").textContent = "上传同步";
   }
 }
 $("#upload-tunnel-btn").addEventListener("click", uploadSelectedTunnel);

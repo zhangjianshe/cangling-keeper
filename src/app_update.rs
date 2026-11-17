@@ -159,9 +159,11 @@ pub(crate) async fn prepare(
         }
     }
     let guard = Guard;
+    let repository_pause = crate::repo_activity::pause_if_idle()?;
     let result = prepare_inner(data_dir, progress).await;
     if result.is_ok() {
         std::mem::forget(guard);
+        std::mem::forget(repository_pause);
     }
     result
 }
