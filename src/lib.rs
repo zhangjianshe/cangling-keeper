@@ -102,6 +102,8 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
 
 /// Start the browser-based service.
 pub fn run_web_from_args() -> Result<(), String> {
+    // Update probes and the replacement helper must run alongside the live server.
+    if let Some(result) = app_update::helper_mode() { return result; }
     match desktop_shortcut::ensure_exists() {
         Ok(Some(path)) => println!("已创建桌面快捷方式：{}", path.display()),
         Ok(None) => {}

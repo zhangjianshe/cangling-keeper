@@ -71,7 +71,6 @@ impl WebState {
 }
 
 pub(crate) fn run_from_args() -> Result<(), String> {
-    if let Some(result) = crate::app_update::helper_mode() { return result; }
     let listen = listen_from_args()?;
     let mut data_dir = default_data_dir()?;
     let mut open = true;

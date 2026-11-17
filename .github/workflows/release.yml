@@ -79,6 +79,11 @@ jobs:
             chmod +x dist/cangling-keeper-linux-${{ matrix.arch-name }}
           fi
 
+      - name: Verify Linux running-program update and rollback
+        if: matrix.os-name == 'linux'
+        timeout-minutes: 5
+        run: python3 scripts/test-linux-self-update.py dist/cangling-keeper-linux-${{ matrix.arch-name }}
+
       - name: Verify Windows root installation and repository directory
         if: matrix.os-name == 'windows'
         timeout-minutes: 5
