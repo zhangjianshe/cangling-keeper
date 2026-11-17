@@ -1,4 +1,5 @@
 mod app_update;
+mod root_certificate;
 mod auth;
 mod logging;
 mod certificate;

@@ -541,6 +541,12 @@ fn ensure_set_records(store: &Store, data_dir: &Path) -> Result<Vec<SoftwareSetR
     if records.is_empty() {
         records.extend(default_sets());
     }
+    // Report only usable local paths, including before the first sync. An empty
+    // directory remains unsynced; Git cloning is still performed on demand.
+    for record in &records {
+        let dir = set_dir(data_dir, &record.name)?;
+        std::fs::create_dir_all(&dir).map_err(|e| format!("无法创建软件仓库本地目录 {}：{e}", dir.display()))?;
+    }
     save_set_records(store, &records)?;
 
     let current = store
@@ -2314,6 +2320,23 @@ mod tests {
         for name in ["np4", "images", "cangling-np4"] {
             assert!(sets_root(&root).join(name).join("keep.txt").is_file());
         }
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn first_visit_creates_a_real_but_unsynced_repository_directory() {
+        let root = std::env::temp_dir().join(format!("keeper-first-repo-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let store = Store::load(root.join("data.sql")).unwrap();
+        assert!(!sets_root(&root).join("cangling-repo").exists());
+        let sets = list_set_infos(&store, &root).unwrap();
+        assert_eq!(sets.len(), 1);
+        assert!(Path::new(&sets[0].local_path).is_dir());
+        assert!(!sets[0].cloned);
+        std::fs::write(Path::new(&sets[0].local_path).join("keep.txt"), b"existing").unwrap();
+        list_set_infos(&store, &root).unwrap();
+        assert_eq!(std::fs::read(Path::new(&sets[0].local_path).join("keep.txt")).unwrap(), b"existing");
         drop(store);
         std::fs::remove_dir_all(root).unwrap();
     }

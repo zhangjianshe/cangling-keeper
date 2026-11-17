@@ -9,8 +9,8 @@ use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path as AxumPath, State};
-use axum::http::{StatusCode, Uri, header};
+use axum::extract::{ConnectInfo, Path as AxumPath, State};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -159,7 +159,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
             let _ = crate::open_with_command(&url);
         });
     }
-    axum::serve(listener, app)
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {},
@@ -234,14 +234,37 @@ fn arg<T: DeserializeOwned>(args: &Value, name: &str) -> Result<T, String> {
 }
 
 async fn invoke(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     State(state): State<WebState>,
     AxumPath(command): AxumPath<String>,
     Json(args): Json<Value>,
 ) -> InvokeResponse {
+    if command == "install_root_certificate" {
+        if let Err(error) = authorize_root_install(peer, &headers) {
+            return fail(StatusCode::FORBIDDEN, error);
+        }
+    }
     match dispatch(&state, &command, args).await {
         Ok(value) => ok(value),
         Err(error) => fail(StatusCode::BAD_REQUEST, error),
     }
+}
+
+fn authorize_root_install(peer: SocketAddr, headers: &HeaderMap) -> Result<(), String> {
+    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("");
+    let url = reqwest::Url::parse(&format!("http://{host}")).map_err(|_| "请从此电脑的 localhost 页面安装根证书")?;
+    let local_host = url.host_str().is_some_and(|h| h == "localhost" || h.trim_matches(['[',']']).parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()));
+    if !peer.ip().is_loopback() || !local_host {
+        return Err("仅允许从 Keeper 服务所在电脑的 localhost 页面安装根证书".into());
+    }
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let origin = origin.to_str().map_err(|_| "无效页面来源")?;
+        if origin != format!("http://{host}") && origin != format!("https://{host}") {
+            return Err("证书安装请求必须来自 Keeper 自己的页面".into());
+        }
+    }
+    Ok(())
 }
 
 async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value, String> {
@@ -632,6 +655,11 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
         "open_url" => {
             crate::open_url(arg(&args, "url")?)?;
             value(())
+        }
+        "get_root_certificate_status" => value(tokio::task::spawn_blocking(crate::root_certificate::status).await.map_err(|e| e.to_string())??),
+        "install_root_certificate" => {
+            if !arg::<bool>(&args, "confirmed")? { return Err("请先确认安装根证书".into()); }
+            value(tokio::task::spawn_blocking(crate::root_certificate::install).await.map_err(|e| e.to_string())??)
         }
         "check_app_update" => value(crate::app_update::check().await?),
         _ => Err(format!("Web 模式暂不支持命令：{command}")),
@@ -1157,6 +1185,20 @@ fn uninject_proxy(core: &AppState, host_id: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn root_certificate_install_requires_local_peer_and_same_origin() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::HOST, "127.0.0.1:4301".parse().unwrap());
+        headers.insert(header::ORIGIN, "http://127.0.0.1:4301".parse().unwrap());
+        assert!(authorize_root_install("127.0.0.1:1234".parse().unwrap(), &headers).is_ok());
+        assert!(authorize_root_install("192.0.2.10:1234".parse().unwrap(), &headers).is_err());
+        headers.insert(header::ORIGIN, "https://other.example".parse().unwrap());
+        assert!(authorize_root_install("127.0.0.1:1234".parse().unwrap(), &headers).is_err());
+        headers.remove(header::ORIGIN);
+        headers.insert(header::HOST, "other.example:4301".parse().unwrap());
+        assert!(authorize_root_install("127.0.0.1:1234".parse().unwrap(), &headers).is_err());
+    }
 
     #[test]
     fn embedded_web_ui_contains_adapter() {

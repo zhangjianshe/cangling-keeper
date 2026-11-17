@@ -1,8 +1,8 @@
 use serde::Serialize;
 use std::time::Duration;
 
-const VERSION_URL: &str = "https://dev.cangling.cn/software/operator/latest/version.txt";
-const DOWNLOAD_BASE: &str = "https://dev.cangling.cn/software/operator/latest";
+const VERSION_URL: &str = "https://soft.cangling.cn:22002/software/operator/latest/version.txt";
+const DOWNLOAD_BASE: &str = "https://soft.cangling.cn:22002/software/operator/latest";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

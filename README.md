@@ -436,18 +436,21 @@ that still requires its `tunnel_authorized_keys` configuration.
 
 ## Keeper 更新
 
-“检查更新”仅使用 `https://dev.cangling.cn/software/operator/latest/version.txt`。
+“检查更新”仅使用 `https://soft.cangling.cn:22002/software/operator/latest/version.txt`。
 发现新版本时，按 Keeper 服务运行的平台提供下载链接（浏览器所在平台不影响选择）：
 
-- Linux AMD64：`https://dev.cangling.cn/software/operator/latest/cangling-keeper-linux-amd64`
-- Linux ARM64：`https://dev.cangling.cn/software/operator/latest/cangling-keeper-linux-arm64`
-- Windows x86_64：`https://dev.cangling.cn/software/operator/latest/cangling-keeper-windows-x86_64.exe`
+- Linux AMD64：`https://soft.cangling.cn:22002/software/operator/latest/cangling-keeper-linux-amd64`
+- Linux ARM64：`https://soft.cangling.cn:22002/software/operator/latest/cangling-keeper-linux-arm64`
+- Windows x86_64：`https://soft.cangling.cn:22002/software/operator/latest/cangling-keeper-windows-x86_64.exe`
 
 下载后停止服务并替换程序，数据目录保持不变。页面不自动覆盖正在运行的服务。
 GitHub Actions 使用原生 Linux AMD64、ARM64 和 Windows runner 构建；所有软件包上传成功后才发布版本标记。
 
 软件中心上传使用 `CANGLING_TOKEN`（API 凭证）和 `KEEPER_SOFTWARE_TOKEN`（soft 软件中心 operator 软件的上传 Token）。下载地址中的软件 ID 不作为上传 Token。
 
-发布上传入口：`https://soft.cangling.cn:22002/api/v1/software/upload`；客户端版本检查和下载仍使用上面的 dev 地址。
+发布上传入口：`https://soft.cangling.cn:22002/api/v1/software/upload`；客户端版本检查和下载也使用上面的 soft 地址。
 
 Windows 发布现已接入现有苍灵根 CA 签发的独立代码签名证书；上传前自动签名、添加时间戳并验证。部署到受管理的 Windows 电脑时仍需信任苍灵根 CA。证书、Secrets 配置和测试方式见 [Windows 签名说明](docs/windows-signing.md)。
+
+顶部“安装根证书”支持 Windows（UAC 授权）、Ubuntu 和麒麟（系统授权框）；检查安装状态、展示指纹并在确认后写入系统信任库，详见上面的 Windows 签名说明。安装目标是运行 Keeper 的本机。
+软件仓库在首次访问时即创建本地目录；目录为空时仍显示“未同步”，点击“同步”才拉取仓库内容。

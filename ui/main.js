@@ -99,6 +99,8 @@ const clusterTokenRowEl = $("#cluster-token-row");
 const clusterTokenUrlTitleEl = $("#cluster-token-url-title");
 const clusterTokenValueEl = $("#cluster-token-value");
 const clusterTokenCopyEl = $("#cluster-token-copy");
+const installRootCertBtnEl = $("#install-root-cert-btn");
+let rootCertificateBusy = false;
 const appUpdateBtnEl = $("#app-update-btn");
 const serviceCloseBtnEl = $("#service-close-btn");
 const loginBtnEl = $("#login-btn");
@@ -1095,6 +1097,49 @@ async function onCanglingUpdateClick() {
     busy: "更新中…",
     status: `正在下载并更新到 ${p.latest}…`,
   });
+}
+
+// ---- local operating-system root certificate --------------------------------
+function renderRootCertificateStatus(info) {
+  installRootCertBtnEl.textContent = info.installed ? "根证书已安装" : "安装根证书";
+  installRootCertBtnEl.disabled = info.installed || !info.supported;
+  installRootCertBtnEl.title = `${info.message}\nSHA-256：${info.fingerprint}`;
+}
+
+async function loadRootCertificateStatus() {
+  try {
+    renderRootCertificateStatus(await invoke("get_root_certificate_status"));
+  } catch (error) {
+    installRootCertBtnEl.title = `无法检查根证书：${error}；点击重试`;
+  }
+}
+
+async function installRootCertificate() {
+  if (rootCertificateBusy) return;
+  rootCertificateBusy = true;
+  installRootCertBtnEl.disabled = true;
+  installRootCertBtnEl.textContent = "检查证书…";
+  try {
+    const info = await invoke("get_root_certificate_status");
+    if (!info.supported) throw new Error(info.message);
+    if (info.installed) { renderRootCertificateStatus(info); return; }
+    const confirmed = await uiConfirm(
+      `将在当前 Keeper 服务所在电脑上信任“Cangling Local Root CA”，用于苍灵程序签名和内部 HTTPS 证书验证。\n\n${info.message}\n\nSHA-256 指纹：\n${info.fingerprint}\n\n安装不会保证消除 SmartScreen 提示。是否继续？`,
+      "安装苍灵根证书"
+    );
+    if (!confirmed) return;
+    installRootCertBtnEl.textContent = "等待系统授权…";
+    const result = await invoke("install_root_certificate", { confirmed: true });
+    renderRootCertificateStatus(result);
+    await uiAlert("苍灵根证书已安装到系统信任库。部分浏览器或程序可能需要重新启动。", "安装成功");
+  } catch (error) {
+    await uiAlert(`根证书安装未完成：${error}`, "安装根证书");
+  } finally {
+    rootCertificateBusy = false;
+    installRootCertBtnEl.disabled = false;
+    installRootCertBtnEl.textContent = "安装根证书";
+    await loadRootCertificateStatus();
+  }
 }
 
 // ---- app self-update -------------------------------------------------------
@@ -3395,6 +3440,7 @@ roleSwitchEl.addEventListener("click", (e) => {
   onRoleSwitchClick(btn.dataset.role);
 });
 clusterTokenCopyEl.addEventListener("click", copyClusterToken);
+installRootCertBtnEl.addEventListener("click", installRootCertificate);
 appUpdateBtnEl.addEventListener("click", onAppUpdateClick);
 
 hostFormEl.querySelectorAll('input[name="auth_method"]').forEach((r) => {
@@ -3914,6 +3960,7 @@ document.addEventListener("keydown", (e) => {
   await ensureTerminalFont();
   initTerminal();
   updateTerminalUI();
+  loadRootCertificateStatus();
   checkAppUpdate();
   await loadLoginStatus();
   try {

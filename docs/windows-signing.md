@@ -37,3 +37,23 @@ The manually dispatched **Test Windows signing** workflow downloads an existing
 release EXE, signs a copy, verifies it on a Windows runner, and saves the signed
 copy and public certificates as a 7-day artifact. It does not replace published
 release assets or software-center downloads.
+
+## Install the root from Keeper
+
+The top bar's **安装根证书** button checks the OS trust store and shows the
+certificate fingerprint before requesting permission. Installation applies to
+**the computer running the Keeper service**, so use its localhost page.
+
+- Windows: approve the UAC prompt to add the public certificate to the Local
+  Computer Trusted Root Certification Authorities store, for all users.
+- Ubuntu and Debian-based Kylin: authorization uses `pkexec`; Keeper installs the
+  public PEM under `/usr/local/share/ca-certificates/` and runs
+  `update-ca-certificates`.
+- Kylin systems providing `update-ca-trust`: Keeper installs the public PEM under
+  `/etc/pki/ca-trust/source/anchors/` and runs `update-ca-trust extract`.
+
+Linux needs `ca-certificates` and, when running without root privileges, a
+working polkit authentication agent and `pkexec`. Missing tools, canceled
+permission, and failed trust-store updates are reported in the page. Existing
+files containing a different certificate are not overwritten. Installation
+never needs or distributes a private key.

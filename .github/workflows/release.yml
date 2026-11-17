@@ -79,6 +79,12 @@ jobs:
             chmod +x dist/cangling-keeper-linux-${{ matrix.arch-name }}
           fi
 
+      - name: Verify Windows root installation and repository directory
+        if: matrix.os-name == 'windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: ./scripts/test-windows-runtime.ps1
+
       - name: Verify Windows 7 compatibility
         if: matrix.os-name == 'windows'
         shell: pwsh
