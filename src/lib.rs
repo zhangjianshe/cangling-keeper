@@ -1833,6 +1833,12 @@ async fn pull_sync(state: &AppState, url: &str, token: &str) -> Result<(), Strin
         let store = state.store.lock().map_err(|e| e.to_string())?;
         let local_tunnels = store.list_tunnels()?;
         for local in &local_tunnels {
+            // The server currently stores only SSH tunnels. A locally converted
+            // WSS tunnel can retain its old remote_id; never restore its old SSH
+            // listener address (which may not belong to this computer).
+            if local.tunnel_type == "websocket" {
+                continue;
+            }
             if local.remote_id.is_empty() {
                 continue;
             }
@@ -2060,3 +2066,38 @@ async fn sync_public_hosts(state: State<'_, AppState>) -> Result<(), String> {
 
 /// Record fatal startup errors in the initialized application log.
 pub fn log_error(message: &str) { logging::error(message); }
+
+#[cfg(test)]
+mod tunnel_sync_regression {
+    use super::*;
+    use axum::{routing::get, Json, Router};
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn account_sync_does_not_replace_local_wss_with_old_ssh_settings() {
+        let app = Router::new()
+            .route("/api/v1/host/list", get(|| async { Json(json!({"code":200,"success":true,"data":{"hosts":[]}})) }))
+            .route("/api/v1/tunnel/list", get(|| async { Json(json!({"code":200,"success":true,"data":{"tunnels":[{
+                "id":"old-ssh-id","name":"hn-master","direction":"local","localHost":"10.141.8.61","localPort":22,
+                "remoteHost":"192.168.3.215","remotePort":12345,"sshHost":"192.168.3.215","sshPort":22,"username":"root","authMethod":"password"
+            }]}})) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let directory = std::env::temp_dir().join(format!("keeper-wss-sync-{}", Uuid::new_v4()));
+        let state = create_app_state(directory.clone()).unwrap();
+        let mut local = tunnel::parse_ssh_command("ssh -L 12345:localhost:22 root@example.test").unwrap();
+        local.id = "local-wss-id".into(); local.name = "hn-master".into(); local.remote_id = "old-ssh-id".into();
+        local.tunnel_type = "websocket".into(); local.websocket_url = "wss://example.test:7443/update/api/tunnel/ws".into();
+        state.store.lock().unwrap().add_tunnel(&local).unwrap();
+        pull_sync(&state, &format!("http://{address}"), "test-token").await.unwrap();
+        let store = state.store.lock().unwrap();
+        let saved = store.get_tunnel(&local.id).unwrap();
+        assert_eq!(saved.tunnel_type, "websocket");
+        assert_eq!(saved.websocket_url, local.websocket_url);
+        assert_eq!(saved.local_host, "127.0.0.1");
+        assert_eq!(saved.local_port, 12345);
+        assert_eq!(store.list_tunnels().unwrap().len(), 1);
+        drop(store); drop(state); server.abort(); std::fs::remove_dir_all(directory).unwrap();
+    }
+}

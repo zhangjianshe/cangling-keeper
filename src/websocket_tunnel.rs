@@ -329,6 +329,9 @@ fn handshake_error(error: tokio_tungstenite::tungstenite::Error) -> String {
                 "WSS TLS 证书验证失败：{error}；请检查服务器证书链、域名及有效期（当前 WSS 使用内置公共根证书）"
             )
         }
+        other if other.to_string().contains("InvalidContentType") => format!(
+            "WSS TLS 握手失败：收到非 TLS 数据（InvalidContentType）；请核对 URL 协议和端口：普通 HTTP 5400/7800 使用 ws://，HTTPS 7443 使用 wss://，不能连接 SSH 22 端口。原始错误：{other}"
+        ),
         other => format!("WSS 握手失败：{other}"),
     }
 }

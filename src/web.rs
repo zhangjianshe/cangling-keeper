@@ -799,6 +799,31 @@ async fn connect_tunnel_inner(
     };
     let web = state.clone();
     if tunnel.tunnel_type == "websocket" {
+        let endpoint = reqwest::Url::parse(&tunnel.websocket_url)
+            .ok()
+            .map(|mut url| {
+                let _ = url.set_username("");
+                let _ = url.set_password(None);
+                url.set_query(None);
+                url.set_fragment(None);
+                url.to_string()
+            })
+            .unwrap_or_else(|| "（URL 无效）".into());
+        let listener_host = if tunnel.direction == "remote" {
+            &tunnel.remote_host
+        } else {
+            &tunnel.local_host
+        };
+        crate::logging::info(&format!(
+            "隧道 {tunnel_id} WSS 配置：入口 {endpoint}；监听位置 {}；监听地址 {}:{}",
+            if tunnel.direction == "remote" {
+                "远程 SSH 主机"
+            } else {
+                "本机"
+            },
+            listener_host,
+            tunnel.local_port
+        ));
         let ResolvedAuth::Key(key) = auth else {
             return Err("WebSocket tunnel requires certificate authentication".into());
         };
