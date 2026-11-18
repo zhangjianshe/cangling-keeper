@@ -159,15 +159,18 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
             let _ = crate::open_with_command(&url);
         });
     }
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+    let result = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {},
                 _ = shutdown_rx => {},
             }
+            crate::sync_process::shutdown();
         })
         .await
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string());
+    crate::sync_process::shutdown();
+    result
 }
 
 async fn static_asset(uri: Uri) -> Response {

@@ -1,3 +1,4 @@
+mod drive_sync;
 mod app_update;
 mod root_certificate;
 mod auth;
@@ -9,6 +10,7 @@ mod fingerprints;
 mod host;
 mod host_actions;
 mod host_cmd;
+mod sync_process;
 mod host_sync;
 mod platform_dirs;
 mod proxy;

@@ -15,13 +15,11 @@ use crate::sync::SETTING_SERVER_URL;
 const SETTING_SOFTWARE_SET: &str = "software_set";
 const SETTING_SOFTWARE_SETS: &str = "software_sets";
 const SETTING_SOFTWARE_SETS_SEED: &str = "software_sets_seed";
-const SOFTWARE_SETS_SEED: &str = "5";
+const SOFTWARE_SETS_SEED: &str = "6";
 const DEFAULT_GIT_SET_NAME: &str = "cangling-repo";
-const DEFAULT_GIT_URL: &str = "https://code.cangling.cn:22002/operation/cangling-repo.git";
-const DEFAULT_GIT_USER: &str = "cangling-update";
-const DEFAULT_GIT_TOKEN: &str = "94894bb4dbedb33707c868872081bd6e8c02bc8b";
 const KIND_MANIFEST: &str = "manifest";
 const KIND_GIT: &str = "git";
+const KIND_DRIVE: &str = "drive";
 
 /// Largest text file we are willing to preview in the UI.
 const MAX_PREVIEW_SIZE: u64 = 1024 * 1024;
@@ -154,19 +152,13 @@ fn default_kind() -> String {
     KIND_MANIFEST.to_string()
 }
 
-fn default_git_repo() -> SoftwareSetRecord {
-    SoftwareSetRecord {
-        name: DEFAULT_GIT_SET_NAME.to_string(),
-        kind: KIND_GIT.to_string(),
-        git_url: DEFAULT_GIT_URL.to_string(),
-        git_username: DEFAULT_GIT_USER.to_string(),
-        git_token: DEFAULT_GIT_TOKEN.to_string(),
-        git_branch: String::new(),
-    }
+fn default_drive_repo() -> SoftwareSetRecord {
+    let config=crate::drive_sync::Config::default();
+    SoftwareSetRecord {name:DEFAULT_GIT_SET_NAME.into(),kind:KIND_DRIVE.into(),git_url:config.server,git_username:String::new(),git_token:config.token,git_branch:config.directory}
 }
 
 fn default_sets() -> Vec<SoftwareSetRecord> {
-    vec![default_git_repo()]
+    vec![default_drive_repo()]
 }
 
 fn ensure_named(records: &mut Vec<SoftwareSetRecord>, rec: SoftwareSetRecord, index: usize) {
@@ -194,7 +186,10 @@ fn ensure_named(records: &mut Vec<SoftwareSetRecord>, rec: SoftwareSetRecord, in
 
 fn apply_default_sets(records: &mut Vec<SoftwareSetRecord>) {
     records.retain(|record| record.name.eq_ignore_ascii_case(DEFAULT_GIT_SET_NAME));
-    ensure_named(records, default_git_repo(), 0);
+    if let Some(existing)=records.iter_mut().find(|r|r.name.eq_ignore_ascii_case(DEFAULT_GIT_SET_NAME)) {
+        if existing.kind!=KIND_DRIVE {let name=existing.name.clone();*existing=default_drive_repo();existing.name=name;}
+    }
+    ensure_named(records, default_drive_repo(), 0);
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -429,7 +424,8 @@ fn normalize_kind(value: &str) -> Result<String, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "" | "manifest" => Ok(KIND_MANIFEST.to_string()),
         "git" => Ok(KIND_GIT.to_string()),
-        _ => Err("软件集类型必须是 manifest 或 git".into()),
+        "drive" => Ok(KIND_DRIVE.to_string()),
+        _ => Err("软件集类型必须是 manifest、drive 或 git".into()),
     }
 }
 
@@ -536,6 +532,7 @@ fn ensure_set_records(store: &Store, data_dir: &Path) -> Result<Vec<SoftwareSetR
     }
     if !initialized || seed != SOFTWARE_SETS_SEED {
         apply_default_sets(&mut records);
+        save_set_records(store,&records)?;
         store.set_setting(SETTING_SOFTWARE_SETS_SEED, SOFTWARE_SETS_SEED)?;
     }
     if records.is_empty() {
@@ -593,7 +590,9 @@ pub(crate) fn dir_has_complete_files(dir: &Path) -> bool {
 }
 
 fn set_cloned(dest: &Path, kind: &str) -> bool {
-    if kind == KIND_GIT {
+    if kind == KIND_DRIVE {
+        crate::drive_sync::completed(dest)
+    } else if kind == KIND_GIT {
         let marker = dest.join(".git/cangling-keeper-sync-complete");
         std::fs::read_to_string(marker).ok().is_some_and(|head| {
             run_git(dest, &["rev-parse", "HEAD"]).is_ok_and(|current| current.trim() == head.trim())
@@ -615,7 +614,7 @@ pub(crate) fn list_configured_set_names(
 
 fn set_info(data_dir: &Path, rec: &SoftwareSetRecord) -> SoftwareSetInfo {
     let dest = set_dir(data_dir, &rec.name).unwrap_or_else(|_| sets_root(data_dir).join(&rec.name));
-    let (branch, commit) = git_head(&dest);
+    let (branch, commit) = if rec.kind==KIND_GIT {git_head(&dest)}else{(String::new(),String::new())};
     SoftwareSetInfo {
         name: rec.name.clone(),
         kind: rec.kind.clone(),
@@ -670,9 +669,9 @@ fn current_record(state: &AppState) -> Option<SoftwareSetRecord> {
 }
 
 fn current_status(state: &AppState) -> RepoStatus {
-    let rec = current_record(state).unwrap_or_else(default_git_repo);
+    let rec = current_record(state).unwrap_or_else(default_drive_repo);
     let dest = set_dir(&state.data_dir, &rec.name).unwrap_or_else(|_| sets_root(&state.data_dir));
-    let (branch, commit) = git_head(&dest);
+    let (branch, commit) = if rec.kind==KIND_GIT {git_head(&dest)}else{(String::new(),String::new())};
     RepoStatus {
         cloned: set_cloned(&dest, &rec.kind) && !rec.name.trim().is_empty(),
         local_path: dest.to_string_lossy().into_owned(),
@@ -1275,8 +1274,8 @@ fn redact_git_text(text: &str, rec: &SoftwareSetRecord) -> String {
 }
 
 fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
-    let output = crate::host_cmd::command("git")
-        .arg("-C")
+    let mut cmd = crate::host_cmd::command("git");
+    cmd.arg("-C")
         .arg(cwd)
         .args(GIT_HTTP_CFG)
         .args(args)
@@ -1286,9 +1285,9 @@ fn run_git(cwd: &Path, args: &[&str]) -> Result<String, String> {
         .env("GIT_HTTP_LOW_SPEED_TIME", "60")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(map_git_spawn_err)?;
+        .stderr(Stdio::piped());
+    let (child, _process_tree) = crate::sync_process::spawn(&mut cmd).map_err(map_git_spawn_err)?;
+    let output = child.wait_with_output().map_err(map_git_spawn_err)?;
     if !output.status.success() {
         let msg = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(if msg.is_empty() {
@@ -1392,7 +1391,7 @@ fn run_git_progress(
         .env("GIT_LFS_SKIP_SMUDGE", "1").env("GIT_LFS_FORCE_PROGRESS", "1")
         .env("GIT_HTTP_LOW_SPEED_LIMIT", "1000").env("GIT_HTTP_LOW_SPEED_TIME", "60")
         .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(map_git_spawn_err)?;
+    let (mut child, _process_tree) = crate::sync_process::spawn(&mut cmd).map_err(map_git_spawn_err)?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
     let mut tail = String::new();
@@ -1695,6 +1694,12 @@ fn build_record(
     let git_url = git_url.trim().to_string();
     let git_username = git_username.trim().to_string();
     let git_branch = git_branch.trim().to_string();
+    if kind==KIND_DRIVE {
+        let defaults=default_drive_repo();
+        let config=crate::drive_sync::Config{server:if git_url.is_empty(){defaults.git_url}else{git_url},directory:if git_branch.is_empty(){defaults.git_branch}else{git_branch},token:if git_token.is_empty(){defaults.git_token}else{git_token}};
+        config.validate()?;
+        return Ok(SoftwareSetRecord{name,kind,git_url:config.server,git_username:String::new(),git_token:config.token,git_branch:config.directory});
+    }
     if kind == KIND_GIT && git_url.is_empty() {
         return Err("请填写 Git 仓库地址".into());
     }
@@ -1844,6 +1849,23 @@ async fn sync_software_set_core(
         store.set_setting(SETTING_SOFTWARE_SET, &set_name)?;
         rec
     };
+
+    if rec.kind == KIND_DRIVE {
+        let data_dir=state.data_dir.clone();
+        let dest=set_dir(&data_dir,&set_name)?;
+        // Keep update protection and the transfer alive if its HTTP caller disconnects.
+        return tokio::spawn(async move {
+            let _activity=activity;
+            let config=crate::drive_sync::Config{server:rec.git_url.clone(),directory:rec.git_branch.clone(),token:rec.git_token.clone()}.environment();
+            let report=crate::drive_sync::synchronize(&config,&dest,|progress|{
+                if progress.phase=="complete" {return;}
+                emit_event(app.as_ref(),"repo-sync-progress",&SyncProgress{set_name:set_name.clone(),current:progress.current as u32,total:progress.total as u32,file:progress.path,action:progress.phase.into(),bytes_done:progress.bytes_done,bytes_total:progress.bytes_total,overall_done:progress.overall_done,overall_total:progress.overall_total});
+            }).await?;
+            refresh_fingerprints_with_progress(app.as_ref(),&data_dir,&set_name)?;
+            emit_repo_phase(app.as_ref(),&set_name,"complete","网盘资源同步完成",100,100);
+            Ok(RepoStatus{cloned:true,local_path:dest.display().to_string(),set_name,kind:KIND_DRIVE.into(),git_url:config.server,git_branch:config.directory,branch:String::new(),commit:report.snapshot,total_files:report.total as u32,downloaded:report.downloaded as u32,skipped:report.skipped as u32,failed:0,error:String::new()})
+        }).await.map_err(|e|format!("后台同步任务异常：{e}"))?;
+    }
 
     if rec.kind == KIND_GIT {
         let data_dir = state.data_dir.clone();
@@ -2466,12 +2488,12 @@ mod tests {
 
     #[test]
     fn defaults_and_migration_keep_only_repo_and_preserve_configuration() {
-        let mut repo = default_git_repo();
+        let mut repo = default_drive_repo();
         repo.git_url = "https://example.invalid/custom.git".into();
         repo.git_branch = "release".into();
         let mut records = vec![repo];
         for name in ["np4", "images", "cangling-np4"] {
-            let mut legacy = default_git_repo();
+            let mut legacy = default_drive_repo();
             legacy.name = name.into();
             records.push(legacy);
         }
@@ -2491,7 +2513,7 @@ mod tests {
         let store = Store::load(root.join("data.sql")).unwrap();
         let mut records = default_sets();
         for name in ["np4", "images", "cangling-np4"] {
-            let mut old = default_git_repo();
+            let mut old = default_drive_repo();
             old.name = name.into();
             records.push(old);
             let dir = sets_root(&root).join(name);
@@ -2683,5 +2705,17 @@ mod tests {
                 .is_none()
         );
         let _ = std::fs::remove_dir_all(&data_dir);
+    }
+
+    #[test]
+    fn legacy_cangling_git_record_migrates_to_drive_without_touching_files() {
+        let root=std::env::temp_dir().join(format!("keeper-drive-migrate-{}",uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();let store=Store::load(root.join("state.sqlite3")).unwrap();
+        let mut old=default_drive_repo();old.kind=KIND_GIT.into();old.git_url="https://code.cangling.cn:22002/operation/cangling-repo.git".into();old.git_username="old-user".into();old.git_token="legacy-key".into();old.git_branch="main".into();
+        save_set_records(&store,&[old]).unwrap();store.set_setting(SETTING_SOFTWARE_SETS_SEED,"5").unwrap();
+        let local=sets_root(&root).join("cangling-repo");std::fs::create_dir_all(local.join(".git")).unwrap();std::fs::write(local.join("install.sh"),b"previous usable resources").unwrap();
+        let migrated=ensure_set_records(&store,&root).unwrap();assert_eq!(migrated.len(),1);assert_eq!(migrated[0].kind,KIND_DRIVE);assert_eq!(migrated[0].git_branch,crate::drive_sync::DEFAULT_DIRECTORY);assert_ne!(migrated[0].git_token,"legacy-key");
+        assert_eq!(std::fs::read(local.join("install.sh")).unwrap(),b"previous usable resources");assert!(local.join(".git").is_dir());assert!(!set_cloned(&local,KIND_DRIVE));
+        let _=std::fs::remove_dir_all(root);
     }
 }

@@ -64,6 +64,10 @@ jobs:
         if: matrix.os-name == 'linux'
         run: cargo build --release --locked --target ${{ matrix.rust-target }}
 
+      - name: Test Windows repository process cleanup
+        if: matrix.os-name == 'windows'
+        run: cargo +nightly test --locked --lib sync_process::tests
+
       - name: Build Windows 7-compatible release binary
         if: matrix.os-name == 'windows'
         env:

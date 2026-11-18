@@ -584,15 +584,16 @@
             <legend>类型</legend>
             <div class="radio-row">
               <label class="radio"><input type="radio" name="kind" value="manifest" checked /> 维护中心 Manifest</label>
+              <label class="radio"><input type="radio" name="kind" value="drive" /> 网盘目录</label>
               <label class="radio"><input type="radio" name="kind" value="git" /> Git 仓库</label>
             </div>
             <p id="set-manifest-hint" class="hint">按名称向维护中心查询软件集 manifest，再按文件哈希下载同步。</p>
             <div id="set-git-fields" class="hidden">
-              <label>Git 地址 <input name="git_url" type="text" placeholder="https://example.com/org/repo.git" autocomplete="off" spellcheck="false" /></label>
-              <label>分支 <input name="git_branch" type="text" placeholder="缺省为仓库默认分支" autocomplete="off" spellcheck="false" /></label>
-              <label>用户名 <input name="git_username" type="text" placeholder="可选" autocomplete="off" /></label>
-              <label>密码 / Token <input name="git_token" type="password" placeholder="私有仓库可选" autocomplete="off" /></label>
-              <p class="hint">公开仓库可只填地址；私有仓库再填用户名和 Token。</p>
+              <label><span id="set-source-url-label">Git 地址</span> <input name="git_url" type="text" placeholder="https://example.com/org/repo.git" autocomplete="off" spellcheck="false" /></label>
+              <label><span id="set-source-directory-label">分支</span> <input name="git_branch" type="text" placeholder="缺省为仓库默认分支" autocomplete="off" spellcheck="false" /></label>
+              <label id="set-source-user"><span>用户名</span> <input name="git_username" type="text" placeholder="可选" autocomplete="off" /></label>
+              <label><span id="set-source-key-label">密码 / Token</span> <input name="git_token" type="password" placeholder="私有仓库可选" autocomplete="off" /></label>
+              <p id="set-source-hint" class="hint">公开仓库可只填地址；私有仓库再填用户名和 Token。</p>
             </div>
           </fieldset>
           <div class="modal-actions">

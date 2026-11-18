@@ -1983,7 +1983,7 @@ async function loadSoftwareSets() {
 }
 
 function setKindLabel(kind) {
-  return kind === "git" ? "Git" : "Manifest";
+  return kind === "drive" ? "网盘" : kind === "git" ? "Git" : "Manifest";
 }
 
 function setListSub(set) {
@@ -2154,7 +2154,7 @@ function renderRepoStatus() {
           ? ` · ${s.totalFiles} 文件 · 下载 ${s.downloaded} · 跳过 ${s.skipped}` +
             (s.failed ? ` · 失败 ${s.failed}` : "")
           : "";
-      repoStatusLineEl.textContent = `Manifest 已同步${extra}`;
+      repoStatusLineEl.textContent = `${kind === "drive" ? "网盘" : "Manifest"} 已同步${extra}`;
     }
     repoStatusLineEl.className = "conn";
   } else {
@@ -2163,7 +2163,7 @@ function renderRepoStatus() {
         ? gitUrl
           ? `Git 未同步 · ${gitUrl}`
           : "Git 未同步"
-        : "Manifest 未同步";
+        : kind === "drive" ? `网盘未同步 · ${gitUrl}` : "Manifest 未同步";
     repoStatusLineEl.className = "conn";
   }
   repoStatusLineEl.title = repoStatusLineEl.textContent;
@@ -2236,9 +2236,16 @@ function selectedSetKind() {
 
 function updateSetModalKindFields() {
   const kind = (setFormEl.elements.kind.value || "manifest");
-  const git = kind === "git";
-  $("#set-git-fields").classList.toggle("hidden", !git);
-  $("#set-manifest-hint").classList.toggle("hidden", git);
+  const git = kind === "git", drive = kind === "drive";
+  $("#set-git-fields").classList.toggle("hidden", !git && !drive);
+  $("#set-manifest-hint").classList.toggle("hidden", git || drive);
+  $("#set-source-url-label").textContent = drive ? "网盘地址" : "Git 地址";
+  $("#set-source-directory-label").textContent = drive ? "目录 ID" : "分支";
+  $("#set-source-key-label").textContent = drive ? "读取 key" : "密码 / Token";
+  $("#set-source-user").classList.toggle("hidden", drive);
+  $("#set-source-hint").textContent = drive ? "从网盘只读同步，支持断点续传和完整摘要校验；留空使用程序默认连接。" : "公开仓库可只填地址；私有仓库再填用户名和 Token。";
+  setFormEl.elements.git_url.placeholder = drive ? "https://soft.cangling.cn:22002" : "https://example.com/org/repo.git";
+  setFormEl.elements.git_branch.placeholder = drive ? "默认 cangling-repo 网盘目录 ID" : "缺省为仓库默认分支";
   setFormEl.elements.git_url.required = git;
 }
 
@@ -2253,7 +2260,7 @@ function openSetModal(set) {
   const f = setFormEl.elements;
   f.name.value = set ? set.name : "";
   f.name.readOnly = !!set;
-  const kind = set && set.kind === "git" ? "git" : "manifest";
+  const kind = set && ["git", "drive"].includes(set.kind) ? set.kind : "manifest";
   setFormEl.querySelectorAll('input[name="kind"]').forEach((radio) => {
     radio.checked = radio.value === kind;
     radio.disabled = !!set;
@@ -2378,7 +2385,7 @@ async function onRepoCloneUpdateClick() {
     return;
   }
   const kind = selectedSetKind();
-  if (kind !== "git" && (!state.login || !state.login.serverUrl)) {
+  if (kind === "manifest" && (!state.login || !state.login.serverUrl)) {
     uiAlert("请先登录维护中心，以便获取服务器地址");
     return;
   }

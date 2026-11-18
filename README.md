@@ -12,7 +12,7 @@ the local loopback address.
   to auto-fill the form, or fill the fields manually.
 - Connect/disconnect tunnels; the list shows live connection state.
 - Tunnel auth via password or an ed25519 key pair (generate one in-app).
-- 软件仓库：缺省仅保留 Git 仓库 `cangling-repo`。克隆和更新均使用 `--depth 1` 浅拉取，只同步指定分支（未指定时使用远端默认分支），不拉取标签；初次克隆显式使用 `--single-branch`。升级时清理旧列表项，保留已下载文件和现有 `cangling-repo` 连接配置。同步大文件时显示下载/克隆进度，并可浏览目录与文本文件内容。
+- 软件仓库：缺省使用 HTTP 网盘目录 `cangling-repo`，内置只读连接配置，不需要 Git/LFS 或维护中心登录。递归同步支持 Range 断点续传、SHA-256 校验和已有内容复用，完整验证后切换资源快照；失败保留旧资源。升级时迁移原 cangling-repo Git 连接，保留本地文件直到新快照同步成功。手动配置的其他 Git/Manifest 同步能力保持兼容。
 - 主机面板可将本地已拉取的软件同步到 Master 主机上 cangling-update 的 `repo/<软件集>/` 目录（按软件集名分目录，避免同名覆盖）。已存在且大小、SHA-256 都相同的文件会跳过，避免 `version.txt` 这类等长变更被漏传。
 - 集群管理：SSH 探测该主机 cangling-update 的实际监听端口后，用主机地址 + 服务端口直接打开 `/console`（`install-service` 后端口变化也会跟上；探测不到时缺省 5400）。
 - Hosts and tunnels persist to a SQLite database in the app data directory.
@@ -459,4 +459,12 @@ Windows 发布现已接入现有苍灵根 CA 签发的独立代码签名证书�
 
 本地隧道的更多菜单提供“上传同步”：明确确认后使用本地配置覆盖服务器并读回核对。编辑后未上传的配置不会被普通同步覆盖；旧维护中心不支持 WSS 字段时会报告错误。WSS 同步需要维护中心更新相应字段。
 
-软件仓库同步期间会阻止在线升级和退出，避免旧 Keeper 退出后遗留 Git/LFS 子进程。同一仓库的重复同步会被拒绝。遇到 `index.lock` 时，仅在两次检查均无 Git/LFS 进程、锁超过 30 秒且未变化的情况下清理；活动锁或无法确认归属的锁保持不动，不会批量终止其他 Git 进程。
+软件仓库同步期间会阻止在线升级和退出，避免旧 Keeper 退出后遗留 Git/LFS 子进程。Windows 上仓库 Git 命令在恢复执行前加入带 `KILL_ON_JOB_CLOSE` 的 Job Object，管理 Git、LFS 及其后代；正常服务关闭会主动结束这些任务，进程被强制终止时也由系统清理。同一仓库的重复同步会被拒绝。遇到 `index.lock` 时，仅在两次检查均无 Git/LFS 进程、锁超过 30 秒且未变化的情况下清理；活动锁或无法确认归属的锁保持不动，不会批量终止其他 Git 进程。
+
+仓库可直连但 LFS 下载反复出现 `EOF` 时，检查 `HTTP_PROXY` / `HTTPS_PROXY` 和 `NO_PROXY`。LFS 文件下载域名可能与克隆域名不同；需要直连的两个域名都应加入 `NO_PROXY`，修改后重启 Keeper 使其继承新环境。不要通过关闭 TLS 校验排障。
+
+### 网盘目录来源
+
+`cangling-repo` 缺省来源为 `https://soft.cangling.cn:22002` 的既有网盘目录。程序内置目录 ID 和读取 key，也可在软件集设置中编辑网盘地址、目录 ID、读取 key，或使用 `CANGLING_DRIVE_URL` / `CANGLING_DRIVE_DIRECTORY` / `CANGLING_DRIVE_TOKEN` 覆盖。SQLite 软件集配置沿用兼容字段（gitUrl=网盘地址、gitBranch=目录 ID、gitToken=读取 key），类型为 `drive`；首次升级会迁移旧的同名 Git 配置，不删除现有文件。
+
+只有完整校验且发布成功才显示为已同步。临时文件、断点和发布日志保存在软件集旁的隐藏 `.cangling-repo.drive-sync` 中，跨进程锁防止并行发布；下载中断后重新同步自动续传。成功发布后本地目录与网盘快照一致，旧 Git 元数据、远端已删除及本地额外文件会随旧快照清理。读取 key 不出现在 URL 或同步日志中，不跟随重定向。
