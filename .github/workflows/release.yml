@@ -177,11 +177,43 @@ jobs:
             echo "::endgroup::"
           done
 
+      - name: Save signed platform binary for drive publication
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: keeper-${{ matrix.os-name }}-${{ matrix.arch-name }}
+          path: dist/*
+          if-no-files-found: error
+
   publish-version:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release
     runs-on: ubuntu-22.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Download every platform binary
+        uses: actions/download-artifact@v4
+        with:
+          pattern: keeper-*
+          merge-multiple: true
+          path: dist
+
+      - name: Test drive release uploader
+        run: python scripts/test-upload-drive-release.py
+
+      - name: Publish binaries to cangling-repo drive
+        env:
+          WRITE_TOKEN: ${{ secrets.WRITE_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python scripts/upload-drive-release.py --project cangling-keeper --version "$RELEASE_TAG"
+
       - name: Publish version after every platform bundle
         shell: bash
         run: |

@@ -468,3 +468,16 @@ Windows 发布现已接入现有苍灵根 CA 签发的独立代码签名证书�
 `cangling-repo` 缺省来源为 `https://soft.cangling.cn:22002` 的既有网盘目录。程序内置目录 ID 和读取 key，也可在软件集设置中编辑网盘地址、目录 ID、读取 key，或使用 `CANGLING_DRIVE_URL` / `CANGLING_DRIVE_DIRECTORY` / `CANGLING_DRIVE_TOKEN` 覆盖。SQLite 软件集配置沿用兼容字段（gitUrl=网盘地址、gitBranch=目录 ID、gitToken=读取 key），类型为 `drive`；首次升级会迁移旧的同名 Git 配置，不删除现有文件。
 
 只有完整校验且发布成功才显示为已同步。临时文件、断点和发布日志保存在软件集旁的隐藏 `.cangling-repo.drive-sync` 中，跨进程锁防止并行发布；下载中断后重新同步自动续传。成功发布后本地目录与网盘快照一致，旧 Git 元数据、远端已删除及本地额外文件会随旧快照清理。读取 key 不出现在 URL 或同步日志中，不跟随重定向。
+
+### 发布到网盘
+
+标签 release 继续上传 GitHub Release 和软件仓库，同时将程序写入
+`cangling-repo/binaries/linux/{amd64,arm64}`；Keeper Windows 程序写入
+`binaries/windows/amd64/cangling-keeper.exe`。Linux 程序分别保留
+`cangling-update`、`cangling-keeper` 文件名。两个 GitHub 仓库均需配置
+Actions Secret `WRITE_TOKEN`（该目录的读、写、删除权限），凭证不写入工作流源码。
+
+所有平台程序校验成功后，update 才更新 `binaries/VERSION`；Keeper 更新
+`binaries/KEEPER_SHA256SUMS` 和 `binaries/KEEPER_VERSION`。重复运行会跳过相同
+SHA-256 的文件。现有网盘 API 无同名覆盖接口，更新单个文件需先删除旧条目再上传，
+会存在短暂不可用窗口；上传失败时不更新版本标记，可重跑发布任务。
