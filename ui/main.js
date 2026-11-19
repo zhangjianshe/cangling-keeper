@@ -4066,8 +4066,8 @@ $("#sync-cert-btn").addEventListener("click", syncCertificates);
 
 // Read the running version independently, so failed network checks retain it.
 fetch('/api/health').then(response=>response.json()).then(health=>{
-  const current=document.getElementById('account-current-version');if(current && health.version)current.textContent='v'+health.version.replace(/^v/,'');
-}).catch(()=>{const current=document.getElementById('account-current-version');if(current && current.textContent==='读取中…')current.textContent='无法读取';});
+  if(health.version){const version='v'+health.version.replace(/^v/,'');for(const id of ['account-current-version','agent-brand-version']){const node=document.getElementById(id);if(node)node.textContent=version;}}
+}).catch(()=>{for(const id of ['account-current-version','agent-brand-version']){const node=document.getElementById(id);if(node)node.textContent='无法读取版本';}});
 
 document.getElementById('account-server-form').addEventListener('submit',async event=>{
   event.preventDefault();const status=document.getElementById('account-server-status');
