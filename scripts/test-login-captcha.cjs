@@ -1,0 +1,31 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const {JSDOM}=require('jsdom');
+const html=fs.readFileSync('ui/index.html','utf8'),source=fs.readFileSync('ui/main.js','utf8');
+const dom=new JSDOM(html,{url:'http://localhost',runScripts:'outside-only'}),context=dom.getInternalVMContext(),document=dom.window.document;
+const form=document.querySelector('#login-form'),modal=document.querySelector('#login-modal');
+let requests=[];
+Object.assign(context,{loginFormEl:form,loginModalEl:modal,loginStatusEl:document.querySelector('#login-status'),logoutBtnEl:document.querySelector('#logout-btn'),state:{login:{serverUrl:'http://localhost/ib',username:'fixture'}},invoke:(command,args)=>{
+ if(command==='login')return Promise.reject(new Error('测试登录失败'));
+ return new Promise((resolve,reject)=>requests.push({command,args,resolve,reject}));
+},renderLoginStatus(){},loadHosts:async()=>{},loadTunnels:async()=>{},loadCertificates:async()=>{},updateMainView(){}});
+vm.runInContext(source.slice(source.indexOf('let loginCaptchaSequence='),source.indexOf('async function loadLoginStatus()')),context);
+vm.runInContext(source.slice(source.indexOf('async function refreshLoginCaptcha(){')),context);
+vm.runInContext(source.slice(source.indexOf('loginFormEl.addEventListener("submit"'),source.indexOf('// ---- helpers',source.indexOf('loginFormEl.addEventListener("submit"'))),context);
+const tick=()=>new Promise(r=>setImmediate(r));
+(async()=>{
+ context.openLoginModal();assert.equal(requests.length,1,'opening auto-fetches');
+ requests[0].resolve({uuid:'first',image:'ZmFrZQ=='});await tick();assert.equal(form.elements.captcha_uuid.value,'first');
+ assert.equal(document.querySelector('#login-captcha-image').hidden,false);
+ form.elements.code.value='stale';document.querySelector('#login-captcha-refresh').click();assert.equal(form.elements.code.value,'');assert.equal(form.elements.captcha_uuid.value,'');
+ requests[1].resolve({uuid:'clicked',image:'ZmFrZQ=='});await tick();assert.equal(form.elements.captcha_uuid.value,'clicked');
+ form.elements.username.value='fixture';form.elements.password.value='not-a-real-password';form.elements.code.value='stale';
+ form.dispatchEvent(new dom.window.Event('submit',{cancelable:true}));await tick();assert.equal(requests.length,3,'login failure auto-refreshes');assert.match(context.loginStatusEl.textContent,/登录失败/);assert.equal(form.elements.code.value,'');
+ requests[2].resolve({uuid:'after-error',image:'ZmFrZQ=='});await tick();assert.equal(form.elements.captcha_uuid.value,'after-error');assert.match(context.loginStatusEl.textContent,/登录失败/);
+ const older=context.refreshLoginCaptcha();form.elements.server_url.value='http://localhost/new';const newer=context.refreshLoginCaptcha();
+ requests[4].resolve({uuid:'new-server',image:'ZmFrZQ=='});await newer;requests[3].resolve({uuid:'old-server',image:'ZmFrZQ=='});await older;assert.equal(form.elements.captcha_uuid.value,'new-server');
+ const failed=context.refreshLoginCaptcha();requests[5].reject(new Error('offline'));await failed;assert.equal(document.querySelector('#login-captcha-placeholder').textContent,'点击重试');assert.match(document.querySelector('#login-captcha-status').textContent,/offline/);assert.equal(form.elements.captcha_uuid.value,'');
+ const closing=context.refreshLoginCaptcha();context.closeLoginModal();requests[6].resolve({uuid:'closed',image:'ZmFrZQ=='});await closing;assert.equal(form.elements.captcha_uuid.value,'');
+ dom.window.close();console.log('Login captcha checks passed: automatic fetch, image click refresh, login-error refresh, stale request guard, retry and close handling.');
+})().catch(error=>{console.error(error);process.exitCode=1;dom.window.close();});

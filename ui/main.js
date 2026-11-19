@@ -1284,7 +1284,7 @@ function renderLoginStatus() {
     loginBtnEl.title = "登录到维护中心服务器";
     loginBtnEl.classList.remove("logged-in");
   }
-  const serverInput=document.getElementById('account-server-url');if(serverInput && document.activeElement!==serverInput)serverInput.value=s.serverUrl || '';
+  const serverLabel=document.getElementById('account-server-url');if(serverLabel)serverLabel.textContent=s.serverUrl || '尚未设置';
   updateSyncBtn();
   window.dispatchEvent(new CustomEvent("keeper-login-state", { detail: {
     loggedIn: !!s.loggedIn, username: s.username || "", nickname: s.nickname || "",
@@ -1295,6 +1295,9 @@ function updateSyncBtn() {
   const s = state.login || { loggedIn: false };
   syncBtnEl.classList.toggle("hidden", !s.loggedIn);
 }
+
+let loginCaptchaSequence=0;
+let loginCaptchaTimer;
 
 function openLoginModal() {
   const s = state.login || {};
@@ -1308,9 +1311,11 @@ function openLoginModal() {
   logoutBtnEl.classList.toggle("hidden", !s.loggedIn);
   loginModalEl.classList.remove("hidden");
   (s.loggedIn ? logoutBtnEl : f.username).focus();
+  refreshLoginCaptcha();
 }
 
 function closeLoginModal() {
+  ++loginCaptchaSequence;clearTimeout(loginCaptchaTimer);
   loginModalEl.classList.add("hidden");
 }
 
@@ -1403,6 +1408,8 @@ loginFormEl.addEventListener("submit", async (e) => {
     closeLoginModal();
   } catch (err) {
     loginStatusEl.textContent = `登录失败: ${err}`;
+    await refreshLoginCaptcha();
+    f.code.focus();
   }
 });
 
@@ -4069,13 +4076,23 @@ fetch('/api/health').then(response=>response.json()).then(health=>{
   if(health.version){const version='v'+health.version.replace(/^v/,'');for(const id of ['account-current-version','agent-brand-version']){const node=document.getElementById(id);if(node)node.textContent=version;}}
 }).catch(()=>{for(const id of ['account-current-version','agent-brand-version']){const node=document.getElementById(id);if(node)node.textContent='无法读取版本';}});
 
-document.getElementById('account-server-form').addEventListener('submit',async event=>{
-  event.preventDefault();const status=document.getElementById('account-server-status');
-  const url=document.getElementById('account-server-url').value.trim();
-  if(state.login?.loggedIn && url.replace(/\/$/,'')!==state.login.serverUrl.replace(/\/$/,'') && !await uiConfirm('更换服务器后将退出当前账号，需要重新登录。继续吗？','更换 CIS Server'))return;
-  try{state.login=await invoke('set_login_server',{serverUrl:url});renderLoginStatus();status.textContent='服务器地址已保存'+(state.login.loggedIn?'':'，请登录该服务器。');}catch(error){status.textContent=String(error);}
-});
-document.getElementById('login-captcha-refresh').addEventListener('click',async()=>{
-  try{const data=await invoke('login_captcha',{serverUrl:loginFormEl.elements.server_url.value.trim()});loginFormEl.elements.captcha_uuid.value=data.uuid;const image=document.getElementById('login-captcha-image');image.src='data:image/jpeg;base64,'+data.image;image.hidden=false;}
-  catch(error){loginStatusEl.textContent=String(error);loginStatusEl.classList.remove('hidden');}
+async function refreshLoginCaptcha(){
+  clearTimeout(loginCaptchaTimer);
+  const sequence=++loginCaptchaSequence,serverUrl=loginFormEl.elements.server_url.value.trim();
+  const image=document.getElementById('login-captcha-image'),placeholder=document.getElementById('login-captcha-placeholder'),button=document.getElementById('login-captcha-refresh'),status=document.getElementById('login-captcha-status');
+  loginFormEl.elements.code.value='';loginFormEl.elements.captcha_uuid.value='';image.hidden=true;image.removeAttribute('src');placeholder.hidden=false;placeholder.textContent='加载中…';status.textContent='';button.setAttribute('aria-busy','true');
+  try{
+    if(!serverUrl)throw new Error('请先填写服务器地址');
+    const data=await invoke('login_captcha',{serverUrl});
+    if(sequence!==loginCaptchaSequence || serverUrl!==loginFormEl.elements.server_url.value.trim() || loginModalEl.classList.contains('hidden'))return;
+    if(data.captchaEnabled===false || data.enabled===false){placeholder.textContent='无需验证码';return;}
+    if(!data.image || !data.uuid)throw new Error('服务器未返回有效验证码');
+    loginFormEl.elements.captcha_uuid.value=data.uuid;image.src='data:image/jpeg;base64,'+data.image;image.hidden=false;placeholder.hidden=true;
+  }catch(error){if(sequence===loginCaptchaSequence){placeholder.textContent='点击重试';status.textContent='验证码获取失败：'+String(error);}}
+  finally{if(sequence===loginCaptchaSequence)button.removeAttribute('aria-busy');}
+}
+document.getElementById('login-captcha-refresh').addEventListener('click',refreshLoginCaptcha);
+loginFormEl.elements.server_url.addEventListener('input',()=>{
+  ++loginCaptchaSequence;clearTimeout(loginCaptchaTimer);loginFormEl.elements.code.value='';loginFormEl.elements.captcha_uuid.value='';document.getElementById('login-captcha-image').hidden=true;document.getElementById('login-captcha-placeholder').hidden=false;document.getElementById('login-captcha-placeholder').textContent='加载中…';
+  loginCaptchaTimer=setTimeout(refreshLoginCaptcha,400);
 });
