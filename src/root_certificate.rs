@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const DER: &[u8] = include_bytes!("../docs/certificates/cangling-root-ca.cer");
-const FINGERPRINT: &str = "89706BE8C7A9B1ACE3F16926EEADAB529BEF814DF666A03E3FC3B6308A1D8BB8";
+const FINGERPRINT: &str = "0285F51BB6BEA21C74AD8C13320FFFB3C940438C54A4D8384A3FF2E78E6EBCD1";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -23,7 +23,7 @@ try {
     }
     if (!$ready) { throw 'Keeper did not become ready.' }
     $status = Invoke-Keeper 'get_root_certificate_status' @{}
-    if (!$status.ok -or !$status.result.supported -or $status.result.fingerprint -ne '89706BE8C7A9B1ACE3F16926EEADAB529BEF814DF666A03E3FC3B6308A1D8BB8') { throw 'Windows root certificate status check failed.' }
+    if (!$status.ok -or !$status.result.supported -or $status.result.fingerprint -ne '0285F51BB6BEA21C74AD8C13320FFFB3C940438C54A4D8384A3FF2E78E6EBCD1') { throw 'Windows root certificate status check failed.' }
     # Hosted Windows runners already have administrative privileges. This tests
     # the real installer on an ephemeral machine; no customer trust store changes.
     $installed = Invoke-Keeper 'install_root_certificate' @{ confirmed = $true }

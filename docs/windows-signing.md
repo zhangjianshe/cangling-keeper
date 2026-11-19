@@ -18,7 +18,7 @@ Repository secrets:
 
 Public certificates (safe to distribute):
 
-- [Root CA](certificates/cangling-root-ca.cer)
+- [Root CA](certificates/cangling-code-signing-root.cer)
 - [Code-signing certificate](certificates/cangling-code-signing.cer)
 
 The root DER certificate's SHA-256 fingerprint is:
@@ -57,3 +57,10 @@ working polkit authentication agent and `pkexec`. Missing tools, canceled
 permission, and failed trust-store updates are reported in the page. Existing
 files containing a different certificate are not overwritten. Installation
 never needs or distributes a private key.
+
+
+## 网站根证书与代码签名根证书
+
+顶部“安装根证书”安装新的 `Cangling Root CA`，来源为 `certificates/cangling-root-ca.cer`，与 cangling-update 的网站证书信任链一致，SHA-256 为 `0285F51BB6BEA21C74AD8C13320FFFB3C940438C54A4D8384A3FF2E78E6EBCD1`。
+
+现有 Windows EXE 代码签名仍使用原 `Cangling Local Root CA`，其公开证书保留为 `certificates/cangling-code-signing-root.cer`；签名脚本引用该文件。代码签名证书和 GitHub Secrets 不受本次网站根证书更新影响。新的网站根证书不替代旧代码签名根证书的信任；受管理 Windows 电脑需要验证旧签名时，仍按本文步骤导入代码签名根证书。

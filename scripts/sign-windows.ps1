@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [string]$ExePath = 'dist/cangling-keeper-windows-x86_64.exe',
-    [string]$RootCertificate = "$PSScriptRoot/../docs/certificates/cangling-root-ca.cer"
+    [string]$RootCertificate = "$PSScriptRoot/../docs/certificates/cangling-code-signing-root.cer"
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest

@@ -452,7 +452,7 @@ GitHub Actions 使用原生 Linux AMD64、ARM64 和 Windows runner 构建；所�
 
 Windows 发布现已接入现有苍灵根 CA 签发的独立代码签名证书；上传前自动签名、添加时间戳并验证。部署到受管理的 Windows 电脑时仍需信任苍灵根 CA。证书、Secrets 配置和测试方式见 [Windows 签名说明](docs/windows-signing.md)。
 
-顶部“安装根证书”支持 Windows（UAC 授权）、Ubuntu 和麒麟（系统授权框）；检查安装状态、展示指纹并在确认后写入系统信任库，详见上面的 Windows 签名说明。安装目标是运行 Keeper 的本机。
+顶部“安装根证书”支持 Windows（UAC 授权）、Ubuntu 和麒麟（系统授权框）；安装与 cangling-update 一致的新 `Cangling Root CA`（SHA-256：`0285F51BB6BEA21C74AD8C13320FFFB3C940438C54A4D8384A3FF2E78E6EBCD1`），检查安装状态、展示指纹并在确认后写入系统信任库。原 Windows EXE 代码签名根证书单独保留，详见上面的 Windows 签名说明。安装目标是运行 Keeper 的本机。
 软件仓库在首次访问时即创建本地目录；目录为空时仍显示“未同步”，点击“同步”才拉取仓库内容。
 
 软件仓库同步将 Git 索引检出和 Git LFS 大文件下载分开显示；大文件下载、检出和 SHA-256 校验全部通过后才标记同步完成。下载失败会保留缓存，重新同步可补下载；完成或失败后收起进度条。首次使用此验证逻辑时，旧克隆需再同步一次。
