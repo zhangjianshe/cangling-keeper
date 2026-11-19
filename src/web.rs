@@ -159,16 +159,19 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
             let _ = crate::open_with_command(&url);
         });
     }
-    let result = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-        .with_graceful_shutdown(async {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {},
-                _ = shutdown_rx => {},
-            }
-            crate::sync_process::shutdown();
-        })
-        .await
-        .map_err(|error| error.to_string());
+    let result = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = shutdown_rx => {},
+        }
+        crate::sync_process::shutdown();
+    })
+    .await
+    .map_err(|error| error.to_string());
     crate::sync_process::shutdown();
     result
 }
@@ -243,6 +246,12 @@ async fn invoke(
     AxumPath(command): AxumPath<String>,
     Json(args): Json<Value>,
 ) -> InvokeResponse {
+    if command.starts_with("agent_") && authorize_root_install(peer, &headers).is_err() {
+        return fail(
+            StatusCode::FORBIDDEN,
+            "智能体操作仅允许从 Keeper 本机同源页面执行",
+        );
+    }
     if command == "apply_app_update" {
         if authorize_root_install(peer, &headers).is_err() {
             return fail(StatusCode::FORBIDDEN, "只能从 Keeper 本机同源页面更新程序");
@@ -260,9 +269,18 @@ async fn invoke(
 }
 
 fn authorize_root_install(peer: SocketAddr, headers: &HeaderMap) -> Result<(), String> {
-    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("");
-    let url = reqwest::Url::parse(&format!("http://{host}")).map_err(|_| "请从此电脑的 localhost 页面安装根证书")?;
-    let local_host = url.host_str().is_some_and(|h| h == "localhost" || h.trim_matches(['[',']']).parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback()));
+    let host = headers
+        .get(header::HOST)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+    let url = reqwest::Url::parse(&format!("http://{host}"))
+        .map_err(|_| "请从此电脑的 localhost 页面安装根证书")?;
+    let local_host = url.host_str().is_some_and(|h| {
+        h == "localhost"
+            || h.trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
     if !peer.ip().is_loopback() || !local_host {
         return Err("仅允许从 Keeper 服务所在电脑的 localhost 页面安装根证书".into());
     }
@@ -277,6 +295,9 @@ fn authorize_root_install(peer: SocketAddr, headers: &HeaderMap) -> Result<(), S
 
 async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value, String> {
     let core = &state.core;
+    if command.starts_with("agent_") {
+        return crate::agent::dispatch(core.clone(), command, args, Arc::new(state.clone())).await;
+    }
     match command {
         "shutdown_app" => {
             let repository_pause = crate::repo_activity::pause_if_idle()?;
@@ -444,7 +465,7 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             value(())
         }
         "upload_tunnel" => {
-            crate::upload_tunnel_to_server(core, &arg::<String>(&args,"id")?).await?;
+            crate::upload_tunnel_to_server(core, &arg::<String>(&args, "id")?).await?;
             value(())
         }
         "delete_tunnel" => {
@@ -572,11 +593,23 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             let store = core.store.lock().map_err(|e| e.to_string())?;
             value(read_login_status(&store))
         }
+        "set_login_server" => {
+            let url=sync::normalize_server_url(&arg::<String>(&args,"serverUrl")?)?;
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            if store.get_setting(sync::SETTING_SERVER_URL)?.as_deref()!=Some(url.as_str()) {
+                for key in [sync::SETTING_TOKEN,sync::SETTING_USERNAME,sync::SETTING_NICKNAME,sync::SETTING_USER_ID]{store.delete_setting(key)?;}
+            }
+            store.set_setting(sync::SETTING_SERVER_URL,&url)?;value(read_login_status(&store))
+        }
+        "login_captcha" => value(sync::login_captcha(&arg::<String>(&args,"serverUrl")?).await?),
         "login" => {
             let url: String = arg(&args, "serverUrl")?;
             let username: String = arg(&args, "username")?;
             let password: String = arg(&args, "password")?;
-            let data = sync::login(url.trim(), username.trim(), &password).await?;
+            let url=sync::normalize_server_url(&url)?;
+            let code=args.get("code").and_then(serde_json::Value::as_str).unwrap_or("");
+            let uuid=args.get("uuid").and_then(serde_json::Value::as_str).unwrap_or("");
+            let data = sync::login_cis(&url, username.trim(), &password,code,uuid).await?;
             {
                 let store = core.store.lock().map_err(|e| e.to_string())?;
                 store.set_setting(sync::SETTING_SERVER_URL, url.trim())?;
@@ -668,19 +701,38 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             crate::open_url(arg(&args, "url")?)?;
             value(())
         }
-        "get_root_certificate_status" => value(tokio::task::spawn_blocking(crate::root_certificate::status).await.map_err(|e| e.to_string())??),
+        "get_root_certificate_status" => value(
+            tokio::task::spawn_blocking(crate::root_certificate::status)
+                .await
+                .map_err(|e| e.to_string())??,
+        ),
         "install_root_certificate" => {
-            if !arg::<bool>(&args, "confirmed")? { return Err("请先确认安装根证书".into()); }
-            value(tokio::task::spawn_blocking(crate::root_certificate::install).await.map_err(|e| e.to_string())??)
+            if !arg::<bool>(&args, "confirmed")? {
+                return Err("请先确认安装根证书".into());
+            }
+            value(
+                tokio::task::spawn_blocking(crate::root_certificate::install)
+                    .await
+                    .map_err(|e| e.to_string())??,
+            )
         }
         "apply_app_update" => {
-            let (_, latest) = crate::app_update::prepare(&core.data_dir, |progress| state.emit("app-update-progress", progress)).await?;
-            tokio::spawn(async { tokio::time::sleep(std::time::Duration::from_millis(700)).await; std::process::exit(0); });
+            let (_, latest) = crate::app_update::prepare(&core.data_dir, |progress| {
+                state.emit("app-update-progress", progress)
+            })
+            .await?;
+            tokio::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+                std::process::exit(0);
+            });
             value(json!({"restarting":true,"latest":latest}))
         }
         "app_update_result" => {
             let path = core.data_dir.join("app-update-result.json");
-            let result: Value = std::fs::read(&path).ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+            let result: Value = std::fs::read(&path)
+                .ok()
+                .and_then(|b| serde_json::from_slice(&b).ok())
+                .unwrap_or(Value::Null);
             value(result)
         }
         "check_app_update" => value(crate::app_update::check().await?),

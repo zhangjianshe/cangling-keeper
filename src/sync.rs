@@ -185,9 +185,18 @@ where
     serde_json::from_value::<T>(data).map_err(|e| format!("解析服务器数据失败: {e}"))
 }
 
+pub fn normalize_server_url(value: &str)->Result<String,String>{
+    let parsed=reqwest::Url::parse(value.trim()).map_err(|_|"请输入有效的 CIS Server URL（http:// 或 https://）")?;
+    if !matches!(parsed.scheme(),"http"|"https") || parsed.host_str().is_none() || !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some(){return Err("服务器地址不允许包含凭证、查询参数或片段".into());}
+    Ok(parsed.to_string().trim_end_matches('/').to_owned())
+}
 pub async fn login(server_url: &str, username: &str, password: &str) -> Result<LoginData, String> {
-    let url = format!("{}/api/v1/user/login", base_url(server_url));
-    let body = serde_json::json!({ "userName": username, "password": password });
+    login_cis(server_url,username,password,"", "").await
+}
+pub async fn login_cis(server_url:&str,username:&str,password:&str,code:&str,uuid:&str)->Result<LoginData,String>{
+    let base=normalize_server_url(server_url)?;
+    let url = format!("{}/api/v1/keeper/login", base);
+    let body = serde_json::json!({ "userName": username, "password": password,"loginType":"00","code":code,"uuid":uuid });
     let resp = client()?
         .post(&url)
         .json(&body)
@@ -195,11 +204,16 @@ pub async fn login(server_url: &str, username: &str, password: &str) -> Result<L
         .await
         .map_err(|e| format!("登录请求失败: {e}"))?;
     let text = resp.text().await.map_err(|e| e.to_string())?;
-    unwrap_envelope::<LoginData>(text).await
+    let data=unwrap_envelope::<LoginData>(text).await?;
+    if data.token.is_empty(){return Err("CIS 未返回有效的登录凭证".into());}Ok(data)
+}
+pub async fn login_captcha(server:&str)->Result<serde_json::Value,String>{
+    let response=client()?.get(format!("{}/api/v1/keeper/captcha",normalize_server_url(server)?)).send().await.map_err(|e|e.to_string())?;
+    unwrap_envelope(response.text().await.map_err(|e|e.to_string())?).await
 }
 
 pub async fn pull_hosts(server_url: &str, token: &str) -> Result<Vec<SyncHost>, String> {
-    let url = format!("{}/api/v1/host/list", base_url(server_url));
+    let url = format!("{}/api/v1/keeper/host/list", base_url(server_url));
     let resp = client()?
         .get(&url)
         .header("API-TOKEN", token)
@@ -212,7 +226,7 @@ pub async fn pull_hosts(server_url: &str, token: &str) -> Result<Vec<SyncHost>, 
 }
 
 pub async fn push_host(server_url: &str, token: &str, host: &SyncHost) -> Result<SyncHost, String> {
-    let url = format!("{}/api/v1/host/save", base_url(server_url));
+    let url = format!("{}/api/v1/keeper/host/save", base_url(server_url));
     let body = serde_json::json!({ "host": host });
     let resp = client()?
         .post(&url)
@@ -228,7 +242,7 @@ pub async fn push_host(server_url: &str, token: &str, host: &SyncHost) -> Result
 }
 
 pub async fn delete_remote(server_url: &str, token: &str, id: &str) -> Result<(), String> {
-    let url = format!("{}/api/v1/host/delete", base_url(server_url));
+    let url = format!("{}/api/v1/keeper/host/delete", base_url(server_url));
     let body = serde_json::json!({ "id": id });
     let resp = client()?
         .post(&url)
@@ -244,7 +258,7 @@ pub async fn delete_remote(server_url: &str, token: &str, id: &str) -> Result<()
 }
 
 pub async fn pull_tunnels(server_url: &str, token: &str) -> Result<Vec<SyncTunnel>, String> {
-    let url = format!("{}/api/v1/tunnel/list", base_url(server_url));
+    let url = format!("{}/api/v1/keeper/tunnel/list", base_url(server_url));
     let resp = client()?
         .get(&url)
         .header("API-TOKEN", token)
@@ -261,7 +275,7 @@ pub async fn push_tunnel(
     token: &str,
     tunnel: &SyncTunnel,
 ) -> Result<SyncTunnel, String> {
-    let url = format!("{}/api/v1/tunnel/save", base_url(server_url));
+    let url = format!("{}/api/v1/keeper/tunnel/save", base_url(server_url));
     let body = serde_json::json!({ "tunnel": tunnel });
     let resp = client()?
         .post(&url)
@@ -277,7 +291,7 @@ pub async fn push_tunnel(
 }
 
 pub async fn delete_remote_tunnel(server_url: &str, token: &str, id: &str) -> Result<(), String> {
-    let url = format!("{}/api/v1/tunnel/delete", base_url(server_url));
+    let url = format!("{}/api/v1/keeper/tunnel/delete", base_url(server_url));
     let body = serde_json::json!({ "id": id });
     let resp = client()?
         .post(&url)
@@ -561,6 +575,11 @@ mod tests {
     }
 
     #[test]
+    fn server_url_validation_preserves_context_and_rejects_credentials() {
+        assert_eq!(super::normalize_server_url(" http://localhost:8080/ib/ ").unwrap(),"http://localhost:8080/ib");
+        for value in ["ftp://localhost","https://user:secret@localhost","http://localhost/?key=x","http://localhost/#x",""]{assert!(super::normalize_server_url(value).is_err());}
+    }
+    #[test]
     fn login_data_with_null_names_uses_defaults() {
         let data: LoginData = serde_json::from_str(
             r#"{"token":"token","userName":null,"nickName":null,"userId":null}"#,
@@ -594,7 +613,7 @@ struct SaveCertificateData {
 }
 pub async fn pull_certificates(url: &str, token: &str) -> Result<Vec<SyncCertificate>, String> {
     let response = client()?
-        .get(format!("{}/api/v1/certificate/list", base_url(url)))
+        .get(format!("{}/api/v1/keeper/certificate/list", base_url(url)))
         .header("API-TOKEN", token)
         .send()
         .await
@@ -617,7 +636,7 @@ pub async fn push_certificate(
     certificate: &SyncCertificate,
 ) -> Result<SyncCertificate, String> {
     let response = client()?
-        .post(format!("{}/api/v1/certificate/save", base_url(url)))
+        .post(format!("{}/api/v1/keeper/certificate/save", base_url(url)))
         .header("API-TOKEN", token)
         .json(&serde_json::json!({"certificate":certificate}))
         .send()
@@ -631,4 +650,22 @@ pub async fn push_certificate(
     )
     .await?
     .certificate)
+}
+
+#[cfg(test)]
+mod cis_login_tests {
+    use super::*;
+    #[tokio::test]
+    async fn cis_login_sends_captcha_and_accepts_real_response() {
+        use axum::{routing::post,Router,Json};
+        let app=Router::new().route("/ib/api/v1/keeper/login",post(|Json(args):Json<serde_json::Value>| async move {
+            assert_eq!(args["userName"],"tester");assert_eq!(args["password"],"test-only-password");
+            assert_eq!(args["code"],"1234");assert_eq!(args["uuid"],"captcha-id");
+            Json(serde_json::json!({"success":true,"code":200,"data":{"token":"test-token","userName":"tester","nickName":"Tester","userId":12}}))
+        }));
+        let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();let address=listener.local_addr().unwrap();
+        let task=tokio::spawn(async move{axum::serve(listener,app).await.unwrap();});
+        let login=login_cis(&format!("http://{address}/ib"),"tester","test-only-password","1234","captcha-id").await.unwrap();
+        assert_eq!(login.user_id,12);assert_eq!(login.token,"test-token");task.abort();
+    }
 }

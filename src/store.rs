@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS settings (
 
 /// Single SQLite connection managing hosts, tunnels and certificates.
 pub struct Store {
-    conn: Connection,
+    pub(crate) conn: Connection,
 }
 
 impl Store {
@@ -88,6 +88,7 @@ impl Store {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(&path)?;
+        #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&path,std::fs::Permissions::from_mode(0o600))?;}
         conn.execute_batch(SCHEMA)?;
         migrate(&conn)?;
         conn.execute("INSERT OR IGNORE INTO proxy_settings (id) VALUES (1)", [])?;

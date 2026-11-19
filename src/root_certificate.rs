@@ -137,13 +137,15 @@ struct LinuxPlan {
 
 #[cfg(any(target_os = "linux", test))]
 fn linux_plan_at(root: &Path) -> Option<LinuxPlan> {
+    // Root rotations must not overwrite or remove another trusted certificate.
+    let filename = format!("cangling-root-ca-{}.crt", FINGERPRINT.to_ascii_lowercase());
     for updater in [
         "usr/sbin/update-ca-certificates",
         "usr/bin/update-ca-certificates",
     ] {
         if root.join(updater).is_file() {
             return Some(LinuxPlan {
-                anchor: root.join("usr/local/share/ca-certificates/cangling-root-ca.crt"),
+                anchor: root.join("usr/local/share/ca-certificates").join(&filename),
                 updater: root.join(updater),
                 extract: false,
             });
@@ -152,7 +154,7 @@ fn linux_plan_at(root: &Path) -> Option<LinuxPlan> {
     for updater in ["usr/bin/update-ca-trust", "usr/sbin/update-ca-trust"] {
         if root.join(updater).is_file() {
             return Some(LinuxPlan {
-                anchor: root.join("etc/pki/ca-trust/source/anchors/cangling-root-ca.crt"),
+                anchor: root.join("etc/pki/ca-trust/source/anchors").join(&filename),
                 updater: root.join(updater),
                 extract: true,
             });
@@ -287,6 +289,60 @@ mod tests {
         assert!(linux_plan_at(&root).unwrap().extract);
         std::fs::remove_dir_all(root).unwrap();
     }
+    #[cfg(unix)]
+    #[test]
+    fn root_rotation_installs_alongside_legacy_anchor() {
+        use std::os::unix::fs::PermissionsExt;
+        for (updater, directory) in [
+            (
+                "usr/sbin/update-ca-certificates",
+                "usr/local/share/ca-certificates",
+            ),
+            ("usr/bin/update-ca-trust", "etc/pki/ca-trust/source/anchors"),
+        ] {
+            let root =
+                std::env::temp_dir().join(format!("keeper-rotate-ca-{}", uuid::Uuid::new_v4()));
+            let tool = root.join(updater);
+            std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+            std::fs::write(&tool, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let legacy = root.join(directory).join("cangling-root-ca.crt");
+            std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+            std::fs::write(&legacy, "previous trusted CA").unwrap();
+            let plan = linux_plan_at(&root).unwrap();
+            assert_ne!(plan.anchor, legacy);
+            assert!(
+                plan.anchor
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .contains(&FINGERPRINT.to_ascii_lowercase())
+            );
+            let execute = || {
+                Command::new("/bin/sh")
+                    .args(["-c", &linux_script(&plan)])
+                    .output()
+                    .unwrap()
+            };
+            assert!(execute().status.success());
+            assert!(execute().status.success());
+            assert_eq!(
+                std::fs::read_to_string(&legacy).unwrap(),
+                "previous trusted CA"
+            );
+            assert_eq!(std::fs::read_to_string(&plan.anchor).unwrap(), pem());
+            std::fs::remove_file(&plan.anchor).unwrap();
+            std::fs::write(&tool, "#!/bin/sh\nexit 1\n").unwrap();
+            assert!(!execute().status.success());
+            assert!(!plan.anchor.exists());
+            assert_eq!(
+                std::fs::read_to_string(&legacy).unwrap(),
+                "previous trusted CA"
+            );
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+
     #[cfg(unix)]
     #[test]
     fn install_script_preserves_existing_certificates_and_rolls_back_failed_updates() {

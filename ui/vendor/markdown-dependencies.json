@@ -1,0 +1,22 @@
+{
+  "marked": {
+    "version": "18.2.1",
+    "integrity": "sha512-ii4bxCTCqqwpT86XZWgJNs+ZnAIZksmLGYMViWA7PDIXYIeNo1x6cDdX3JOip9NM/cI6p8z57FxliACboTruMA==",
+    "source": "https://registry.npmjs.org/marked/-/marked-18.2.1.tgz"
+  },
+  "dompurify": {
+    "version": "3.4.18",
+    "integrity": "sha512-ofe3wI/uNm68HInABYFJYqQxRw1EaKAjNdrFVKqjUY+UZurvNd2L/HuQe097s/4RivWiZyP6tT7aoT8atjfhwg==",
+    "source": "https://registry.npmjs.org/dompurify/-/dompurify-3.4.18.tgz"
+  },
+  "@highlightjs/cdn-assets": {
+    "version": "11.12.0",
+    "integrity": "sha512-KvOKXODaiFmId9xaq3xc5xCL66wVLUuOngDbO9B/kewbFTqdGbn2nJxNhN3H5R1cgDTVj6R8vH0zgiNDEGjpDw==",
+    "source": "https://registry.npmjs.org/@highlightjs/cdn-assets/-/cdn-assets-11.12.0.tgz"
+  },
+  "katex": {
+    "version": "0.19.1",
+    "integrity": "sha512-jG8uKntjSEcm2EpQOh0XturpPuuC9r3Sq5HLHdsFdWZT27E672SF19QEi+of0/YeOy15lDgRhKvr5614uRrEfA==",
+    "source": "https://registry.npmjs.org/katex/-/katex-0.19.1.tgz"
+  }
+}

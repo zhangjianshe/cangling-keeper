@@ -43,10 +43,10 @@ async fn setup(
         drop_websocket,
     };
     let router = Router::new()
-        .route("/api/v1/tunnel/save", post(save))
-        .route("/api/v1/tunnel/list", get(list))
+        .route("/api/v1/keeper/tunnel/save", post(save))
+        .route("/api/v1/keeper/tunnel/list", get(list))
         .route(
-            "/api/v1/host/list",
+            "/api/v1/keeper/host/list",
             get(|| async { Json(json!({"code":200,"success":true,"data":{"hosts":[]}})) }),
         )
         .with_state(remote.clone());

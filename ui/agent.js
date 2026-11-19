@@ -1,0 +1,435 @@
+(() => {
+  'use strict';
+  const $ = selector => document.querySelector(selector);
+  const invoke = (name, args = {}) => window.__KEEPER__.core.invoke(name, args);
+  const agent = {projects:[], project:localStorage.getItem('keeper-agent-project') || 'general', sessions:[], tools:[], hosts:[], selected:null, detail:{messages:[],runs:[]}, generation:0, timer:null, sending:false};
+  const statusNames = {running:'正在执行',pending_approval:'等待确认',succeeded:'已完成',failed:'执行失败',rejected:'已取消',interrupted:'执行中断'};
+  function element(tag, cls, text) { const node=document.createElement(tag); if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node; }
+  function notice(message='') {$('#agent-notice').textContent=message;$('#agent-notice').hidden=!message;}
+  function titleFor(tool) {return agent.tools.find(item=>item.name===tool)?.title || tool;}
+  function sessionRow(session){
+    const row=element('div','agent-session-row');
+    const button=element('button','agent-session'+(session.id===agent.selected?' active':''),session.title);button.type='button';
+    button.title=(agent.projects.find(p=>p.id===session.projectId)?.name || '')+' · '+session.title;
+    button.setAttribute('aria-current',String(session.id===agent.selected));
+    button.onclick=()=>{agent.project=session.projectId;renderProjects();showConversation();select(session.id);};
+    const pin=element('button','agent-pin',session.pinned?'★':'☆');pin.type='button';pin.title=session.pinned?'取消置顶':'置顶会话';pin.setAttribute('aria-label',pin.title+'：'+session.title);
+    pin.onclick=async()=>{try{await invoke('agent_pin_session',{sessionId:session.id,pinned:!session.pinned});await bootstrap();}catch(error){notice(String(error));}};
+    row.append(button,pin);return row;
+  }
+  function renderSessions(){
+    const list=$('#agent-sessions'),pinned=$('#agent-pinned');list.replaceChildren();pinned.replaceChildren();
+    for(const session of agent.sessions){list.append(sessionRow(session));if(session.pinned)pinned.append(sessionRow(session));}
+    if(!agent.sessions.length)list.append(element('div','agent-nav-empty','暂无会话'));
+    if(!agent.sessions.some(s=>s.pinned))pinned.append(element('div','agent-nav-empty','暂无置顶'));
+    $('#agent-session-title').textContent=agent.sessions.find(s=>s.id===agent.selected)?.title || '新会话';
+  }
+  function renderProjects(){
+    if(!agent.projects.some(p=>p.id===agent.project))agent.project='general';
+    localStorage.setItem('keeper-agent-project',agent.project);
+    const list=$('#agent-projects');list.replaceChildren();
+    for(const project of agent.projects){
+      const group=element('details','agent-project-group');group.open=project.id===agent.project;
+      const summary=element('summary');summary.title=project.directory;
+      const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','agent-project-icon');icon.setAttribute('aria-hidden','true');
+      // Lucide folder-closed / folder-open (ISC), see ui/vendor/lucide-LICENSE.
+      for(const [state,paths] of Object.entries({"closed": ["M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z", "M2 10h20"], "open": ["m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"]})){
+        const shape=document.createElementNS('http://www.w3.org/2000/svg','g');shape.setAttribute('class','folder-'+state);
+        for(const d of paths){const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);shape.append(path);}icon.append(shape);
+      }
+      summary.append(icon,element('span','agent-project-name',project.name));
+      const create=element('button','agent-project-chat','＋');create.type='button';create.title='在'+project.name+'中开始会话';create.setAttribute('aria-label',create.title);
+      create.onclick=event=>{event.preventDefault();event.stopPropagation();agent.project=project.id;newSession();};
+      summary.append(create);group.append(summary);
+      for(const session of agent.sessions.filter(s=>s.projectId===project.id))group.append(sessionRow(session));
+      if(!agent.sessions.some(s=>s.projectId===project.id))group.append(element('div','agent-nav-empty','暂无会话'));
+      list.append(group);
+    }
+  }
+  async function switchProject(project){
+    clearTimeout(agent.timer);++agent.generation;agent.project=project;agent.selected=null;agent.detail={messages:[],runs:[]};
+    renderProjects();renderSessions();renderConversation();showConversation();
+    const session=agent.sessions.find(s=>s.projectId===project);if(session)await select(session.id);
+  }
+  $('#agent-new-project').onclick=async event=>{
+    event.preventDefault();event.stopPropagation();
+    const name=await uiPrompt('请输入项目名称','','新建项目');if(!name?.trim())return;
+    try{const project=await invoke('agent_new_project',{name:name.trim()});await bootstrap();await switchProject(project.id);}catch(error){notice(String(error));}
+  };
+  async function bootstrap() {
+    const data=await invoke('agent_bootstrap');agent.projects=data.projects;agent.sessions=data.sessions;
+    renderProjects();renderModel(data.model);agent.tools=data.tools;agent.hosts=data.hosts;
+    renderSessions();renderTools();
+  }
+  async function ensureSession(){
+    if(!agent.selected){const session=await invoke('agent_new_session',{projectId:agent.project});agent.selected=session.id;localStorage.setItem('keeper-agent-session',agent.selected);}
+    return agent.selected;
+  }
+  async function select(session) {
+    clearTimeout(agent.timer);agent.selected=session;const generation=++agent.generation;
+    try{
+      const data=await invoke('agent_session',{sessionId:session});
+      if(generation!==agent.generation)return;
+      // A WebSocket checkpoint can arrive while this snapshot request is in flight.
+      for(const item of data.messages){const current=agent.detail.messages.find(m=>m.id===item.id);if(current && current.content.length>item.content.length)item.content=current.content;}
+      agent.detail=data;renderModel(data.model);localStorage.setItem('keeper-agent-session',session);renderSessions();renderConversation();poll();notice();
+    }catch(error){if(generation===agent.generation)notice(String(error));}
+  }
+  function poll(){
+    clearTimeout(agent.timer);
+    if(agent.detail.modelPending || agent.detail.runs.some(run=>run.status==='running'))agent.timer=setTimeout(()=>select(agent.selected),1100);
+  }
+  let llmConfig={servers:[],activeServerId:''},llmReturnFocus=null;
+  function renderModel(config){
+    if(!config)return;
+    const defaultId=config.defaultServerId ?? config.activeServerId;
+    const chosen=agent.selected && agent.detail.sessionId===agent.selected?agent.detail.model?.activeServerId:null;
+    if(chosen!==null && chosen!==undefined){
+      const selected=(config.servers || []).find(server=>server.id===chosen);
+      config={...config,...selected,activeServerId:chosen,enabled:!!selected?.enabled,hasApiKey:!!selected?.hasApiKey,defaultServerId:defaultId};
+    }
+    llmConfig=config;
+    const enabled=config.enabled && config.hasApiKey;
+    $('.agent-model-badge').textContent=enabled?(config.name || 'LLM')+' · '+config.model:'未连接模型';
+    const picker=$('#agent-model-picker'),menu=$('#agent-model-menu');
+    const available=(config.servers || []).filter(server=>server.enabled && server.hasApiKey);
+    $('#agent-model-label').textContent=enabled?config.name+' · '+config.model:available.length?'选择模型':'本地工具模式';
+    picker.dataset.available=String(available.length);picker.disabled=!available.length || !!agent.detail.modelPending;
+    picker.title=available.length?'选择当前对话使用的 LLM Server':'到账户 → 模型服务，启用并配置模型';
+    menu.replaceChildren(element('div','agent-model-menu-title','选择模型'));
+    for(const server of available){
+      const current=enabled && server.id===config.activeServerId;
+      const item=element('button','agent-model-option'+(current?' selected':''));item.type='button';item.setAttribute('role','menuitemradio');item.setAttribute('aria-checked',String(current));
+      const info=element('span','agent-model-option-info');info.append(element('strong','',server.name),element('small','',server.model));
+      item.append(info,element('span','agent-model-option-check',current?'✓':''));
+      item.onclick=()=>chooseModel(server.id);menu.append(item);
+    }
+    if(picker.disabled)closeModelMenu();
+    $('#agent-model-note').textContent=enabled?(config.name || 'LLM')+' · 当前会话文字发送至模型 API · 远程命令执行前需要确认':'尚未启用模型 · 会话保存在本机 · 远程命令执行前需要确认';
+    const list=$('#llm-server-list');list.replaceChildren();
+    if(!config.servers?.length)list.append(element('p','llm-empty','尚未添加 LLM Server，点击右侧按钮添加。'));
+    for(const server of config.servers || []){
+      const row=element('div','llm-server-row');const info=element('div','llm-server-info');
+      const heading=element('div','llm-server-heading');heading.append(element('strong','',server.name));
+      if(server.id===defaultId)heading.append(element('span','llm-current',server.enabled?'新会话默认':'默认服务 · 已停用'));
+      info.append(heading,element('div','llm-server-meta',server.model+' · '+(server.provider==='deepseek'?'DeepSeek':'OpenAI 兼容')),element('div','llm-server-url',server.baseUrl),element('small','',server.hasApiKey?'已配置 API Key':'未配置 API Key'));
+      const actions=element('div','llm-server-actions');const edit=element('button','btn','编辑');edit.type='button';edit.onclick=()=>openLlm(server,edit);
+      const test=element('button','btn','测试连接');test.type='button';test.disabled=!server.hasApiKey;test.onclick=async()=>{
+        test.disabled=true;$('#llm-list-status').textContent='正在测试 '+server.name+'…';
+        try{const result=await invoke('agent_model_test',{id:server.id});$('#llm-list-status').textContent=server.name+' 连接成功'+(result.models.length?' · '+result.models.join('、'):'');}catch(error){$('#llm-list-status').textContent=String(error);}finally{test.disabled=!server.hasApiKey;}
+      };
+      const use=element('button','btn',server.id===defaultId && server.enabled?'默认服务':'设为新会话默认');use.type='button';use.disabled=!server.hasApiKey || (server.id===defaultId && server.enabled);
+      use.onclick=async()=>{try{renderModel(await invoke('agent_model_select',{id:server.id}));$('#llm-list-status').textContent='新会话默认使用 '+server.name+'，已有会话不变';}catch(error){$('#llm-list-status').textContent=String(error);}};
+      actions.append(use,edit,test);row.append(info,actions);list.append(row);
+    }
+  }
+  function closeModelMenu(focus=false){$('#agent-model-menu').hidden=true;$('#agent-model-picker').setAttribute('aria-expanded','false');if(focus)$('#agent-model-picker').focus();}
+  function openModelMenu(last=false){
+    if($('#agent-model-picker').disabled)return;
+    $('#agent-tool-panel').hidden=true;$('#agent-model-menu').hidden=false;$('#agent-model-picker').setAttribute('aria-expanded','true');
+    const items=Array.from($('#agent-model-menu').querySelectorAll('button'));const selected=items.find(item=>item.getAttribute('aria-checked')==='true');(last?items.at(-1):selected || items[0])?.focus();
+  }
+  async function chooseModel(id){
+    if(agent.detail.modelPending)return;closeModelMenu(true);
+    const picker=$('#agent-model-picker');picker.disabled=true;
+    try{
+      const session=await ensureSession();
+      await invoke('agent_session_model',{sessionId:session,id});
+      await bootstrap();if(agent.selected===session)await select(session);
+    }catch(error){notice(String(error));}finally{picker.disabled=picker.dataset.available==='0' || !!agent.detail.modelPending;}
+  }
+  $('#agent-model-picker').onclick=()=>$('#agent-model-menu').hidden?openModelMenu():closeModelMenu(true);
+  $('#agent-model-picker').onkeydown=event=>{if(event.key==='ArrowDown' || event.key==='ArrowUp'){event.preventDefault();openModelMenu(event.key==='ArrowUp');}};
+  $('#agent-model-menu').onkeydown=event=>{
+    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeModelMenu(true);}
+    else if(event.key==='Tab')closeModelMenu();
+    else if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+      event.preventDefault();const items=Array.from($('#agent-model-menu').querySelectorAll('button')),index=items.indexOf(document.activeElement);
+      const next=event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length;items[next]?.focus();
+    }
+  };
+  document.addEventListener('click',event=>{if(!event.target.closest('.agent-model-control'))closeModelMenu();});
+  function openLlm(server=null,trigger=null){
+    llmReturnFocus=trigger || $('#llm-add');$('#llm-dialog-title').textContent=server?'编辑 LLM Server':'添加 LLM Server';
+    $('#llm-server-id').value=server?.id || '';$('#llm-server-name').value=server?.name || '';
+    $('#llm-provider').value=server?.provider || 'deepseek';$('#deepseek-enabled').checked=server?.enabled || false;
+    $('#deepseek-url').value=server?.baseUrl || 'https://api.deepseek.com';$('#deepseek-model').value=server?.model || 'deepseek-flash';
+    $('#deepseek-key').value='';$('#deepseek-key').placeholder=server?.hasApiKey?'已保存密钥，留空保留':'请输入 API Key';$('#llm-clear-key').checked=false;$('#deepseek-status').textContent='';
+    $('#llm-server-modal').classList.remove('hidden');$('#llm-server-name').focus();
+  }
+  function closeLlm(){const dialog=$('#llm-server-modal');dialog.classList.add('hidden');$('#deepseek-key').value='';(llmReturnFocus?.isConnected?llmReturnFocus:$('#llm-add')).focus();}
+  async function saveLlm(){
+    if(!$('#deepseek-form').reportValidity())return null;
+    const clear=$('#llm-clear-key').checked;
+    const result=await invoke('agent_model_save',{id:$('#llm-server-id').value,name:$('#llm-server-name').value.trim(),provider:$('#llm-provider').value,enabled:clear?false:$('#deepseek-enabled').checked,baseUrl:$('#deepseek-url').value.trim(),model:$('#deepseek-model').value.trim(),apiKey:$('#deepseek-key').value,clearApiKey:clear});
+    const saved=result.servers.find(s=>s.id===result.savedServerId);$('#llm-server-id').value=result.savedServerId;$('#deepseek-key').value='';$('#deepseek-key').placeholder=saved.hasApiKey?'已保存密钥，留空保留':'请输入 API Key';$('#llm-clear-key').checked=false;$('#deepseek-enabled').checked=saved.enabled;renderModel(result);return result.savedServerId;
+  }
+  $('#llm-add').onclick=()=>openLlm();$('#llm-cancel').onclick=closeLlm;$('#llm-dialog-close').onclick=closeLlm;
+  $('#llm-server-modal').onkeydown=event=>{if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeLlm();}else if(event.key==='Tab'){
+    const nodes=Array.from($('#llm-server-modal').querySelectorAll('button:not(:disabled),input:not([type=hidden]),select'));const first=nodes[0],last=nodes[nodes.length-1];
+    if(event.shiftKey && document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey && document.activeElement===last){event.preventDefault();first.focus();}
+  }};
+  $('#deepseek-form').onsubmit=async event=>{event.preventDefault();const buttons=Array.from($('#deepseek-form').querySelectorAll('button'));buttons.forEach(b=>b.disabled=true);try{if(await saveLlm()){closeLlm();$('#llm-list-status').textContent='LLM Server 已保存';}}catch(error){$('#deepseek-status').textContent=String(error);}finally{buttons.forEach(b=>b.disabled=false);}};
+  $('#deepseek-test').onclick=async()=>{
+    const button=$('#deepseek-test');button.disabled=true;$('#deepseek-status').textContent='正在保存并测试连接…';
+    try{const id=await saveLlm();if(!id)return;const result=await invoke('agent_model_test',{id});$('#deepseek-status').textContent='连接成功'+(result.models.length?' · '+result.models.join('、'):'');}catch(error){$('#deepseek-status').textContent=String(error);}finally{button.disabled=false;}
+  };
+  invoke('agent_model_config').then(renderModel).catch(error=>{$('#llm-list-status').textContent=String(error);});
+  function renderTools(){
+    const list=$('#agent-tools');list.replaceChildren();
+    for(const tool of agent.tools){
+      const button=element('button','agent-tool-option');button.type='button';button.append(element('span','',tool.title+(tool.approval?' · 执行前确认':'')),element('small','',tool.description));
+      button.onclick=()=>chooseTool(tool);list.append(button);
+    }
+    const suggestions=$('#agent-suggestions');suggestions.replaceChildren();
+    for(const name of ['list_hosts','proxy_status','root_certificate_status']){
+      const tool=agent.tools.find(t=>t.name===name);if(!tool)continue;
+      const button=element('button','agent-suggestion',tool.title);button.type='button';button.append(element('small','',tool.description));button.onclick=()=>chooseTool(tool);suggestions.append(button);
+    }
+  }
+  function renderPending(container){
+    for(const button of container.querySelectorAll('.agent-regenerate'))button.disabled=!!agent.detail.modelPending || !!agent.regenerating || button.dataset.available!=='true';
+    $('#agent-send').disabled=agent.sending || !!agent.detail.modelPending;
+    $('#agent-send').hidden=!!agent.detail.modelPending;$('#agent-stop').hidden=!agent.detail.modelPending;
+    $('#agent-stop').disabled=!!agent.stopping || !!agent.detail.stopRequested;
+    $('#agent-stop').title=agent.detail.stopRequested?'正在停止…':'停止生成';
+    $('#agent-model-picker').disabled=$('#agent-model-picker').dataset.available==='0' || !!agent.detail.modelPending;
+    if(agent.detail.modelPending)closeModelMenu();
+    for(const node of container.querySelectorAll('.agent-message'))node.classList.toggle('streaming',agent.detail.modelPending && node.dataset.messageId===agent.detail.streamingMessageId);
+    for(const button of container.querySelectorAll('.agent-edit-message'))button.disabled=!!agent.detail.modelPending || !!agent.savingEdit;
+    for(const button of container.querySelectorAll('.agent-version-button'))button.disabled=button.dataset.boundary==='true' || !!agent.detail.modelPending;
+    let status=container.querySelector('.agent-stream-status');
+    if(agent.detail.modelPending){if(!status){status=element('div','agent-message-label agent-stream-status');status.setAttribute('role','status');container.append(status);}status.textContent=agent.detail.stopRequested?'正在停止生成…':'模型正在生成…';}
+    else status?.remove();
+  }
+  async function saveEditedMessage(entry){
+    if(agent.savingEdit || agent.detail.modelPending || !agent.editing)return;
+    const content=agent.editing.content.trim();if(!content){notice('消息内容不能为空。');return;}if(content===entry.content){agent.editing=null;renderConversation();return;}
+    const session=agent.selected,anchor=replyAnchor(entry.replyGroup?.rootId || entry.id);agent.savingEdit=true;
+    for(const button of $('#agent-messages').querySelectorAll('.agent-message-edit button'))button.disabled=true;
+    try{await invoke('agent_edit_message',{sessionId:session,messageId:entry.id,content});agent.editing=null;await bootstrap();if(agent.selected===session){await select(session);restoreReplyAnchor(anchor);}notice();}
+    catch(error){notice(String(error));}finally{agent.savingEdit=false;for(const button of $('#agent-messages').querySelectorAll('.agent-message-edit button'))button.disabled=false;}
+  }
+  function visibleMessages(){
+    const groups=agent.detail.replyGroups || [],messages=agent.detail.messages;
+    const alternatives=new Set(groups.flatMap(g=>(g.allVersionIds || g.versionIds).slice(1)));
+    return messages.filter(m=>!alternatives.has(m.id)).map(m=>{
+      const group=groups.find(g=>g.rootId===m.id);if(!group)return m;
+      const chosen=messages.find(v=>v.id===group.selectedId);if(!chosen)return null;
+      return {...chosen,createdAt:m.createdAt,replyGroup:group};
+    }).filter(Boolean);
+  }
+  function replyAnchor(rootId){
+    const timeline=$('#agent-timeline'),node=[...$('#agent-messages').querySelectorAll('[data-root-message-id]')].find(n=>n.dataset.rootMessageId===rootId);
+    return {timeline,top:node?.getBoundingClientRect().top,scroll:timeline.scrollTop,rootId};
+  }
+  function restoreReplyAnchor(anchor){
+    const node=[...$('#agent-messages').querySelectorAll('[data-root-message-id]')].find(n=>n.dataset.rootMessageId===anchor.rootId);
+    anchor.timeline.scrollTop=anchor.scroll;
+    if(node && anchor.top!==undefined)anchor.timeline.scrollTop+=node.getBoundingClientRect().top-anchor.top;
+  }
+  async function chooseReplyVersion(group,index){
+    if(agent.detail.modelPending || agent.switchingVersion)return;
+    const session=agent.selected,anchor=replyAnchor(group.rootId);agent.switchingVersion=true;
+    try{await invoke('agent_reply_version',{sessionId:session,rootId:group.rootId,messageId:group.versionIds[index]});if(agent.selected===session){await select(session);restoreReplyAnchor(anchor);}}
+    catch(error){notice(String(error));}finally{agent.switchingVersion=false;}
+  }
+  function renderConversation(){
+    const container=$('#agent-messages'),timeline=$('#agent-timeline');
+    const follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<90;
+    const draft=container.querySelector('.agent-run-form');
+    const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata]),agent.detail.replyGroups,agent.detail.runs,agent.editing?.session===agent.selected?agent.editing.id:null]);
+    if(!draft && container.dataset.signature===signature){
+      for(const entry of agent.detail.messages){const body=container.querySelector('[data-message-id="'+entry.id+'"] .agent-message-body');if(body)window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');}
+      renderPending(container);if(follow)timeline.scrollTop=timeline.scrollHeight;return;
+    }
+    container.dataset.signature=signature;container.replaceChildren();
+    $('#agent-welcome').hidden=agent.detail.messages.length>0 || agent.detail.runs.length>0;
+    const entries=[...visibleMessages().map(m=>({...m,kind:'message'})),...agent.detail.runs.map(run=>({...run,kind:'run'}))].sort((a,b)=>a.createdAt-b.createdAt);
+    for(const entry of entries){
+      if(entry.kind==='message'){
+        const message=element('article','agent-message '+entry.role);message.dataset.messageId=entry.id;message.dataset.rootMessageId=entry.replyGroup?.rootId || entry.id;
+        if(entry.role!=='user'){
+          const metadata=entry.modelMetadata || {};
+          const label=entry.role==='error'?'模型调用失败':metadata.source==='local'?'苍灵智能 · 本地工具':metadata.model?(metadata.serverName?metadata.serverName+' · ':'')+metadata.model:'苍灵智能 · 模型未记录';
+          const heading=element('span','agent-message-label agent-reply-model',label);
+          if(metadata.requestedModel && metadata.requestedModel!==metadata.model)heading.title='请求模型：'+metadata.requestedModel+'；服务端返回模型：'+metadata.model;
+          message.append(heading);
+          if(['stopped','interrupted'].includes(metadata.generationStatus))message.append(element('span','agent-generation-status',metadata.generationStatus==='stopped'?'已停止生成':'生成已中断'));
+        }
+        const body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');message.append(body);
+        if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id){
+          body.hidden=true;const form=element('form','agent-message-edit'),input=element('textarea');input.value=agent.editing.content;input.setAttribute('aria-label','编辑消息');input.rows=Math.max(3,Math.min(10,input.value.split('\n').length));input.oninput=()=>{agent.editing.content=input.value;};
+          const actions=element('div','agent-edit-actions'),cancel=element('button','btn','取消'),save=element('button','btn primary','保存并重新生成');cancel.type='button';save.type='submit';
+          cancel.onclick=()=>{agent.editing=null;renderConversation();};form.onsubmit=event=>{event.preventDefault();saveEditedMessage(entry);};actions.append(cancel,save);form.append(input,actions);message.append(form);
+        }
+        if(entry.role==='assistant' || entry.role==='user'){
+          const metadata=entry.modelMetadata || {},available=metadata.source==='llm' && !!metadata.serverId && !!metadata.requestedModel;
+          const regenerate=element('button','agent-regenerate','↻ 重新生成');regenerate.type='button';regenerate.dataset.available=String(available);regenerate.title=available?'使用本条回复原来的模型和上下文重新生成':'未记录原模型，无法重新生成';
+          regenerate.onclick=()=>regenerateReply(entry.id);
+          const footer=element('div','agent-reply-actions');
+          if(entry.role==='assistant')footer.append(regenerate);
+          else{const edit=element('button','agent-edit-message','✎ 编辑');edit.type='button';edit.disabled=!!agent.detail.modelPending;edit.onclick=()=>{agent.editing={session:agent.selected,id:entry.id,content:entry.content};renderConversation();$('#agent-messages .agent-message-edit textarea')?.focus();};footer.append(edit);}
+          if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id)footer.hidden=true;
+          const group=entry.replyGroup;
+          if(group && group.versionIds.length>1){
+            const navigation=element('div','agent-reply-versions');navigation.setAttribute('aria-label',entry.role==='user'?'消息版本':'回复版本');
+            const index=group.versionIds.indexOf(group.selectedId);
+            for(const [direction,label,offset] of [['previous','上一版本',-1],['next','下一版本',1]]){
+              const button=element('button','agent-version-button',direction==='previous'?'‹':'›');button.type='button';button.title=label;button.setAttribute('aria-label',label);
+              button.dataset.boundary=String(index+offset<0 || index+offset>=group.versionIds.length);button.disabled=button.dataset.boundary==='true' || !!agent.detail.modelPending;
+              button.onclick=()=>chooseReplyVersion(group,index+offset);
+              if(offset===1)navigation.append(element('span','agent-version-count',`${index+1} / ${group.versionIds.length}`));navigation.append(button);
+            }
+            footer.append(navigation);
+          }
+          message.append(footer);
+        }
+        container.append(message);
+      }else container.append(runCard(entry));
+    }
+    renderPending(container);
+    if(draft && draft.dataset.sessionId===(agent.selected || '')){container.append(draft);$('#agent-welcome').hidden=true;}
+    if(follow)timeline.scrollTop=timeline.scrollHeight;
+  }
+  window.__KEEPER__.event.listen('agent-model-stream',event=>{
+    const update=event.payload;if(update.sessionId!==agent.selected || !agent.detail.modelPending)return;
+    const entry=agent.detail.messages.find(m=>m.id===update.messageId);
+    if(entry && update.content.length>=entry.content.length){entry.content=update.content;renderConversation();}
+  });
+  window.__KEEPER__.event.listen('agent-model-finished',event=>{if(event.payload.sessionId===agent.selected)select(agent.selected);});
+  function runCard(run){
+    const card=element('article','agent-run');card.dataset.runId=run.id;
+    const head=element('header');head.append(element('strong','',titleFor(run.tool)),element('span','run-state',statusNames[run.status]||run.status));card.append(head);
+    if(run.tool==='ssh_execute'){
+      const target=run.arguments.target || {};
+      card.append(element('pre','',`${target.username || ''}@${target.hostname || ''}:${target.port || 22}\n\n${run.arguments.command || ''}`));
+    }
+    if(run.output)card.append(element('pre','',run.output));
+    if(run.status==='pending_approval'){
+      const actions=element('div','agent-run-actions');
+      for(const [approved,label] of [[false,'取消'],[true,'确认执行此命令']]){
+        const button=element('button',approved?'approve':'',label);button.type='button';
+        button.onclick=async()=>{
+          actions.querySelectorAll('button').forEach(b=>b.disabled=true);
+          try{await invoke('agent_decide_tool',{runId:run.id,approved});await select(agent.selected);}
+          catch(error){notice(String(error));actions.querySelectorAll('button').forEach(b=>b.disabled=false);}
+        };actions.append(button);
+      }
+      card.append(actions);
+    }
+    return card;
+  }
+  async function runTool(tool,args={}){
+    try{
+      notice();const session=await ensureSession();await invoke('agent_run_tool',{sessionId:session,tool:tool.name,arguments:args});
+      await bootstrap();await select(session);$('#agent-tool-panel').hidden=true;$('#agent-timeline').scrollTop=$('#agent-timeline').scrollHeight;
+    }catch(error){notice(String(error));}
+  }
+  function chooseTool(tool){
+    $('#agent-tool-panel').hidden=true;
+    if(!tool.approval){runTool(tool);return;}
+    const form=element('form','agent-run agent-run-form');form.dataset.sessionId=agent.selected || '';
+    form.append(element('strong','','准备远程命令'));
+    const label=element('label','','目标主机');const hosts=element('select');hosts.required=true;hosts.name='hostId';hosts.setAttribute('aria-label','目标主机');
+    for(const host of agent.hosts){const option=element('option','',`${host.name} · ${host.hostname}`);option.value=host.id;hosts.append(option);}label.append(hosts);form.append(label);
+    const commandLabel=element('label','','完整命令');const command=element('textarea');command.required=true;command.maxLength=8192;command.name='command';command.placeholder='例如：uname -a';command.setAttribute('aria-label','完整命令');commandLabel.append(command);form.append(commandLabel);
+    form.append(element('small','','创建请求后会展示目标和命令，确认执行前不会连接主机。'));
+    const submit=element('button','','创建待确认请求');submit.type='submit';submit.disabled=!agent.hosts.length;form.append(submit);
+    if(!agent.hosts.length)form.append(element('p','','尚未配置主机，请到「设置 > 主机」添加。'));
+    form.onsubmit=async event=>{event.preventDefault();submit.disabled=true;await runTool(tool,{hostId:hosts.value,command:command.value});submit.disabled=false;};
+    $('#agent-welcome').hidden=true;$('#agent-messages').querySelector('.agent-run-form')?.remove();$('#agent-messages').append(form);command.focus();$('#agent-timeline').scrollTop=$('#agent-timeline').scrollHeight;
+  }
+  $('#agent-compose').onsubmit=async event=>{
+    event.preventDefault();if(agent.sending || agent.detail.modelPending)return;const content=$('#agent-input').value.trim();if(!content)return;
+    agent.sending=true;$('#agent-send').disabled=true;
+    try{const session=await ensureSession();await invoke('agent_send_message',{sessionId:session,content});$('#agent-input').value='';await bootstrap();await select(session);$('#agent-timeline').scrollTop=$('#agent-timeline').scrollHeight;notice();}
+    catch(error){notice(String(error));}finally{agent.sending=false;$('#agent-send').disabled=!!agent.detail.modelPending;$('#agent-input').focus();}
+  };
+  async function regenerateReply(messageId){
+    if(!agent.selected || agent.detail.modelPending || agent.regenerating)return;
+    const root=agent.detail.replyGroups?.find(g=>g.versionIds.includes(messageId))?.rootId || messageId,anchor=replyAnchor(root);
+    const session=agent.selected;agent.regenerating=true;renderPending($('#agent-messages'));
+    try{await invoke('agent_regenerate',{sessionId:session,messageId});await bootstrap();if(agent.selected===session){await select(session);restoreReplyAnchor(anchor);}}
+    catch(error){notice(String(error));}finally{agent.regenerating=false;renderPending($('#agent-messages'));}
+  }
+  $('#agent-stop').onclick=async()=>{
+    if(!agent.selected || !agent.detail.modelPending || agent.stopping)return;
+    const session=agent.selected,messageId=agent.detail.streamingMessageId;agent.stopping=true;$('#agent-stop').disabled=true;
+    try{await invoke('agent_stop_generation',{sessionId:session,messageId});if(agent.selected===session)await select(session);}catch(error){notice(String(error));}finally{agent.stopping=false;if(agent.selected===session)renderPending($('#agent-messages'));}
+  };
+  $('#agent-input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();$('#agent-compose').requestSubmit();}};
+  async function newSession(){
+    showConversation();
+    try{clearTimeout(agent.timer);const session=await invoke('agent_new_session',{projectId:agent.project});await bootstrap();await select(session.id);$('#agent-input').focus();}catch(error){notice(String(error));}
+  }
+  $('#agent-tool-toggle').onclick=()=>{closeModelMenu();$('#agent-tool-panel').hidden=!$('#agent-tool-panel').hidden;};
+  document.addEventListener('click',event=>{if(!event.target.closest('.agent-compose-area'))$('#agent-tool-panel').hidden=true;});
+  function closeAccountMenu(restoreFocus=false){
+    $('#agent-settings-menu').hidden=true;$('#agent-settings-toggle').setAttribute('aria-expanded','false');
+    if(restoreFocus)$('#agent-settings-toggle').focus();
+  }
+  function openAccountMenu(){
+    $('#agent-settings-menu').hidden=false;$('#agent-settings-toggle').setAttribute('aria-expanded','true');
+    $('#agent-menu-account').focus();
+  }
+  function showConversation(){$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
+  function openSettings(page){
+    closeAccountMenu();$('#agent-main').classList.add('hidden');
+    $('#keeper-account').classList.toggle('hidden',page!=='profile');
+    $('#keeper-settings').classList.toggle('hidden',page!=='security');
+    $(page==='profile'?'#account-page-title':'#settings-page-title').focus();
+  }
+  function updateAccount(login={}){
+    const name=login.loggedIn?(login.username || login.nickname || '已登录'):'未登录';
+    $('#agent-username').textContent=name;$('#agent-username').title=name;
+    $('#agent-avatar').textContent=login.loggedIn?Array.from(name).slice(0,2).join('').toUpperCase():'灵';
+    $('#agent-menu-logout').disabled=!login.loggedIn;
+    $('#agent-menu-logout').title=login.loggedIn?'退出当前账号':'当前未登录';
+  }
+  window.addEventListener('keeper-login-state',event=>updateAccount(event.detail));
+  invoke('get_login_status').then(updateAccount).catch(()=>updateAccount());
+  $('#agent-account').onclick=()=>openSettings('profile');
+  $('#agent-settings-toggle').onclick=()=>{if($('#agent-settings-menu').hidden)openAccountMenu();else closeAccountMenu(true);};
+  $('#agent-settings-toggle').oncontextmenu=event=>{event.preventDefault();openAccountMenu();};
+  $('#agent-menu-account').onclick=()=>openSettings('profile');
+  $('#agent-menu-settings').onclick=()=>openSettings('security');
+  $('#service-close-btn').addEventListener('click',()=>closeAccountMenu());
+  $('#agent-menu-logout').onclick=async()=>{closeAccountMenu();await onLogoutClick();$('#agent-settings-toggle').focus();};
+  $('#agent-settings-menu').onkeydown=event=>{
+    const items=Array.from($('#agent-settings-menu').querySelectorAll('button:not(:disabled)'));const index=items.indexOf(document.activeElement);
+    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();closeAccountMenu(true);}
+    else if(event.key==='Tab')closeAccountMenu();
+    else if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){
+      event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length;items[next]?.focus();
+    }
+  };
+  document.addEventListener('click',event=>{if(!event.target.closest('.agent-sidebar-foot'))closeAccountMenu();});
+  $('#agent-settings-toggle').onkeydown=event=>{if(event.key==='ArrowDown'){event.preventDefault();openAccountMenu();}};
+  $('#settings-back').onclick=()=>{showConversation();$('#agent-account').focus();bootstrap().catch(error=>notice(String(error)));};
+  $('#account-back').onclick=$('#settings-back').onclick;
+  document.addEventListener('keydown',event=>{if(!event.defaultPrevented && event.key==='Escape'){$('#agent-tool-panel').hidden=true;if(!document.querySelector('.modal:not(.hidden),.dialog:not(.hidden)')){showConversation();}}});
+  // Move existing controls; their original handlers and state remain intact.
+  const account=$('.account-actions');if(account)$('#settings-account-actions').append(account);
+  $('#account-update-actions').append($('#app-update-btn'));
+  // Keep the existing proxy updater bound, without showing its status row.
+  $('#proxy-indicator').hidden=true;
+  const rootNav=element('button','navlink');rootNav.id='nav-root-certificate';rootNav.type='button';
+  const rootIcon=document.createElementNS('http://www.w3.org/2000/svg','svg');rootIcon.setAttribute('viewBox','0 0 24 24');rootIcon.setAttribute('class','agent-menu-icon');rootIcon.setAttribute('fill','none');rootIcon.setAttribute('stroke','currentColor');rootIcon.setAttribute('stroke-width','1.7');rootIcon.setAttribute('aria-hidden','true');
+  const shield=document.createElementNS('http://www.w3.org/2000/svg','path');shield.setAttribute('d','M12 3 3 7v5c0 5 9 9 9 9s9-4 9-9V7ZM8 12l3 3 5-6');rootIcon.append(shield);rootNav.append(rootIcon,document.createTextNode('根证书'));$('.topnav').append(rootNav);
+  const rootPanel=element('section','settings-root-panel hidden');rootPanel.setAttribute('aria-label','根证书');
+  rootPanel.append(element('h2','','根证书'),element('p','','将苍灵根证书安装到当前电脑的系统信任库。安装时需要系统管理员授权。'));
+  const rootStatus=element('p');rootStatus.id='settings-root-status';rootStatus.setAttribute('role','status');rootStatus.textContent='正在读取证书状态…';
+  rootPanel.append(rootStatus,$('#install-root-cert-btn'));$('#maintenance-app').append(rootPanel);
+  rootNav.onclick=()=>{
+    $('#maintenance-app').classList.add('root-certificate-view');rootPanel.classList.remove('hidden');
+    for(const button of document.querySelectorAll('.topnav .navlink'))button.classList.toggle('active',button===rootNav);
+    loadRootCertificateStatus();
+  };
+  for(const button of document.querySelectorAll('.topnav .navlink'))if(button!==rootNav)button.addEventListener('click',()=>{$('#maintenance-app').classList.remove('root-certificate-view');rootPanel.classList.add('hidden');rootNav.classList.remove('active');});
+  bootstrap().then(async()=>{
+    const saved=localStorage.getItem('keeper-agent-session');
+    const selected=agent.sessions.find(s=>s.id===saved && s.projectId===agent.project)?.id || agent.sessions.find(s=>s.projectId===agent.project)?.id;
+    if(selected)await select(selected);
+  }).catch(error=>notice(String(error)));
+})();

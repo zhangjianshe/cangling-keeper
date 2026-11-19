@@ -229,8 +229,8 @@ mod integration_tests {
     async fn named_keys_round_trip_and_offline_rename_wins_without_duplicate_keys() {
         let catalog: Catalog = Arc::new(Mutex::new(Vec::new()));
         let router = Router::new()
-            .route("/api/v1/certificate/list", get(list))
-            .route("/api/v1/certificate/save", post(save))
+            .route("/api/v1/keeper/certificate/list", get(list))
+            .route("/api/v1/keeper/certificate/save", post(save))
             .with_state(catalog.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());

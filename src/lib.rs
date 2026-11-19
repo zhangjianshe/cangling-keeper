@@ -1,29 +1,31 @@
-mod drive_sync;
+mod agent;
+mod model;
 mod app_update;
-mod root_certificate;
 mod auth;
-mod logging;
 mod certificate;
 mod certificate_sync;
 mod desktop_shortcut;
+mod drive_sync;
 mod fingerprints;
+mod git_lock;
 mod host;
 mod host_actions;
 mod host_cmd;
-mod sync_process;
 mod host_sync;
+mod logging;
 mod platform_dirs;
 mod proxy;
 mod repo;
 mod repo_activity;
-mod git_lock;
+mod root_certificate;
 mod single_instance;
 mod ssh;
 mod store;
 mod sync;
+mod sync_process;
 mod tunnel;
-mod websocket_tunnel;
 mod web;
+mod websocket_tunnel;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -40,6 +42,7 @@ use uuid::Uuid;
 
 pub(crate) struct AppState {
     pub(crate) store: Mutex<Store>,
+    pub(crate) model_cancellations: Mutex<HashMap<String,tokio::sync::oneshot::Sender<()>>>,
     active_tunnels: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     tunnel_diagnostics: Mutex<HashMap<String, tunnel::TunnelDiagnostic>>,
     active_terminals: Mutex<HashMap<String, TerminalHandle>>,
@@ -85,6 +88,7 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
     let keys_dir = data_dir.join("keys");
     std::fs::create_dir_all(&keys_dir)?;
     let store = Store::load(data_dir.join("data.sql"))?;
+    agent::initialize(&store).map_err(err_box)?;
     if store.list_certificates().map_err(err_box)?.is_empty() {
         let cert = create_certificate(&keys_dir, &local_hostname()).map_err(err_box)?;
         store.add_certificate(&cert).map_err(err_box)?;
@@ -92,6 +96,7 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
     let proxy_settings = store.get_proxy_settings().unwrap_or_default();
     Ok(AppState {
         store: Mutex::new(store),
+        model_cancellations: Mutex::new(HashMap::new()),
         active_tunnels: Mutex::new(HashMap::new()),
         tunnel_diagnostics: Mutex::new(HashMap::new()),
         active_terminals: Mutex::new(HashMap::new()),
@@ -107,7 +112,9 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
 /// Start the browser-based service.
 pub fn run_web_from_args() -> Result<(), String> {
     // Update probes and the replacement helper must run alongside the live server.
-    if let Some(result) = app_update::helper_mode() { return result; }
+    if let Some(result) = app_update::helper_mode() {
+        return result;
+    }
     match desktop_shortcut::ensure_exists() {
         Ok(Some(path)) => println!("已创建桌面快捷方式：{}", path.display()),
         Ok(None) => {}
@@ -428,11 +435,18 @@ fn open_local_path(path: String) -> Result<(), String> {
 
 #[cfg(target_os = "windows")]
 fn open_directory(path: &Path) -> Result<(), String> {
-    use std::os::windows::ffi::OsStrExt;
     use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
     #[link(name = "shell32")]
     unsafe extern "system" {
-        fn ShellExecuteW(window: *mut c_void, operation: *const u16, file: *const u16, parameters: *const u16, directory: *const u16, show: i32) -> *mut c_void;
+        fn ShellExecuteW(
+            window: *mut c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show: i32,
+        ) -> *mut c_void;
     }
     let operation: Vec<u16> = "open".encode_utf16().chain(Some(0)).collect();
     let path: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
@@ -445,18 +459,39 @@ fn open_directory(path: &Path) -> Result<(), String> {
     // for Shell extensions, including Explorer folder activation on Windows 7.
     std::thread::spawn(move || {
         let initialized = unsafe { CoInitializeEx(std::ptr::null_mut(), 2 | 4) };
-        if initialized < 0 { return Err(format!("无法初始化 Windows Shell（HRESULT {initialized:#x}）")); }
-        let result = unsafe { ShellExecuteW(std::ptr::null_mut(),operation.as_ptr(),path.as_ptr(),std::ptr::null(),std::ptr::null(),1) } as isize;
-        unsafe { CoUninitialize(); }
-        if result<=32 { return Err(format!("Windows 无法打开目录（Shell 错误码 {result}）")); }
+        if initialized < 0 {
+            return Err(format!(
+                "无法初始化 Windows Shell（HRESULT {initialized:#x}）"
+            ));
+        }
+        let result = unsafe {
+            ShellExecuteW(
+                std::ptr::null_mut(),
+                operation.as_ptr(),
+                path.as_ptr(),
+                std::ptr::null(),
+                std::ptr::null(),
+                1,
+            )
+        } as isize;
+        unsafe {
+            CoUninitialize();
+        }
+        if result <= 32 {
+            return Err(format!("Windows 无法打开目录（Shell 错误码 {result}）"));
+        }
         Ok(())
-    }).join().map_err(|_| "Windows 目录打开线程异常".to_string())?
+    })
+    .join()
+    .map_err(|_| "Windows 目录打开线程异常".to_string())?
 }
 
 #[cfg(not(target_os = "windows"))]
 fn open_directory(path: &Path) -> Result<(), String> {
     let status = open_path_with_command(path)?;
-    if !status.success() { return Err("文件管理器未能打开该目录".into()); }
+    if !status.success() {
+        return Err("文件管理器未能打开该目录".into());
+    }
     Ok(())
 }
 
@@ -1067,7 +1102,10 @@ async fn use_existing_proxy(
     Ok(status)
 }
 
-async fn check_proxy(app: LegacyEventSink, state: State<'_, AppState>) -> Result<ProxyStatus, String> {
+async fn check_proxy(
+    app: LegacyEventSink,
+    state: State<'_, AppState>,
+) -> Result<ProxyStatus, String> {
     let (mode, host, port, enabled) = {
         let runtime = state.proxy.lock().map_err(|e| e.to_string())?;
         (
@@ -1160,48 +1198,41 @@ async fn inject_proxy(
     };
 
     let remote_port = host.inject_remote_port_or_default();
-    let established = match ssh::establish_inject(
-        &host,
-        &auth,
-        &local_host,
-        local_port,
-        remote_port,
-    )
-    .await
-    {
-        Ok(established) => established,
-        Err(inject_error) => {
-            // The configured port can be owned by a previous app instance or
-            // another SSH tunnel. Verify the real remote endpoint before
-            // reporting that no proxy is injected.
-            if fetch_latest_version(&state, &host_id, remote_port)
-                .await
-                .is_ok()
-            {
-                let info = ProxyInjection {
-                    host_id: host_id.clone(),
-                    active: true,
-                    remote_port,
-                    local_endpoint: "远端现有代理".into(),
-                };
-                state
-                    .injected_proxies
-                    .lock()
-                    .map_err(|e| e.to_string())?
-                    .insert(
-                        host_id,
-                        InjectedHandle {
-                            stop_tx: None,
-                            remote_port,
-                            local_endpoint: info.local_endpoint.clone(),
-                        },
-                    );
-                let _ = app.emit("proxy-injection", &info);
-                return Ok(info);
+    let established =
+        match ssh::establish_inject(&host, &auth, &local_host, local_port, remote_port).await {
+            Ok(established) => established,
+            Err(inject_error) => {
+                // The configured port can be owned by a previous app instance or
+                // another SSH tunnel. Verify the real remote endpoint before
+                // reporting that no proxy is injected.
+                if fetch_latest_version(&state, &host_id, remote_port)
+                    .await
+                    .is_ok()
+                {
+                    let info = ProxyInjection {
+                        host_id: host_id.clone(),
+                        active: true,
+                        remote_port,
+                        local_endpoint: "远端现有代理".into(),
+                    };
+                    state
+                        .injected_proxies
+                        .lock()
+                        .map_err(|e| e.to_string())?
+                        .insert(
+                            host_id,
+                            InjectedHandle {
+                                stop_tx: None,
+                                remote_port,
+                                local_endpoint: info.local_endpoint.clone(),
+                            },
+                        );
+                    let _ = app.emit("proxy-injection", &info);
+                    return Ok(info);
+                }
+                return Err(inject_error);
             }
-            return Err(inject_error);
-        }
-    };
+        };
 
     let (tx, rx) = tokio::sync::oneshot::channel::<()>();
     {
@@ -1323,10 +1354,7 @@ async fn ssh_run_apply_progress(
     .await
 }
 
-async fn run_probe(
-    state: &AppState,
-    host_id: &str,
-) -> Result<host_actions::UpdateProbe, String> {
+async fn run_probe(state: &AppState, host_id: &str) -> Result<host_actions::UpdateProbe, String> {
     let out = ssh_run(state, host_id, host_actions::wrap_probe_command()).await?;
     if out.exit_status != 0 {
         return Err(format!(
@@ -1929,7 +1957,9 @@ async fn sync_now(state: &AppState) -> Result<(), String> {
             .collect()
     };
     let mut push_errors = Vec::new();
-    if let Err(error) = certificate_result { push_errors.push(format!("证书同步：{error}")); }
+    if let Err(error) = certificate_result {
+        push_errors.push(format!("证书同步：{error}"));
+    }
     for local in to_push {
         let sync_host = {
             let store = state.store.lock().map_err(|e| e.to_string())?;
@@ -2010,46 +2040,70 @@ async fn delete_remote_host(state: &AppState, remote_id: &str) -> Result<(), Str
     sync::delete_remote(&url, &token, remote_id).await
 }
 
-fn tunnel_dirty_key(id: &str) -> String { format!("tunnel_pending_upload:{id}") }
+fn tunnel_dirty_key(id: &str) -> String {
+    format!("tunnel_pending_upload:{id}")
+}
 
 fn tunnel_config_matches(a: &sync::SyncTunnel, b: &sync::SyncTunnel) -> bool {
-    let kind = |s: &str| if s.is_empty() { "ssh".to_owned() } else { s.to_owned() };
-    a.name==b.name && kind(&a.tunnel_type)==kind(&b.tunnel_type) && a.websocket_url==b.websocket_url
-        && a.direction==b.direction && a.local_host==b.local_host && a.local_port==b.local_port
-        && a.remote_host==b.remote_host && a.remote_port==b.remote_port
-        && a.ssh_host==b.ssh_host && a.ssh_port==b.ssh_port && a.username==b.username
-        && a.auth_method==b.auth_method
+    let kind = |s: &str| {
+        if s.is_empty() {
+            "ssh".to_owned()
+        } else {
+            s.to_owned()
+        }
+    };
+    a.name == b.name
+        && kind(&a.tunnel_type) == kind(&b.tunnel_type)
+        && a.websocket_url == b.websocket_url
+        && a.direction == b.direction
+        && a.local_host == b.local_host
+        && a.local_port == b.local_port
+        && a.remote_host == b.remote_host
+        && a.remote_port == b.remote_port
+        && a.ssh_host == b.ssh_host
+        && a.ssh_port == b.ssh_port
+        && a.username == b.username
+        && a.auth_method == b.auth_method
 }
 
 async fn upload_tunnel_to_server(state: &AppState, id: &str) -> Result<(), String> {
     let (url, token, mut snapshot, payload) = {
         let store = state.store.lock().map_err(|e| e.to_string())?;
-        let (url,token) = login_credentials(&store).ok_or("请先登录维护中心")?;
+        let (url, token) = login_credentials(&store).ok_or("请先登录维护中心")?;
         let tunnel = store.get_tunnel(id)?;
         tunnel.validate()?;
-        let payload = sync::tunnel_to_sync(&store,&state.data_dir,&tunnel)?;
-        store.set_setting(&tunnel_dirty_key(id),"1")?;
-        (url,token,tunnel,payload)
+        let payload = sync::tunnel_to_sync(&store, &state.data_dir, &tunnel)?;
+        store.set_setting(&tunnel_dirty_key(id), "1")?;
+        (url, token, tunnel, payload)
     };
-    let remote = sync::push_tunnel(&url,&token,&payload).await?;
-    if remote.id.is_empty() { return Err("服务器未返回隧道 ID，本地配置仍已保留".into()); }
+    let remote = sync::push_tunnel(&url, &token, &payload).await?;
+    if remote.id.is_empty() {
+        return Err("服务器未返回隧道 ID，本地配置仍已保留".into());
+    }
     // Preserve edits made while the network request was in flight. Only update
     // relationship IDs here; never write the stale snapshot over current data.
     {
-        let store=state.store.lock().map_err(|e|e.to_string())?;
-        let mut current=store.get_tunnel(id)?;
-        current.remote_id=remote.id.clone(); current.user_id=remote.user_id;
+        let store = state.store.lock().map_err(|e| e.to_string())?;
+        let mut current = store.get_tunnel(id)?;
+        current.remote_id = remote.id.clone();
+        current.user_id = remote.user_id;
         store.update_tunnel(&current)?;
     }
-    let persisted=sync::pull_tunnels(&url,&token).await?.into_iter().find(|t|t.id==remote.id)
+    let persisted = sync::pull_tunnels(&url, &token)
+        .await?
+        .into_iter()
+        .find(|t| t.id == remote.id)
         .ok_or("服务器未返回刚保存的隧道，本地修改仍受保护，请稍后重试上传")?;
-    if !tunnel_config_matches(&payload,&persisted) {
+    if !tunnel_config_matches(&payload, &persisted) {
         return Err("服务器没有完整保存隧道配置（可能尚不支持 WebSocket 字段），请更新维护中心后重试。本地配置已保留，普通同步不会覆盖。".into());
     }
-    snapshot.remote_id=remote.id; snapshot.user_id=remote.user_id;
-    let store=state.store.lock().map_err(|e|e.to_string())?;
-    let current=store.get_tunnel(id)?;
-    if serde_json::to_value(&current).map_err(|e|e.to_string())? != serde_json::to_value(&snapshot).map_err(|e|e.to_string())? {
+    snapshot.remote_id = remote.id;
+    snapshot.user_id = remote.user_id;
+    let store = state.store.lock().map_err(|e| e.to_string())?;
+    let current = store.get_tunnel(id)?;
+    if serde_json::to_value(&current).map_err(|e| e.to_string())?
+        != serde_json::to_value(&snapshot).map_err(|e| e.to_string())?
+    {
         return Err("上传期间本地配置再次修改；已保留新修改，请再次点击上传同步".into());
     }
     store.delete_setting(&tunnel_dirty_key(id))?;
@@ -2140,32 +2194,42 @@ async fn sync_public_hosts(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 /// Record fatal startup errors in the initialized application log.
-pub fn log_error(message: &str) { logging::error(message); }
+pub fn log_error(message: &str) {
+    logging::error(message);
+}
 
 #[cfg(test)]
 mod tunnel_sync_regression {
     use super::*;
-    use axum::{routing::get, Json, Router};
+    use axum::{Json, Router, routing::get};
     use serde_json::json;
 
     #[tokio::test]
     async fn account_sync_does_not_replace_local_wss_with_old_ssh_settings() {
         let app = Router::new()
-            .route("/api/v1/host/list", get(|| async { Json(json!({"code":200,"success":true,"data":{"hosts":[]}})) }))
-            .route("/api/v1/tunnel/list", get(|| async { Json(json!({"code":200,"success":true,"data":{"tunnels":[{
+            .route("/api/v1/keeper/host/list", get(|| async { Json(json!({"code":200,"success":true,"data":{"hosts":[]}})) }))
+            .route("/api/v1/keeper/tunnel/list", get(|| async { Json(json!({"code":200,"success":true,"data":{"tunnels":[{
                 "id":"old-ssh-id","name":"hn-master","direction":"local","localHost":"10.141.8.61","localPort":22,
                 "remoteHost":"192.168.3.215","remotePort":12345,"sshHost":"192.168.3.215","sshPort":22,"username":"root","authMethod":"password"
             }]}})) }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
         let directory = std::env::temp_dir().join(format!("keeper-wss-sync-{}", Uuid::new_v4()));
         let state = create_app_state(directory.clone()).unwrap();
-        let mut local = tunnel::parse_ssh_command("ssh -L 12345:localhost:22 root@example.test").unwrap();
-        local.id = "local-wss-id".into(); local.name = "hn-master".into(); local.remote_id = "old-ssh-id".into();
-        local.tunnel_type = "websocket".into(); local.websocket_url = "wss://example.test:7443/update/api/tunnel/ws".into();
+        let mut local =
+            tunnel::parse_ssh_command("ssh -L 12345:localhost:22 root@example.test").unwrap();
+        local.id = "local-wss-id".into();
+        local.name = "hn-master".into();
+        local.remote_id = "old-ssh-id".into();
+        local.tunnel_type = "websocket".into();
+        local.websocket_url = "wss://example.test:7443/update/api/tunnel/ws".into();
         state.store.lock().unwrap().add_tunnel(&local).unwrap();
-        pull_sync(&state, &format!("http://{address}"), "test-token").await.unwrap();
+        pull_sync(&state, &format!("http://{address}"), "test-token")
+            .await
+            .unwrap();
         let store = state.store.lock().unwrap();
         let saved = store.get_tunnel(&local.id).unwrap();
         assert_eq!(saved.tunnel_type, "websocket");
@@ -2173,7 +2237,10 @@ mod tunnel_sync_regression {
         assert_eq!(saved.local_host, "127.0.0.1");
         assert_eq!(saved.local_port, 12345);
         assert_eq!(store.list_tunnels().unwrap().len(), 1);
-        drop(store); drop(state); server.abort(); std::fs::remove_dir_all(directory).unwrap();
+        drop(store);
+        drop(state);
+        server.abort();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 }
 

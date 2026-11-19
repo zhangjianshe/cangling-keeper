@@ -1102,6 +1102,7 @@ async function onCanglingUpdateClick() {
 
 // ---- local operating-system root certificate --------------------------------
 function renderRootCertificateStatus(info) {
+  const status=document.getElementById('settings-root-status');if(status)status.textContent=info.message+' · SHA-256：'+info.fingerprint;
   installRootCertBtnEl.textContent = info.installed ? "根证书已安装" : "安装根证书";
   installRootCertBtnEl.disabled = info.installed || !info.supported;
   installRootCertBtnEl.title = `${info.message}\nSHA-256：${info.fingerprint}`;
@@ -1147,6 +1148,11 @@ async function installRootCertificate() {
 
 function renderAppUpdate() {
   const s = state.appUpdate;
+  const current=document.getElementById('account-current-version');
+  const status=document.getElementById('account-update-status');
+  if(current && s?.current)current.textContent=s.current;
+  if(status){status.textContent=!s?'尚未检查更新':s.error?'检查失败：'+s.error:s.updateAvailable?'发现新版本 '+s.latest:'已是最新版本';status.classList.toggle('update-available',!!s?.updateAvailable);}
+
   if (!s) {
     appUpdateBtnEl.textContent = "检查更新";
     appUpdateBtnEl.className = "btn app-update-btn";
@@ -1175,6 +1181,7 @@ function renderAppUpdate() {
 }
 
 async function checkAppUpdate() {
+  const status=document.getElementById('account-update-status');if(status)status.textContent='正在检查更新…';
   appUpdateBtnEl.disabled = true;
   appUpdateBtnEl.textContent = "检查中…";
   appUpdateBtnEl.classList.remove("hidden");
@@ -1213,6 +1220,7 @@ function applyAppUpdateProgress(p) {
     text = `下载中 ${formatBytes(received)}`;
     title = size || "正在下载更新";
   }
+  const status=document.getElementById('account-update-status');if(status)status.textContent=text;
   appUpdateBtnEl.disabled = true;
   appUpdateBtnEl.textContent = text;
   appUpdateBtnEl.title = title;
@@ -1276,7 +1284,11 @@ function renderLoginStatus() {
     loginBtnEl.title = "登录到维护中心服务器";
     loginBtnEl.classList.remove("logged-in");
   }
+  const serverInput=document.getElementById('account-server-url');if(serverInput && document.activeElement!==serverInput)serverInput.value=s.serverUrl || '';
   updateSyncBtn();
+  window.dispatchEvent(new CustomEvent("keeper-login-state", { detail: {
+    loggedIn: !!s.loggedIn, username: s.username || "", nickname: s.nickname || "",
+  }}));
 }
 
 function updateSyncBtn() {
@@ -1287,7 +1299,8 @@ function updateSyncBtn() {
 function openLoginModal() {
   const s = state.login || {};
   const f = loginFormEl.elements;
-  f.server_url.value = s.serverUrl || "https://soft.cangling.cn:22002";
+  f.server_url.value = s.serverUrl || "";
+  f.code.value="";f.captcha_uuid.value="";document.getElementById("login-captcha-image").hidden=true;
   f.username.value = s.username || "";
   f.password.value = "";
   loginStatusEl.textContent = "";
@@ -1379,7 +1392,7 @@ loginFormEl.addEventListener("submit", async (e) => {
   loginStatusEl.textContent = "登录中…";
   loginStatusEl.classList.remove("hidden");
   try {
-    state.login = await invoke("login", { serverUrl, username, password });
+    state.login = await invoke("login", { serverUrl, username, password,code:f.code.value.trim(),uuid:f.captcha_uuid.value });
     renderLoginStatus();
     logoutBtnEl.classList.remove("hidden");
     loginStatusEl.textContent = "登录成功";
@@ -2129,7 +2142,7 @@ function renderRepoStatus() {
   const setName = s.setName || state.selectedSetName || "软件仓库";
   const kind = (set && set.kind) || s.kind || "manifest";
   repoSetTitleEl.textContent = setName;
-  repoCloneUpdateBtnEl.textContent = state.repoSyncing ? "同步中…" : state.repoRefreshing ? "刷新中…" : "同步";
+  repoCloneUpdateBtnEl.textContent = state.repoSyncing ? "拉取中…" : state.repoRefreshing ? "刷新中…" : "拉取资源";
   repoCloneUpdateBtnEl.disabled = state.repoSyncing || state.repoRefreshing || !setName;
   repoPathEl.textContent = s.localPath || "同步后自动填充";
   repoPathEl.title = s.localPath || "";
@@ -4050,3 +4063,19 @@ async function syncCertificates() {
   } finally { button.disabled = false; }
 }
 $("#sync-cert-btn").addEventListener("click", syncCertificates);
+
+// Read the running version independently, so failed network checks retain it.
+fetch('/api/health').then(response=>response.json()).then(health=>{
+  const current=document.getElementById('account-current-version');if(current && health.version)current.textContent='v'+health.version.replace(/^v/,'');
+}).catch(()=>{const current=document.getElementById('account-current-version');if(current && current.textContent==='读取中…')current.textContent='无法读取';});
+
+document.getElementById('account-server-form').addEventListener('submit',async event=>{
+  event.preventDefault();const status=document.getElementById('account-server-status');
+  const url=document.getElementById('account-server-url').value.trim();
+  if(state.login?.loggedIn && url.replace(/\/$/,'')!==state.login.serverUrl.replace(/\/$/,'') && !await uiConfirm('更换服务器后将退出当前账号，需要重新登录。继续吗？','更换 CIS Server'))return;
+  try{state.login=await invoke('set_login_server',{serverUrl:url});renderLoginStatus();status.textContent='服务器地址已保存'+(state.login.loggedIn?'':'，请登录该服务器。');}catch(error){status.textContent=String(error);}
+});
+document.getElementById('login-captcha-refresh').addEventListener('click',async()=>{
+  try{const data=await invoke('login_captcha',{serverUrl:loginFormEl.elements.server_url.value.trim()});loginFormEl.elements.captcha_uuid.value=data.uuid;const image=document.getElementById('login-captcha-image');image.src='data:image/jpeg;base64,'+data.image;image.hidden=false;}
+  catch(error){loginStatusEl.textContent=String(error);loginStatusEl.classList.remove('hidden');}
+});
