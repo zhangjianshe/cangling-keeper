@@ -1787,7 +1787,8 @@ fn read_login_status(store: &Store) -> LoginStatus {
             .get_setting(sync::SETTING_SERVER_URL)
             .ok()
             .flatten()
-            .unwrap_or_default(),
+            .filter(|url| !url.trim().is_empty())
+            .unwrap_or_else(|| sync::DEFAULT_SERVER_URL.to_owned()),
         user_id: store
             .get_setting(sync::SETTING_USER_ID)
             .ok()

@@ -9,6 +9,8 @@ use crate::store::Store;
 use crate::tunnel::Tunnel;
 use uuid::Uuid;
 
+pub const DEFAULT_SERVER_URL: &str = "https://train.cangling.cn/ib/";
+
 pub const SETTING_SERVER_URL: &str = "server_url";
 pub const SETTING_TOKEN: &str = "login_token";
 pub const SETTING_NICKNAME: &str = "login_nickname";

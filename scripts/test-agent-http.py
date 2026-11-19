@@ -39,6 +39,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-agent-http-') as folder:
         return value.get('result') if code==200 else value
     try:
         start()
+        assert call('get_login_status')['serverUrl']=='https://train.cangling.cn/ib/'
         saved=call('set_login_server',{'serverUrl':'http://127.0.0.1:8080/ib/'})
         assert saved['serverUrl']=='http://127.0.0.1:8080/ib' and not saved['loggedIn']
         call('set_login_server',{'serverUrl':'http://name:password@localhost'},expected=400)
