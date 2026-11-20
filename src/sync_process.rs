@@ -14,7 +14,7 @@ pub(crate) fn spawn(cmd: &mut Command) -> io::Result<(Child, ProcessTree)> {
 pub(crate) fn shutdown() {}
 
 #[cfg(windows)]
-pub(crate) use windows::{shutdown, spawn};
+pub(crate) use windows::{ProcessTree, shutdown, spawn};
 
 #[cfg(windows)]
 mod windows {
