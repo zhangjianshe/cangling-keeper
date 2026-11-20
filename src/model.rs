@@ -98,7 +98,7 @@ pub(super) fn client()->Result<reqwest::Client,String>{
     reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).connect_timeout(std::time::Duration::from_secs(15)).timeout(std::time::Duration::from_secs(120)).build().map_err(|_|"无法创建模型连接".into())
 }
 pub(super) fn request_builder(url:&str,key:&str,provider:&str)->Result<reqwest::RequestBuilder,String>{let req=if provider=="cis-proxy"{crate::cis_models::proxy_client()?}else{client()?}.post(format!("{url}/chat/completions"));Ok(if provider=="cis-proxy"{req.header("API-TOKEN",key)}else{req.bearer_auth(key)})}
-fn credentials_for(store:&Store,id:Option<&str>)->Result<(String,String,String,String),String>{
+pub(crate) fn credentials_for(store:&Store,id:Option<&str>)->Result<(String,String,String,String),String>{
     let all=config(store)?;let id=id.unwrap_or_else(||all["activeServerId"].as_str().unwrap_or(""));
     let c=all["servers"].as_array().unwrap().iter().find(|v|v["id"]==id).ok_or("请先添加并选择 LLM Server")?;
     if c["source"]=="cis"{return crate::cis_models::proxy_credentials(store,id);}

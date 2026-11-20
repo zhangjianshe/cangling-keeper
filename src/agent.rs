@@ -534,7 +534,9 @@ pub(crate) async fn dispatch(
                 if metadata["source"]!="llm" || metadata["requestedModel"].as_str().unwrap_or("").is_empty(){return Err("该回复未记录原模型，无法重新生成。".into());}
                 let config=crate::model::config(&store)?;
                 let current=config["servers"].as_array().unwrap().iter().find(|s|s["id"]==server && s["enabled"]==true && s["hasApiKey"]==true).ok_or("原模型服务已停用或密钥不可用，请先在模型服务中恢复。")?;
-                if metadata.get("baseUrl").is_some_and(|v|v!=&current["baseUrl"]) || metadata.get("provider").is_some_and(|v|v!=&current["provider"]){return Err("原模型服务的地址或 API 类型已变更，请恢复原配置后重试。".into());}
+                let (url,model,_,provider)=crate::model::credentials_for(&store,Some(&server))?;
+                if provider=="cis-proxy" && (metadata["requestedModel"].as_str()!=Some(model.as_str()) || metadata["cisRevision"]!=current["revision"]){return Err("CIS 模型已变更，无法使用原模型重新生成。".into());}
+                if metadata.get("baseUrl").is_some_and(|v|v!=&json!(url)) || metadata.get("provider").is_some_and(|v|v!=&json!(provider)){return Err("原模型服务的地址或 API 类型已变更，请恢复原配置后重试。".into());}
 
                 let root=groups.iter().find(|g|g["versionIds"].as_array().unwrap().iter().any(|id|id==&json!(original))).ok_or("原回复不存在")?["rootId"].as_str().unwrap().to_owned();
                 store.conn.execute("INSERT INTO agent_reply_versions(session_id,root_id,selected_id) VALUES (?1,?2,?3) ON CONFLICT(session_id,root_id) DO UPDATE SET selected_id=excluded.selected_id",params![session,root,response_id]).map_err(|e|e.to_string())?;

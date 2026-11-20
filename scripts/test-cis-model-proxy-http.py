@@ -68,9 +68,14 @@ with tempfile.TemporaryDirectory(prefix='keeper-cis-model-') as folder:
   s=call('agent_new_session')['id'];call('agent_session_model',{'sessionId':s,'id':remote['id']});call('agent_send_message',{'sessionId':s,'content':'hello'});d=done(s);assert d['messages'][-1]['content']=='CIS reply',d['messages'][-1]
   assert seen[-1]['apiToken']=='alice-token' and seen[-1]['authorization'] is None and seen[-1]['body']['cis_model_revision']=='revision-1';assert 'local-private-fixture' not in json.dumps(seen)
   assert d['messages'][-1]['modelMetadata']['model']=='central-v1'
+  original=d['messages'][-1]['id'];before_regenerate=len(seen)
+  call('agent_regenerate',{'sessionId':s,'messageId':original});regenerated=done(s)
+  assert len(seen)==before_regenerate+1 and regenerated['messages'][-1]['content']=='CIS reply'
+  assert regenerated['messages'][-1]['modelMetadata']['regenerateOf']==original
   before=len(seen);models[0]['revision']='revision-changed'
   call('agent_send_message',{'sessionId':s,'content':'stale revision'});stale=done(s);assert len(seen)==before and '409' in json.dumps(stale,ensure_ascii=False)
   call('agent_cis_models_refresh');assert next(x for x in call('agent_model_config')['servers'] if x.get('source')=='cis')['revision']=='revision-changed'
+  call('agent_regenerate',{'sessionId':s,'messageId':original},expected=400);assert len(seen)==before
   long=call('agent_new_session')['id'];call('agent_session_model',{'sessionId':long,'id':remote['id']})
   with sqlite3.connect(str(Path(folder)/'data.sql')) as db:
    for i in range(50):db.execute('INSERT INTO agent_messages(id,session_id,role,content,created_at) VALUES (?,?,?,?,?)',(long+str(i),long,'user' if i%2==0 else 'assistant','old '+('x'*900),i))
