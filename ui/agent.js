@@ -367,14 +367,15 @@
           const label=entry.role==='error'?'模型调用失败':metadata.source==='local'?'苍灵智能 · 本地工具':metadata.model?(metadata.serverName?metadata.serverName+' · ':'')+metadata.model:'苍灵智能 · 模型未记录';
           const heading=element('span','agent-message-label agent-reply-model',label);
           if(metadata.requestedModel && metadata.requestedModel!==metadata.model)heading.title='请求模型：'+metadata.requestedModel+'；服务端返回模型：'+metadata.model;
-          message.append(heading);
+          const replyHeader=element('div','agent-reply-header');replyHeader.append(heading);
           if(metadata.context || metadata.usage){
             const c=metadata.context || {},u=metadata.usage || {},labels={compressing:'正在整理上下文…',compacted:'上下文已压缩',fallback:'摘要不可用，已裁剪旧上下文',stopped:'上下文压缩已停止',interrupted:'请求已中断',ready:'上下文就绪'};
             const parts=[labels[c.status] || ''];
             if(c.estimatedTokens)parts.push('输入保守估算 '+c.estimatedTokens.toLocaleString()+' / '+c.limit.toLocaleString()+' token');
             if(u.promptTokens!==undefined)parts.push('累计实际输入 '+u.promptTokens.toLocaleString()+' · 输出 '+u.completionTokens.toLocaleString()+' token（含压缩）');
-            const info=element('div','agent-context-info',parts.filter(Boolean).join(' · '));info.title='预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');message.append(info);
+            const info=element('div','agent-context-info',parts.filter(Boolean).join(' · '));info.title='预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');replyHeader.append(info);
           }
+          message.append(replyHeader);
           if(['stopped','interrupted'].includes(metadata.generationStatus))message.append(element('span','agent-generation-status',metadata.generationStatus==='stopped'?'已停止生成':'生成已中断'));
         }
         if(entry.role==='assistant'){

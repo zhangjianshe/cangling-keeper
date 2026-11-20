@@ -16,6 +16,7 @@ assert.match(document.querySelector('.agent-context-info').textContent,/正在�
 assert.match(document.querySelector('.agent-stream-status').textContent,/正在整理上下文/);
 listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',context:{status:'compacted',estimatedTokens:10000,limit:32768},usage:{promptTokens:321,completionTokens:45}}});
 assert.match(document.querySelector('.agent-context-info').textContent,/累计实际输入 321/);
+assert.equal(document.querySelector('.agent-context-info').parentElement,document.querySelector('.agent-reply-model').parentElement,'model and context share the reply header');
 context.renderConversation();
 assert.equal(document.querySelectorAll('.agent-model-tool').length,1,'only selected reply tool history is displayed');
 assert.equal(document.querySelector('.agent-model-tool').dataset.runId,'new-run');
