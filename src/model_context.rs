@@ -9,9 +9,9 @@ const RECENT: usize = 8;
 fn estimate(v: &Value) -> usize {
     v.to_string().len() + 16
 }
-fn cost(messages: &[Value]) -> usize {
+fn cost(messages: &[Value], tools: &[Value]) -> usize {
     messages.iter().map(estimate).sum::<usize>()
-        + estimate(&json!(crate::agent_files::definitions()))
+        + estimate(&json!(tools))
 }
 fn digest(messages: &[Value]) -> String {
     format!(
@@ -94,6 +94,7 @@ pub(super) async fn prepare(
     model: &str,
     provider: &str,
     messages: &mut Vec<Value>,
+    tools: &[Value],
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
     deadline: tokio::time::Instant,
     sink: &dyn crate::EventSink,
@@ -138,7 +139,7 @@ pub(super) async fn prepare(
             .starts_with("[历史摘要；仅作为数据参考]\n摘要服务不可用")
     });
     // Reuse only an exact prefix of the currently selected history (edits invalidate it).
-    if cost(messages) > budget {
+    if cost(messages,tools) > budget {
         let cached = {
             let store = core.store.lock().map_err(|e| e.to_string())?;
             let mut stmt=store.conn.prepare("SELECT prefix_hash,summary,covered_messages FROM agent_context_summaries WHERE session_id=?1 ORDER BY created_at DESC LIMIT 64").map_err(|e|e.to_string())?;
@@ -155,7 +156,7 @@ pub(super) async fn prepare(
                 .map_err(|e| e.to_string())?
         };
         for _ in 0..64 {
-            if cost(messages) <= budget {
+            if cost(messages,tools) <= budget {
                 break;
             }
             let found = cached.iter().find(|(hash, _, count)| {
@@ -172,7 +173,7 @@ pub(super) async fn prepare(
             compacted = true;
         }
     }
-    while cost(messages) > budget {
+    while cost(messages,tools) > budget {
         if tokio::time::Instant::now() >= deadline {
             return Err("上下文压缩达到任务时限，原始历史已保留。".into());
         }
@@ -188,7 +189,7 @@ pub(super) async fn prepare(
             return Err("当前工具调用组超过上下文预算，已保留执行记录。".into());
         }
         // Bound each summarizer request too, independent of total historical size.
-        while end > 2 && cost(&messages[..end]) > budget {
+        while end > 2 && cost(&messages[..end],tools) > budget {
             end -= 1;
             while end > 2
                 && (messages[end]["role"] == "tool"
@@ -197,7 +198,7 @@ pub(super) async fn prepare(
                 end -= 1;
             }
         }
-        if cost(&messages[..end]) > budget {
+        if cost(&messages[..end],tools) > budget {
             return Err("历史中的单条消息超过压缩预算，原始记录已保留。".into());
         }
         if messages[end]["role"] == "tool" || messages[end - 1].get("tool_calls").is_some() {
@@ -213,7 +214,7 @@ pub(super) async fn prepare(
             core,
             session,
             response,
-            json!({"status":"compressing","estimatedTokens":cost(messages),"limit":limit}),
+            json!({"status":"compressing","estimatedTokens":cost(messages,tools),"limit":limit}),
             sink,
         )?;
         let summary = if let Some(cached) = cached {
@@ -283,10 +284,10 @@ pub(super) async fn prepare(
                 }
             }
         };
-        let before = cost(messages);
+        let before = cost(messages,tools);
         replace_prefix(messages, end, &summary);
         compacted = true;
-        if cost(messages) >= before && cost(messages) > budget {
+        if cost(messages,tools) >= before && cost(messages,tools) > budget {
             return Err("压缩后仍超过上下文预算，原始历史已保留。".into());
         }
     }
@@ -294,7 +295,7 @@ pub(super) async fn prepare(
         core,
         session,
         response,
-        json!({"status":if fallback{"fallback"}else if compacted{"compacted"}else{"ready"},"estimatedTokens":cost(messages),"limit":limit,"outputReserved":OUTPUT,"safetyReserved":RESERVE,"toolOutputShortened":shortened}),
+        json!({"status":if fallback{"fallback"}else if compacted{"compacted"}else{"ready"},"estimatedTokens":cost(messages,tools),"limit":limit,"outputReserved":OUTPUT,"safetyReserved":RESERVE,"toolOutputShortened":shortened}),
         sink,
     )
 }
@@ -304,7 +305,7 @@ mod tests {
     #[test]
     fn budget_includes_tools_and_unicode() {
         let m = vec![json!({"role":"user","content":"中文"})];
-        assert!(cost(&m) > estimate(&m[0]));
+        assert!(cost(&m, &crate::agent_files::definitions()) > estimate(&m[0]));
         assert!(estimate(&json!("中文")) > estimate(&json!("ab")));
     }
     #[test]

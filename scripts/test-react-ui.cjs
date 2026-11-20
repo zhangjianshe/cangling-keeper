@@ -9,6 +9,8 @@ const run=(id,responseId)=>({id,responseId,tool:'read_file',arguments:{path:'REA
 Object.assign(context,{$:s=>document.querySelector(s),agent:{selected:'session',detail:{sessionId:'session',messages,replyGroups:[{rootId:'old',versionIds:['old','new'],selectedId:'new'}],runs:[run('old-run','old'),run('new-run','new')],modelPending:true,streamingMessageId:'new',tasks:[{responseId:'new',status:'tool',step:2}]}},titleFor:()=> '读取项目文件',statusNames:{succeeded:'已完成',running:'正在执行'},closeModelMenu(){},regenerateReply(){},chooseReplyVersion(){},notice(){}});
 context.window.keeperMarkdown={render:(node,text)=>{node.textContent=text;}};
 for(const [start,end] of [['  function element(', '  function notice('],['  function renderPending(', '  async function saveEditedMessage('],['  function visibleMessages(', '  function replyAnchor('],['  function renderConversation(', "  window.__KEEPER__.event.listen('agent-context-update'"],['  function updateAgentRun(',"  window.__KEEPER__.event.listen('agent-tool-update'"],['  async function reviewAgentTool(', '  async function runTool(']])vm.runInContext(source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start))),context);
+const compact=context.runCard({id:'manual',tool:'list_hosts',arguments:{},status:'succeeded',output:'[]'});
+assert.equal(compact.tagName,'DETAILS');assert.equal(compact.open,false,'manual tools default to compact view');assert.ok(compact.querySelector('.agent-run-icon'));assert.equal(compact.querySelector('.agent-run-details-toggle').textContent,'详情');compact.open=true;compact.ontoggle();assert.equal(compact.querySelector('.agent-run-details-toggle').textContent,'收起');assert.match(compact.textContent,/\[\]/);
 const listeners={};context.window.__KEEPER__={event:{listen:(name,fn)=>listeners[name]=fn}};
 vm.runInContext(source.slice(source.indexOf("  window.__KEEPER__.event.listen('agent-context-update'"),source.indexOf("  window.__KEEPER__.event.listen('agent-model-stream'")),context);
 listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',context:{status:'compressing',estimatedTokens:30000,limit:32768}}});
@@ -21,6 +23,8 @@ assert.equal(document.querySelector('.agent-reply-number').textContent,'1','sele
 context.agent.detail.messages.push({id:'q2',role:'user',content:'next',createdAt:4},{id:'a2',role:'assistant',content:'second',createdAt:5,modelMetadata:{source:'llm',model:'fixture'}});context.renderConversation();
 assert.deepEqual([...document.querySelectorAll('.agent-reply-number')].map(n=>n.textContent),['1','2']);context.agent.detail.messages.splice(-2);context.renderConversation();
 context.renderConversation();
+assert.equal(context.relativeMessageTime(1000,61000),'1分钟前');assert.equal(context.relativeMessageTime(1000,3601000),'1小时前');assert.equal(context.relativeMessageTime(1000,86401000),'1天前');
+assert.ok(document.querySelector('.agent-message.user .agent-message-time'));assert.equal(document.querySelector('.agent-message.user .agent-reply-actions').firstElementChild.className,'agent-message-time');
 assert.equal(document.querySelectorAll('.agent-model-tool').length,1,'only selected reply tool history is displayed');
 assert.equal(document.querySelector('.agent-model-tool').dataset.runId,'new-run');
 assert.match(document.querySelector('.agent-stream-status').textContent,/第 2 轮/);

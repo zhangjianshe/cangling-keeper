@@ -552,6 +552,16 @@ DeepSeek 回复使用 SSE 流，生成中的同一条助手消息会持续写入
 
 额外验证：`python3 scripts/test-agent-actions-http.py` 使用独立临时项目和本机模拟模型，检查执行前无副作用、审批绑定/防重放、差异写入、补丁、文件及父目录冲突、拒绝、停止、输出捕获、超时和重启；`--preview` 提供浏览器审批测试站点。`NODE_PATH=<jsdom 安装目录>/node_modules node scripts/test-react-ui.cjs` 验证差异和命令的安全文本展示及确认按钮。
 
+### MCP Server
+
+在“账户 → MCP 服务”添加服务，选择本机 stdio、Streamable HTTP 或旧版 HTTP + SSE。stdio 填写可执行文件及逐行启动参数；远程服务填写 URL 和逐行请求头（例如 `IJ_MCP_SERVER_PROJECT_PATH: /path/to/project`）。远程地址要求 HTTPS，本机回环地址允许 HTTP；不跟随重定向，旧版 SSE 返回的 endpoint 必须与配置地址同源。保存后点击“连接并发现工具”；发现的工具会显示在服务列表；首次默认启用最多 8 个工具，优先选择常见读取类名称，可在“选择工具”中调整，以控制模型上下文开销，工具定义计入上下文预算。配置按账户保存在本机 SQLite，不上传 CIS；请求头以明文存储，并会发送到所配置的 MCP 服务，不包含在模型请求和审批记录中。修改连接配置会清除已发现的工具并停用服务，需要重新连接。
+
+工具调用记录和执行参数显示在对话中，并可在刷新后恢复。请求批准和自动审批模式需要逐次确认 MCP 操作；完全访问模式自动批准。修改或停用服务会使等待审批的旧操作失效。停止时关闭 MCP 本机子进程（Unix 下同时终止进程组），或向远程服务发送取消通知；外部系统中已经发生的操作不会自动撤销，结果不明时需自行核实。
+
+当前支持文本工具结果；stdio 进程仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR。暂不支持自定义进程环境变量、图像结果或插件安装。每次发现或调用都会创建新的 MCP 会话，因此依赖跨调用会话状态的服务暂不可用。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
+
+验证：`cargo build --locked && python3 scripts/test-mcp-http.py && python3 scripts/test-mcp-remote-http.py`；测试使用临时 MCP 和本机模拟模型，不访问外部模型服务。
+
 ### 自动上下文压缩与用量
 
 每个 LLM Server 可设置上下文预算（默认 32768 token）。每次模型请求前统一估算系统提示词、工具定义、历史及工具结果，并预留 4096 回复 token 和 2048 安全余量。估算使用保守的 UTF-8 字节计数及结构开销，不是模型的精确 tokenizer 计数；预算不能大于服务端实际支持的窗口。

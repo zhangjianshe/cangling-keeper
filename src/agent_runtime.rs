@@ -209,6 +209,9 @@ pub(crate) async fn execute(
         "正在准备操作…",
         sink.as_ref(),
     )?;
+    if call.name.starts_with("mcp_") {
+        return execute_mcp(&core,session,response,&run,call,parsed,step,cancel,deadline,sink.as_ref()).await;
+    }
     let flag = Arc::new(AtomicBool::new(false));
     let mut prepared = None;
     if crate::agent_actions::is_action(&call.name) {
@@ -407,6 +410,29 @@ pub(crate) async fn execute(
         false,
         sink.as_ref(),
     )
+}
+async fn execute_mcp(core:&AppState,session:&str,response:&str,run:&str,call:&ToolCall,parsed:Result<Value,serde_json::Error>,step:usize,cancel:&mut tokio::sync::oneshot::Receiver<()>,deadline:&mut tokio::time::Instant,sink:&dyn EventSink)->Result<Option<Value>,String>{
+    let args=match parsed {Ok(v) if v.is_object() && v.to_string().len()<=16384=>v,_=>return finish_result(core,session,response,run,call,Err("MCP 参数必须是有效对象且不超过 16 KiB".into()),false,sink)};
+    let resolved={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::resolve(&store,&call.name).map(|(server,tool)|{let mode=store.conn.query_row("SELECT security_mode FROM agent_tasks WHERE response_id=?1",[response],|r|r.get::<_,String>(0)).unwrap_or_else(|_|"ask".into());(server,tool,mode)})};
+    let (server,tool,mode)=match resolved {Ok(v)=>v,Err(e)=>return finish_result(core,session,response,run,call,Err(e),false,sink)};
+    let automatic=mode=="full";
+    let review=json!({"kind":"mcp","server":server["name"],"tool":tool["name"],"command":server["command"],"transport":server["transport"],"launchArgs":if server["transport"]=="stdio"{server["args"].clone()}else{json!([])},"args":args,"securityMode":mode,"approvalSource":if automatic{"policy"}else{"user"},"approvalReason":if automatic{"用户为本会话启用了完全访问"}else{"MCP 工具可能访问本机或外部系统，需要确认"}}).to_string();
+    let hash=crate::agent_actions::hash(review.as_bytes());
+    {let store=core.store.lock().map_err(|e|e.to_string())?;let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;store.conn.execute("INSERT INTO agent_reviews(run_id,review,hash) VALUES (?1,?2,?3)",params![run,review,hash]).map_err(|e|e.to_string())?;store.conn.execute("UPDATE agent_runs SET status=?2 WHERE id=?1 AND status='running'",params![run,if automatic{"approved"}else{"pending_approval"}]).map_err(|e|e.to_string())?;tx.commit().map_err(|e|e.to_string())?;}
+    persist_run(core,session,response,run,if automatic{"approved"}else{"pending_approval"},if automatic{"已按会话安全策略自动批准"}else{"等待确认，尚未执行"},sink)?;
+    phase(core,session,response,if automatic{"tool"}else{"approval"},step,sink)?;let waiting=tokio::time::Instant::now();
+    loop {
+        tokio::select!{biased;_=&mut *cancel=>{persist_run(core,session,response,run,"stopped","已停止，MCP 工具未执行",sink)?;return Ok(None)},_ = tokio::time::sleep(std::time::Duration::from_millis(100))=>{}}
+        let state={let store=core.store.lock().map_err(|e|e.to_string())?;let state=store.conn.query_row("SELECT status FROM agent_runs WHERE id=?1",[run],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?;if state=="approved" {let changed=store.conn.execute("UPDATE agent_runs SET status='running' WHERE id=?1 AND status='approved' AND EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?2 AND message_id=?3 AND stop_requested=0)",params![run,session,response]).map_err(|e|e.to_string())?;if changed==1{"running".to_owned()}else{"stopped".to_owned()}}else{state}};
+        if state=="pending_approval" {continue;}if !automatic {*deadline+=waiting.elapsed();}
+        if state=="rejected"{let result=json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});persist_run(core,session,response,run,"rejected",&result.to_string(),sink)?;phase(core,session,response,"tool",step,sink)?;return Ok(Some(json!({"role":"tool","tool_call_id":call.id,"content":result.to_string()})));}
+        if state!="running"{persist_run(core,session,response,run,"stopped","操作已停止，未执行",sink)?;return Ok(None)}break;
+    }
+    let unchanged={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::resolve(&store,&call.name).is_ok_and(|current|current.0==server && current.1==tool)};
+    if !unchanged{return finish_result(core,session,response,run,call,Err("MCP 服务配置已变更，未执行。".into()),false,sink);}
+    phase(core,session,response,"tool",step,sink)?;persist_run(core,session,response,run,"running","已确认，正在调用 MCP 工具…",sink)?;
+    let result=tokio::select!{biased;_=&mut *cancel=>{persist_run(core,session,response,run,"stopped","已请求停止 MCP 工具；外部操作的结果需要核实。",sink)?;return Ok(None)},_ = tokio::time::sleep_until(*deadline)=>{persist_run(core,session,response,run,"failed","MCP 工具超过任务时限；外部操作的结果需要核实。",sink)?;return Err("Agent 已达到执行时限".into())},result=crate::agent_mcp::call(&server,&tool,&args)=>result};
+    finish_result(core,session,response,run,call,result,false,sink)
 }
 fn finish_result(
     core: &AppState,

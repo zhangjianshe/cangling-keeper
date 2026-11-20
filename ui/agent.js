@@ -6,6 +6,13 @@
   window.keeperThreadNav=window.createKeeperThreadNav?.();
   const statusNames = {running:'正在执行',pending_approval:'等待确认',succeeded:'已完成',failed:'执行失败',rejected:'已取消',interrupted:'执行中断',stopped:'已停止',approved:'已确认'};
   function element(tag, cls, text) { const node=document.createElement(tag); if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node; }
+  function relativeMessageTime(timestamp,now=Date.now()){
+    const seconds=Math.max(0,Math.floor((now-timestamp)/1000));
+    if(seconds<60)return '刚刚';
+    for(const [unit,label] of [[31536000,'年'],[2592000,'个月'],[86400,'天'],[3600,'小时'],[60,'分钟']])if(seconds>=unit)return Math.floor(seconds/unit)+label+'前';
+    return '刚刚';
+  }
+  function updateMessageTimes(){for(const node of document.querySelectorAll('.agent-message-time[data-time]')){const time=Number(node.dataset.time);if(Number.isFinite(time) && time>0)node.textContent=relativeMessageTime(time);}}
   function notice(message='') {$('#agent-notice').textContent=message;$('#agent-notice').hidden=!message;}
   function sessionStorageKey(){return 'keeper-agent-session:'+(agent.ownerKey || 'guest');}
   function titleFor(tool) {return ({list_directory:'列出项目目录',read_file:'读取项目文件',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
@@ -283,6 +290,18 @@
     const button=$('#deepseek-test');button.disabled=true;$('#deepseek-status').textContent='正在保存并测试连接…';
     try{const id=await saveLlm();if(!id)return;const result=await invoke('agent_model_test',{id});$('#deepseek-status').textContent='连接成功'+(result.models.length?' · '+result.models.join('、'):'');}catch(error){$('#deepseek-status').textContent=String(error);}finally{button.disabled=false;}
   };
+  let editingMcp=null;
+  function closeMcp(){$('#mcp-modal').classList.add('hidden');editingMcp=null;}
+  function updateMcpTransport(){const local=$('#mcp-transport').value==='stdio';$('#mcp-command-label').textContent=local?'启动命令':'服务地址';$('#mcp-args-label').textContent=local?'启动参数（每行一个）':'请求头（每行 名称: 值）';$('#mcp-command').placeholder=local?'例如 python3':'例如 http://127.0.0.1:64342/sse';$('#mcp-args').placeholder=local?'例如 /path/to/server.py':'例如 IJ_MCP_SERVER_PROJECT_PATH: /path/to/project';$('#mcp-hint').textContent=local?'连接时以当前用户权限运行命令，请只连接信任的服务。':'远程地址需要 HTTPS；本机允许 HTTP。请求头保存在本机，工具调用时会发送到此服务。';}
+  function openMcp(server=null){editingMcp=server;$('#mcp-title').textContent=server?'编辑 MCP Server':'添加 MCP Server';$('#mcp-name').value=server?.name || '';$('#mcp-transport').value=server?.transport || 'stdio';$('#mcp-command').value=server?.command || '';$('#mcp-args').value=(server?.args || []).join('\n');updateMcpTransport();$('#mcp-form-status').textContent='';$('#mcp-modal').classList.remove('hidden');$('#mcp-name').focus();}
+  function renderMcp(servers){const list=$('#mcp-list');list.replaceChildren();for(const server of servers){const row=element('div','llm-server-row'),info=element('div','llm-server-info');info.append(element('strong','',server.name),element('div','llm-server-meta',(server.enabled?'已启用':'未启用')+' · 已选 '+server.tools.filter((t,i)=>t.enabled ?? i<8).length+' / '+server.tools.length+' 个工具'),element('div','llm-server-url',server.command));const actions=element('div','llm-server-actions');
+    for(const [label,handler] of [['编辑',()=>openMcp(server)],['连接并发现工具',async()=>{if(!await uiConfirm((server.transport==='stdio'?'将以当前用户权限运行 MCP Server：':'将连接 MCP 服务并发送配置的请求头：')+server.command+'。请确认你信任该服务。','连接 MCP Server'))return;try{$('#mcp-status').textContent='正在连接…';renderMcp(await invoke('agent_mcp_refresh',{id:server.id}));$('#mcp-status').textContent='连接成功，工具已启用';}catch(error){$('#mcp-status').textContent=String(error);}}],...(server.enabled?[['停用',async()=>{try{const result=await invoke('agent_mcp_save',{...server,enabled:false});renderMcp(result.servers);}catch(error){$('#mcp-status').textContent=String(error);}}]]:[]),['删除',async()=>{if(!await uiConfirm('删除 MCP 服务“'+server.name+'”？','删除 MCP Server'))return;try{renderMcp(await invoke('agent_mcp_delete',{id:server.id}));}catch(error){$('#mcp-status').textContent=String(error);}}]]){const button=element('button','btn',label);button.type='button';button.onclick=handler;actions.append(button);}row.append(info,actions);const group=element('div','mcp-server-group');group.append(row);
+    if(server.tools.length){const chooser=element('details','mcp-tools');chooser.append(element('summary','','选择工具（已启用 '+server.tools.filter((t,i)=>t.enabled ?? i<8).length+' / '+server.tools.length+'）'));const grid=element('div','mcp-tools-list');for(const [i,tool] of server.tools.entries()){const label=element('label','mcp-tool-option'),check=element('input');check.type='checkbox';check.checked=tool.enabled ?? i<8;check.value=tool.name;label.append(check,element('span','',tool.name));grid.append(label);}const save=element('button','btn','保存工具选择');save.type='button';save.onclick=async()=>{save.disabled=true;try{renderMcp(await invoke('agent_mcp_tools',{id:server.id,tools:[...grid.querySelectorAll('input:checked')].map(input=>input.value)}));$('#mcp-status').textContent='工具选择已保存';}catch(error){$('#mcp-status').textContent=String(error);save.disabled=false;}};chooser.append(grid,save);group.append(chooser);}list.append(group);}if(!servers.length)list.append(element('p','llm-empty','尚未配置 MCP 服务。'));}
+  let mcpLoadSequence=0;
+  async function loadMcp(){const sequence=++mcpLoadSequence;try{const servers=await invoke('agent_mcp_list');if(sequence===mcpLoadSequence)renderMcp(servers);}catch(error){if(sequence===mcpLoadSequence)$('#mcp-status').textContent=String(error);}}
+  $('#mcp-transport').onchange=updateMcpTransport;$('#mcp-add').onclick=()=>openMcp();$('#mcp-close').onclick=closeMcp;$('#mcp-cancel').onclick=closeMcp;
+  $('#mcp-form').onsubmit=async event=>{event.preventDefault();try{const result=await invoke('agent_mcp_save',{id:editingMcp?.id || '',name:$('#mcp-name').value,transport:$('#mcp-transport').value,command:$('#mcp-command').value,args:$('#mcp-args').value.split('\n').filter(x=>x.trim()),enabled:editingMcp?.enabled || false});renderMcp(result.servers);closeMcp();$('#mcp-status').textContent='已保存；连接并发现工具后可供对话使用';}catch(error){$('#mcp-form-status').textContent=String(error);}};
+  window.addEventListener('keeper-login-state',()=>loadMcp());loadMcp();
   invoke('agent_model_config').then(renderModel).catch(error=>{$('#llm-list-status').textContent=String(error);});
   function renderTools(){
     const list=$('#agent-tools');list.replaceChildren();
@@ -327,7 +346,7 @@
     return messages.filter(m=>!alternatives.has(m.id)).map(m=>{
       const group=groups.find(g=>g.rootId===m.id);if(!group)return m;
       const chosen=messages.find(v=>v.id===group.selectedId);if(!chosen)return null;
-      return {...chosen,createdAt:m.createdAt,replyGroup:group};
+      return {...chosen,displayCreatedAt:chosen.createdAt,createdAt:m.createdAt,replyGroup:group};
     }).filter(Boolean);
   }
   function replyAnchor(rootId){
@@ -350,7 +369,7 @@
     window.keeperThreadNav?.begin({account:agent.ownerKey || 'guest',session:agent.selected});
     const follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<90;
     const draft=container.querySelector('.agent-run-form');
-    const toolOpen=new Map([...container.querySelectorAll('.agent-model-tool')].map(node=>[node.dataset.runId,node.open]));
+    const toolOpen=new Map([...container.querySelectorAll('.agent-compact-run')].map(node=>[node.dataset.runId,node.open]));
     const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata]),agent.detail.replyGroups,agent.detail.runs,agent.editing?.session===agent.selected?agent.editing.id:null]);
     if(!draft && container.dataset.signature===signature){
       for(const entry of agent.detail.messages){const body=container.querySelector('[data-message-id="'+entry.id+'"] .agent-message-body');if(body)window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');}
@@ -396,7 +415,7 @@
           regenerate.onclick=()=>regenerateReply(entry.id);
           const footer=element('div','agent-reply-actions');
           if(entry.role==='assistant')footer.append(regenerate);
-          else{const edit=element('button','agent-edit-message','✎ 编辑');edit.type='button';edit.disabled=!!agent.detail.modelPending;edit.onclick=()=>{agent.editing={session:agent.selected,id:entry.id,content:entry.content};renderConversation();$('#agent-messages .agent-message-edit textarea')?.focus();};footer.append(edit);}
+          else{const timestamp=Number(entry.displayCreatedAt ?? entry.createdAt);if(Number.isFinite(timestamp) && timestamp>0){const time=element('time','agent-message-time',relativeMessageTime(timestamp));time.dataset.time=String(timestamp);time.dateTime=new Date(timestamp).toISOString();time.title=new Date(timestamp).toLocaleString();footer.append(time);}const edit=element('button','agent-edit-message','✎ 编辑');edit.type='button';edit.disabled=!!agent.detail.modelPending;edit.onclick=()=>{agent.editing={session:agent.selected,id:entry.id,content:entry.content};renderConversation();$('#agent-messages .agent-message-edit textarea')?.focus();};footer.append(edit);}
           if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id)footer.hidden=true;
           const group=entry.replyGroup;
           if(group && group.versionIds.length>1){
@@ -413,7 +432,7 @@
           message.append(footer);
         }
         container.append(message);
-      }else container.append(runCard(entry));
+      }else container.append(runCard(entry,toolOpen));
     }
     renderPending(container);
     if(draft && draft.dataset.sessionId===(agent.selected || '')){container.append(draft);$('#agent-welcome').hidden=true;}
@@ -454,10 +473,17 @@
     try{await invoke('agent_review_tool',{sessionId:session,runId:run.id,reviewHash:run.review.hash,approved});if(agent.selected===session)await select(session);}
     catch(error){notice(String(error));}finally{agent.reviewing.delete(run.id);if(agent.selected===session)renderConversation();}
   }
+  setInterval(updateMessageTimes,30000);
   function runCard(run,openStates){
+    const card=element('details','agent-run agent-compact-run'+(run.responseId?' agent-model-tool':''));card.dataset.runId=run.id;card.open=openStates?.get(run.id) || false;
+    const header=element('summary','agent-run-summary');
+    const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('fill','none');icon.setAttribute('stroke','currentColor');icon.setAttribute('stroke-width','1.7');icon.setAttribute('stroke-linecap','round');icon.setAttribute('stroke-linejoin','round');icon.setAttribute('aria-hidden','true');icon.classList.add('agent-run-icon');
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',['run_command','ssh_execute'].includes(run.tool)?'m5 7 5 5-5 5m8 0h6':'M9 3h6l1 4 4 1v8l-4 1-1 4H9l-1-4-4-1V8l4-1Z');icon.append(path);
+    const title=run.review?.kind==='mcp'?'MCP · '+run.review.server+' · '+run.review.tool:titleFor(run.tool);
+    const toggle=element('span','agent-run-details-toggle',card.open?'收起':'详情');
+    header.append(icon,element('strong','agent-run-title',title),element('span','run-state',statusNames[run.status] || run.status),toggle);card.append(header);
+    card.ontoggle=()=>{toggle.textContent=card.open?'收起':'详情';};
     if(run.responseId){
-      const card=element('details','agent-run agent-model-tool');card.dataset.runId=run.id;card.open=run.status==='pending_approval' || (openStates?.has(run.id)?openStates.get(run.id):run.status==='running');
-      const header=element('summary');header.append(element('strong','',titleFor(run.tool)),element('span','run-state',statusNames[run.status] || run.status));card.append(header);
       if(run.review?.approvalReason)card.append(element('div','agent-approval-audit',(run.review.approvalSource==='policy'?'自动批准 · ':'需要确认 · ')+run.review.approvalReason));
       if(run.review?.kind==='file'){
         card.append(element('div','agent-review-path',(run.review.newFile?'新建文件：':'修改文件：')+run.review.path));
@@ -469,10 +495,11 @@
         card.append(element('div','agent-command-meta',run.review.shell+' · 超时 '+run.review.timeoutSeconds+' 秒'));
         card.append(element('pre','agent-command-preview',run.review.command));
         card.append(element('p','agent-command-scope',run.review.scope));
-      }else card.append(element('pre','agent-tool-arguments',JSON.stringify(run.arguments,null,2)));
+      }else if(run.review?.kind==='mcp'){card.append(element('div','agent-review-path','MCP 服务：'+run.review.server+' · 工具：'+run.review.tool),element('pre','agent-command-preview',JSON.stringify([run.review.command,...(run.review.launchArgs || [])],null,2)),element('pre','agent-tool-arguments',JSON.stringify(run.review.args,null,2)));}
+      else card.append(element('pre','agent-tool-arguments',JSON.stringify(run.arguments,null,2)));
       if(run.status==='pending_approval' && run.review?.hash){
         const actions=element('div','agent-review-actions');actions.dataset.reviewRun=run.id;
-        for(const [approved,label] of [[false,'拒绝'],[true,run.review.kind==='command'?'确认执行':'确认写入']]){
+        for(const [approved,label] of [[false,'拒绝'],[true,['command','mcp'].includes(run.review.kind)?'确认执行':'确认写入']]){
           const button=element('button',approved?'approve':'',label);button.type='button';button.disabled=!!agent.reviewing?.has(run.id) || !!agent.detail.stopRequested;
           button.onclick=()=>reviewAgentTool(run,approved);actions.append(button);
         }
@@ -481,8 +508,6 @@
       if(run.output)card.append(element('pre','agent-tool-output',run.output));
       return card;
     }
-    const card=element('article','agent-run');card.dataset.runId=run.id;
-    const head=element('header');head.append(element('strong','',titleFor(run.tool)),element('span','run-state',statusNames[run.status]||run.status));card.append(head);
     if(run.tool==='ssh_execute'){
       const target=run.arguments.target || {};
       card.append(element('pre','',`${target.username || ''}@${target.hostname || ''}:${target.port || 22}\n\n${run.arguments.command || ''}`));

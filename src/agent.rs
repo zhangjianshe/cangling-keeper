@@ -59,6 +59,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     store.conn.execute_batch("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus','interrupted','$.context.status','interrupted') WHERE id IN (SELECT message_id FROM agent_model_pending); INSERT INTO agent_messages(id,session_id,role,content,created_at) SELECT lower(hex(randomblob(16))),session_id,'error','Keeper 已重启，模型请求已中断；已生成的回复已保留，请重新发送消息。',CAST(strftime('%s','now') AS INTEGER)*1000 FROM agent_model_pending; DELETE FROM agent_model_pending;").map_err(|e|e.to_string())?;
     store.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_reply_versions (session_id TEXT NOT NULL,root_id TEXT NOT NULL,selected_id TEXT NOT NULL,PRIMARY KEY(session_id,root_id)); CREATE TABLE IF NOT EXISTS agent_model_contexts (message_id TEXT PRIMARY KEY,messages TEXT NOT NULL);").map_err(|e|e.to_string())?;
     crate::agent_runtime::initialize(store)?;
+    crate::agent_mcp::initialize(store)?;
     crate::agent_security::initialize(store)?;
     crate::agent_account::initialize(store)?;
     crate::model::initialize(store)?;
@@ -391,6 +392,19 @@ pub(crate) async fn dispatch(
         "agent_cis_model_save" => {let saved=crate::cis_models::call(&core,reqwest::Method::POST,"/admin/save",Some(args)).await?;let refreshed=crate::cis_models::refresh(&core).await;Ok(json!({"id":saved["id"],"refreshError":refreshed.err()}))},
         "agent_cis_model_delete" => {let id=text(&args,"id")?;if id.len()>64 || !id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_'){return Err("模型 ID 无效".into());}crate::cis_models::call(&core,reqwest::Method::POST,&format!("/admin/{id}/delete"),Some(json!({}))).await?;let refreshed=crate::cis_models::refresh(&core).await;Ok(json!({"refreshError":refreshed.err()}))},
         "agent_cis_models_refresh" => crate::cis_models::refresh(&core).await,
+        "agent_mcp_list" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::list(&store)}
+        "agent_mcp_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::save(&store,&args)}
+        "agent_mcp_tools" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::selection(&store,&text(&args,"id")?,&args["tools"])}
+        "agent_mcp_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::delete(&store,&text(&args,"id")?)}
+        "agent_mcp_refresh" => {
+            let id=text(&args,"id")?;
+            let (owner,server)={let store=core.store.lock().map_err(|e|e.to_string())?;let owner=crate::agent_account::owner(&store)?;let server=crate::agent_mcp::list(&store)?.as_array().unwrap().iter().find(|s|s["id"]==id).cloned().ok_or("MCP 服务不存在")?;(owner,server)};
+            let tools=crate::agent_mcp::merge_selection(&server,crate::agent_mcp::discover(&server).await?);
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            if crate::agent_account::owner(&store)?!=owner {return Err("账号已切换，请重试".into());}
+            let updated=store.conn.execute("UPDATE agent_mcp_servers SET tools=?1,enabled=1 WHERE id=?2 AND owner_key=?3 AND command=?4 AND args=?5 AND transport=?6",params![json!(tools).to_string(),id,owner,server["command"].as_str().unwrap(),server["args"].to_string(),server["transport"].as_str().unwrap()]).map_err(|e|e.to_string())?;
+            if updated!=1{return Err("MCP 服务配置已变更，请重试".into());}crate::agent_mcp::list(&store)
+        }
         "agent_model_config" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::config(&store)}
         "agent_model_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::save(&store,&args)}
         "agent_model_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::delete(&store,&text(&args,"id")?)}

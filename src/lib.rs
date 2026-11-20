@@ -1,6 +1,8 @@
 mod cis_models;
 mod agent;
 mod agent_account;
+mod agent_mcp;
+mod agent_mcp_http;
 mod agent_security;
 mod agent_environment;
 mod model;
