@@ -1320,12 +1320,24 @@ function closeLoginModal() {
 }
 
 async function loadLoginStatus() {
+  let loaded = true;
   try {
     state.login = await invoke("get_login_status");
   } catch (_) {
+    loaded = false;
     state.login = { loggedIn: false, serverUrl: "", username: "", nickname: "" };
   }
   renderLoginStatus();
+  return loaded;
+}
+
+function promptInitialLogin(loaded) {
+  if (!loaded || state.login?.loggedIn) return;
+  try {
+    if (sessionStorage.getItem("keeper-login-prompted")) return;
+    sessionStorage.setItem("keeper-login-prompted", "1");
+  } catch (_) { /* Login remains available when browser storage is disabled. */ }
+  openLoginModal();
 }
 
 async function autoSyncIfLoggedIn() {
@@ -4020,7 +4032,8 @@ document.addEventListener("keydown", (e) => {
   updateTerminalUI();
   loadRootCertificateStatus();
   checkAppUpdate();
-  await loadLoginStatus();
+  const loginStatusLoaded = await loadLoginStatus();
+  promptInitialLogin(loginStatusLoaded);
   try {
     await Promise.all([
       loadHosts(),
