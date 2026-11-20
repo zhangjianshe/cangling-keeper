@@ -1,4 +1,4 @@
-//! Persistent conversations, read-only model tools and explicit maintenance approvals.
+//! Persistent conversations, model tools and host-enforced approval policies.
 //! Conversations and immutable approval requests survive browser refreshes in SQLite.
 use crate::{AppState, store::Store};
 use rusqlite::params;
@@ -40,6 +40,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     let columns=store.conn.prepare("PRAGMA table_info(agent_sessions)").map_err(|e|e.to_string())?
         .query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
     if !columns.iter().any(|c|c=="pinned") {store.conn.execute_batch("ALTER TABLE agent_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;").map_err(|e|e.to_string())?;}
+    if !columns.iter().any(|c|c=="title_custom") {store.conn.execute_batch("ALTER TABLE agent_sessions ADD COLUMN title_custom INTEGER NOT NULL DEFAULT 0;").map_err(|e|e.to_string())?;}
     let directory = project_directory("general")?;
     store
         .conn
@@ -55,9 +56,11 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     let message_columns=store.conn.prepare("PRAGMA table_info(agent_messages)").map_err(|e|e.to_string())?.query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
     if !message_columns.iter().any(|c|c=="model_metadata"){store.conn.execute_batch("ALTER TABLE agent_messages ADD COLUMN model_metadata TEXT NOT NULL DEFAULT '{}';").map_err(|e|e.to_string())?;}
     if !columns.iter().any(|c|c=="stop_requested"){store.conn.execute_batch("ALTER TABLE agent_model_pending ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0;").map_err(|e|e.to_string())?;}
-    store.conn.execute_batch("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus','interrupted') WHERE id IN (SELECT message_id FROM agent_model_pending); INSERT INTO agent_messages(id,session_id,role,content,created_at) SELECT lower(hex(randomblob(16))),session_id,'error','Keeper 已重启，模型请求已中断；已生成的回复已保留，请重新发送消息。',CAST(strftime('%s','now') AS INTEGER)*1000 FROM agent_model_pending; DELETE FROM agent_model_pending;").map_err(|e|e.to_string())?;
+    store.conn.execute_batch("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus','interrupted','$.context.status','interrupted') WHERE id IN (SELECT message_id FROM agent_model_pending); INSERT INTO agent_messages(id,session_id,role,content,created_at) SELECT lower(hex(randomblob(16))),session_id,'error','Keeper 已重启，模型请求已中断；已生成的回复已保留，请重新发送消息。',CAST(strftime('%s','now') AS INTEGER)*1000 FROM agent_model_pending; DELETE FROM agent_model_pending;").map_err(|e|e.to_string())?;
     store.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_reply_versions (session_id TEXT NOT NULL,root_id TEXT NOT NULL,selected_id TEXT NOT NULL,PRIMARY KEY(session_id,root_id)); CREATE TABLE IF NOT EXISTS agent_model_contexts (message_id TEXT PRIMARY KEY,messages TEXT NOT NULL);").map_err(|e|e.to_string())?;
     crate::agent_runtime::initialize(store)?;
+    crate::agent_security::initialize(store)?;
+    crate::agent_account::initialize(store)?;
     crate::model::initialize(store)?;
     let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
     let columns=store.conn.prepare("PRAGMA table_info(agent_sessions)").map_err(|e|e.to_string())?.query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
@@ -98,21 +101,8 @@ fn text(args: &Value, key: &str) -> Result<String, String> {
         .map(str::to_owned)
         .ok_or_else(|| format!("缺少参数 {key}"))
 }
-fn require_session(store: &Store, session: &str) -> Result<(), String> {
-    let found: bool = store
-        .conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM agent_sessions WHERE id=?1)",
-            [session],
-            |r| r.get(0),
-        )
-        .map_err(|e| e.to_string())?;
-    if found {
-        Ok(())
-    } else {
-        Err("会话不存在".into())
-    }
-}
+fn require_session(store:&Store,session:&str)->Result<(),String>{if crate::agent_account::owns(store,session){Ok(())}else{Err("会话不存在或不属于当前账号".into())}}
+
 fn message(store: &Store, session: &str, role: &str, content: &str) -> Result<(), String> {
     store
         .conn
@@ -152,10 +142,10 @@ fn sessions(store: &Store) -> Result<Value, String> {
     let mut stmt = store
         .conn
         .prepare(
-            "SELECT id,title,updated_at,project_id,pinned FROM agent_sessions ORDER BY updated_at DESC,rowid DESC",
+            "SELECT id,title,updated_at,project_id,pinned FROM agent_sessions WHERE owner_key=?1 ORDER BY updated_at DESC,rowid DESC",
         )
         .map_err(|e| e.to_string())?;
-    let rows=stmt.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"updatedAt":r.get::<_,i64>(2)?,"projectId":r.get::<_,String>(3)?,"pinned":r.get::<_,bool>(4)?}))).map_err(|e|e.to_string())?;
+    let rows=stmt.query_map([crate::agent_account::owner(store)?],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"updatedAt":r.get::<_,i64>(2)?,"projectId":r.get::<_,String>(3)?,"pinned":r.get::<_,bool>(4)?}))).map_err(|e|e.to_string())?;
     Ok(Value::Array(
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?,
@@ -209,7 +199,6 @@ pub(crate) fn context_messages(store: &Store, session: &str, boundary: &str) -> 
         } else {message};
         if matches!(chosen["role"].as_str(),Some("user"|"assistant")) && !chosen["content"].as_str().unwrap_or("").is_empty(){result.push(json!({"role":chosen["role"],"content":chosen["content"]}));}
     }
-    if result.len()>24{result.drain(..result.len()-24);}
     Ok(result)
 }
 fn detail(store: &Store, session: &str) -> Result<Value, String> {
@@ -224,7 +213,7 @@ fn detail(store: &Store, session: &str) -> Result<Value, String> {
     let mut runs=runs;for run in &mut runs {run["review"]=crate::agent_runtime::review(store,run["id"].as_str().unwrap())?;}
     let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[session],|r|r.get(0)).map_err(|e|e.to_string())?;
     let model=crate::model::session_config(store,session)?;
-    Ok(json!({"sessionId":session,"model":model,"messages":messages,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
+    Ok(json!({"sessionId":session,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
 }
 fn host_snapshot(store: &Store, host_id: &str) -> Result<Value, String> {
     let h = store.get_host(host_id)?;
@@ -266,7 +255,7 @@ fn create_run(
         "running"
     };
     store.conn.execute("INSERT INTO agent_runs (id,session_id,tool,arguments,status,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?6)",params![run,session,tool,arguments.to_string(),status,now()]).map_err(|e|e.to_string())?;
-    store.conn.execute("UPDATE agent_sessions SET updated_at=?2,title=CASE WHEN title='新会话' THEN ?3 ELSE title END WHERE id=?1",params![session,now(),spec["title"].as_str().unwrap_or(tool)]).map_err(|e|e.to_string())?;
+    store.conn.execute("UPDATE agent_sessions SET updated_at=?2,title=CASE WHEN title='新会话' AND title_custom=0 THEN ?3 ELSE title END WHERE id=?1",params![session,now(),spec["title"].as_str().unwrap_or(tool)]).map_err(|e|e.to_string())?;
     Ok(json!({"id":run,"status":status}))
 }
 fn decide(store: &Store, run: &str, approved: bool) -> Result<(), String> {
@@ -397,8 +386,14 @@ pub(crate) async fn dispatch(
     sink: Arc<dyn crate::EventSink>,
 ) -> Result<Value, String> {
     match command {
+        "agent_cis_usage" => crate::cis_models::call(&core,reqwest::Method::GET,if args["all"]==true {"/admin/usage"} else {"/usage"},None).await,
+        "agent_cis_models_admin" => crate::cis_models::call(&core,reqwest::Method::GET,"/admin",None).await,
+        "agent_cis_model_save" => {let saved=crate::cis_models::call(&core,reqwest::Method::POST,"/admin/save",Some(args)).await?;let refreshed=crate::cis_models::refresh(&core).await;Ok(json!({"id":saved["id"],"refreshError":refreshed.err()}))},
+        "agent_cis_model_delete" => {let id=text(&args,"id")?;if id.len()>64 || !id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_'){return Err("模型 ID 无效".into());}crate::cis_models::call(&core,reqwest::Method::POST,&format!("/admin/{id}/delete"),Some(json!({}))).await?;let refreshed=crate::cis_models::refresh(&core).await;Ok(json!({"refreshError":refreshed.err()}))},
+        "agent_cis_models_refresh" => crate::cis_models::refresh(&core).await,
         "agent_model_config" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::config(&store)}
         "agent_model_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::save(&store,&args)}
+        "agent_model_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::delete(&store,&text(&args,"id")?)}
         "agent_model_test" => crate::model::test(&core,args["id"].as_str()).await,
         "agent_session_model" => {
             let store=core.store.lock().map_err(|e|e.to_string())?;
@@ -413,7 +408,7 @@ pub(crate) async fn dispatch(
         "agent_bootstrap" => {
             let store = core.store.lock().map_err(|e| e.to_string())?;
             Ok(
-                json!({"projects":projects(&store)?,"sessions":sessions(&store)?,"tools":tools(),"modelConnected":crate::model::connected(&store),"model":crate::model::config(&store)?,"hosts":store.list_hosts()?.iter().map(|h|json!({"id":h.id,"name":h.name,"hostname":h.hostname})).collect::<Vec<_>>()}),
+                json!({"accountKey":crate::agent_account::owner(&store)?,"projects":projects(&store)?,"sessions":sessions(&store)?,"tools":tools(),"modelConnected":crate::model::connected(&store),"model":crate::model::config(&store)?,"hosts":store.list_hosts()?.iter().map(|h|json!({"id":h.id,"name":h.name,"hostname":h.hostname})).collect::<Vec<_>>()}),
             )
         }
         "agent_pin_session" => {
@@ -440,6 +435,18 @@ pub(crate) async fn dispatch(
             }
             Ok(json!({"id":project,"name":name,"directory":directory}))
         }
+        "agent_rename_session" => {
+            let session=text(&args,"sessionId")?;let title=text(&args,"title")?.trim().to_owned();
+            if title.chars().count()>128 || title.chars().any(char::is_control){return Err("标题最多 128 个字符，不能包含换行或控制字符。".into());}
+            let store=core.store.lock().map_err(|e|e.to_string())?;require_session(&store,&session)?;
+            store.conn.execute("UPDATE agent_sessions SET title=?2,title_custom=1,updated_at=?3 WHERE id=?1",params![session,title,now()]).map_err(|e|e.to_string())?;
+            Ok(json!({"id":session,"title":title}))
+        }
+        "agent_security_mode" => {
+            let session=text(&args,"sessionId")?;
+            let store=core.store.lock().map_err(|e|e.to_string())?;require_session(&store,&session)?;
+            crate::agent_security::set(&store,&session,&args)?;detail(&store,&session)
+        }
         "agent_new_session" => {
             let store = core.store.lock().map_err(|e| e.to_string())?;
             let project = args
@@ -461,8 +468,8 @@ pub(crate) async fn dispatch(
             store
                 .conn
                 .execute(
-                    "INSERT INTO agent_sessions (id,title,created_at,updated_at,project_id,server_id) VALUES (?1,'新会话',?2,?2,?3,?4)",
-                    params![session, now(),project,store.get_setting("agent_llm_active")?.unwrap_or_default()],
+                    "INSERT INTO agent_sessions (id,title,created_at,updated_at,project_id,server_id,owner_key) VALUES (?1,'新会话',?2,?2,?3,?4,?5)",
+                    params![session, now(),project,crate::model::config(&store)?["activeServerId"].as_str().unwrap_or(""),crate::agent_account::owner(&store)?],
                 )
                 .map_err(|e| e.to_string())?;
             Ok(json!({"id":session}))
@@ -561,7 +568,7 @@ pub(crate) async fn dispatch(
                 if !enabled && !selection["activeServerId"].as_str().unwrap_or("").is_empty(){return Err("该会话选择的模型已停用或密钥不可用，请重新选择模型。".into());}
                 if enabled{store.conn.execute("INSERT INTO agent_model_pending(session_id,message_id) VALUES (?1,?2)",params![session,response_id]).map_err(|e|e.to_string())?;}
                 message(&store,&session,"user",&content)?;
-                store.conn.execute("UPDATE agent_sessions SET title=?2 WHERE id=?1 AND title='新会话'",params![session,content.chars().take(32).collect::<String>()]).map_err(|e|e.to_string())?;
+                store.conn.execute("UPDATE agent_sessions SET title=?2 WHERE id=?1 AND title_custom=0 AND (SELECT count(*) FROM agent_messages WHERE session_id=?1 AND role='user')=1",params![session,content.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(128).collect::<String>()]).map_err(|e|e.to_string())?;
                 if enabled{store.conn.execute("INSERT INTO agent_messages(id,session_id,role,content,created_at,model_metadata) VALUES (?1,?2,'assistant','',?3,?4)",params![response_id,session,now(),json!({"source":"llm","generationStatus":"streaming","serverId":selection["activeServerId"],"serverName":selection["name"],"requestedModel":selection["model"],"model":selection["model"]}).to_string()]).map_err(|e|e.to_string())?;}
                 if !enabled{message(&store,&session,"assistant","消息已保存。尚未启用模型，可到账户页配置 DeepSeek，或通过工具入口手动操作。")?;}
                 if enabled{core.model_cancellations.lock().map_err(|e|e.to_string())?.insert(response_id.clone(),cancel_tx);}
@@ -588,7 +595,7 @@ pub(crate) async fn dispatch(
         }
         "agent_review_tool" => {
             let session=text(&args,"sessionId")?;let run=text(&args,"runId")?;let hash=text(&args,"reviewHash")?;let approved=args["approved"].as_bool().ok_or("缺少确认决定")?;
-            let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_runtime::decide(&store,&session,&run,&hash,approved)?;detail(&store,&session)
+            let store=core.store.lock().map_err(|e|e.to_string())?;require_session(&store,&session)?;crate::agent_runtime::decide(&store,&session,&run,&hash,approved)?;detail(&store,&session)
         }
         "agent_decide_tool" => {
             let run = text(&args, "runId")?;
@@ -598,6 +605,7 @@ pub(crate) async fn dispatch(
                 .ok_or("缺少确认决定")?;
             {
                 let store = core.store.lock().map_err(|e| e.to_string())?;
+                let session:String=store.conn.query_row("SELECT session_id FROM agent_runs WHERE id=?1",[&run],|r|r.get(0)).map_err(|_|"操作不存在")?;require_session(&store,&session)?;
                 decide(&store, &run, approved)?;
             }
             if approved {

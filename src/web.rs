@@ -206,16 +206,20 @@ async fn static_asset(uri: Uri) -> Response {
 
 async fn events_socket(ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap, State(state): State<WebState>, upgrade: WebSocketUpgrade) -> Response {
     let allow_agent=authorize_root_install(peer,&headers).is_ok();
-    upgrade.on_upgrade(move |socket| forward_events(socket, state.events.subscribe(),allow_agent))
+    upgrade.on_upgrade(move |socket| forward_events(socket, state.events.subscribe(),allow_agent,state.core.clone()))
 }
 
-async fn forward_events(mut socket: WebSocket, mut events: broadcast::Receiver<WebEvent>,allow_agent:bool) {
+async fn forward_events(mut socket: WebSocket, mut events: broadcast::Receiver<WebEvent>,allow_agent:bool,core:Arc<AppState>) {
     loop {
         tokio::select! {
             event = events.recv() => match event {
                 Ok(event) => {
                     if event.event=="server-shutdown" {break;}
-                    if event.event.starts_with("agent-") && !allow_agent {continue;}
+                    if event.event.starts_with("agent-") {
+                        if !allow_agent {continue;}
+                        let visible=event.payload["sessionId"].as_str().is_some_and(|session|core.store.lock().ok().is_some_and(|store|crate::agent_account::owns(&store,session)));
+                        if !visible {continue;}
+                    }
                     let Ok(text) = serde_json::to_string(&event) else { continue };
                     if socket.send(Message::Text(text.into())).await.is_err() { break; }
                 }
@@ -609,9 +613,10 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             let url=sync::normalize_server_url(&arg::<String>(&args,"serverUrl")?)?;
             let store=core.store.lock().map_err(|e|e.to_string())?;
             if store.get_setting(sync::SETTING_SERVER_URL)?.as_deref()!=Some(url.as_str()) {
+                crate::agent_account::stop_tasks(core,&store)?;
                 for key in [sync::SETTING_TOKEN,sync::SETTING_USERNAME,sync::SETTING_NICKNAME,sync::SETTING_USER_ID]{store.delete_setting(key)?;}
             }
-            store.set_setting(sync::SETTING_SERVER_URL,&url)?;value(read_login_status(&store))
+            store.set_setting(sync::SETTING_SERVER_URL,&url)?;state.emit("keeper-account-changed",true);value(read_login_status(&store))
         }
         "login_captcha" => value(sync::login_captcha(&arg::<String>(&args,"serverUrl")?).await?),
         "login" => {
@@ -624,18 +629,22 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             let data = sync::login_cis(&url, username.trim(), &password,code,uuid).await?;
             {
                 let store = core.store.lock().map_err(|e| e.to_string())?;
+                crate::agent_account::stop_tasks(core,&store)?;
                 store.set_setting(sync::SETTING_SERVER_URL, url.trim())?;
                 store.set_setting(sync::SETTING_TOKEN, &data.token)?;
                 store.set_setting(sync::SETTING_USERNAME, &data.user_name)?;
                 store.set_setting(sync::SETTING_NICKNAME, &data.nick_name)?;
                 store.set_setting(sync::SETTING_USER_ID, &data.user_id.to_string())?;
             }
+            state.emit("keeper-account-changed",true);
+            let refresh_core=core.clone();let refresh_state=state.clone();tokio::spawn(async move{if crate::cis_models::refresh(&refresh_core).await.is_ok(){refresh_state.emit("keeper-model-catalog",true);}});
             let _ = sync_now(core).await;
             let store = core.store.lock().map_err(|e| e.to_string())?;
             value(read_login_status(&store))
         }
         "logout" => {
             let store = core.store.lock().map_err(|e| e.to_string())?;
+            crate::agent_account::stop_tasks(core,&store)?;
             for key in [
                 sync::SETTING_TOKEN,
                 sync::SETTING_USERNAME,
@@ -644,6 +653,7 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
             ] {
                 store.delete_setting(key)?;
             }
+            state.emit("keeper-account-changed",true);
             value(read_login_status(&store))
         }
         "sync_hosts" | "sync_public_hosts" => {

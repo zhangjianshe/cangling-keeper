@@ -8,7 +8,14 @@ const messages=[{id:'question',role:'user',content:'读取项目',createdAt:1},{
 const run=(id,responseId)=>({id,responseId,tool:'read_file',arguments:{path:'README.md'},status:'succeeded',output:'file content',createdAt:3,updatedAt:1});
 Object.assign(context,{$:s=>document.querySelector(s),agent:{selected:'session',detail:{sessionId:'session',messages,replyGroups:[{rootId:'old',versionIds:['old','new'],selectedId:'new'}],runs:[run('old-run','old'),run('new-run','new')],modelPending:true,streamingMessageId:'new',tasks:[{responseId:'new',status:'tool',step:2}]}},titleFor:()=> '读取项目文件',statusNames:{succeeded:'已完成',running:'正在执行'},closeModelMenu(){},regenerateReply(){},chooseReplyVersion(){},notice(){}});
 context.window.keeperMarkdown={render:(node,text)=>{node.textContent=text;}};
-for(const [start,end] of [['  function element(', '  function notice('],['  function renderPending(', '  async function saveEditedMessage('],['  function visibleMessages(', '  function replyAnchor('],['  function renderConversation(', "  window.__KEEPER__.event.listen('agent-model-stream'"],['  function updateAgentRun(',"  window.__KEEPER__.event.listen('agent-tool-update'"],['  async function reviewAgentTool(', '  async function runTool(']])vm.runInContext(source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start))),context);
+for(const [start,end] of [['  function element(', '  function notice('],['  function renderPending(', '  async function saveEditedMessage('],['  function visibleMessages(', '  function replyAnchor('],['  function renderConversation(', "  window.__KEEPER__.event.listen('agent-context-update'"],['  function updateAgentRun(',"  window.__KEEPER__.event.listen('agent-tool-update'"],['  async function reviewAgentTool(', '  async function runTool(']])vm.runInContext(source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start))),context);
+const listeners={};context.window.__KEEPER__={event:{listen:(name,fn)=>listeners[name]=fn}};
+vm.runInContext(source.slice(source.indexOf("  window.__KEEPER__.event.listen('agent-context-update'"),source.indexOf("  window.__KEEPER__.event.listen('agent-model-stream'")),context);
+listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',context:{status:'compressing',estimatedTokens:30000,limit:32768}}});
+assert.match(document.querySelector('.agent-context-info').textContent,/正在整理上下文/);
+assert.match(document.querySelector('.agent-stream-status').textContent,/正在整理上下文/);
+listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',context:{status:'compacted',estimatedTokens:10000,limit:32768},usage:{promptTokens:321,completionTokens:45}}});
+assert.match(document.querySelector('.agent-context-info').textContent,/累计实际输入 321/);
 context.renderConversation();
 assert.equal(document.querySelectorAll('.agent-model-tool').length,1,'only selected reply tool history is displayed');
 assert.equal(document.querySelector('.agent-model-tool').dataset.runId,'new-run');

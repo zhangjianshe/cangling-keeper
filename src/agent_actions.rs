@@ -15,9 +15,9 @@ use std::{
 
 pub(crate) fn definitions() -> Vec<Value> {
     [
- ("write_file","创建或覆盖项目内 UTF-8 文件。必须等待用户审阅完整文件差异并确认；父目录必须存在。",json!({"path":{"type":"string"},"content":{"type":"string"}}),json!(["path","content"])),
- ("apply_patch","精确替换项目文件内唯一匹配的 oldText 为 newText；oldText 不能为空。必须等待用户审阅文件差异并确认。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"}}),json!(["path","oldText","newText"])),
- ("run_command","提出本机 shell 命令，默认在当前项目根目录运行。必须等待用户确认完整命令和执行目录。以 Keeper 用户权限执行，不是文件沙箱。timeoutSeconds 默认 60，最多 120。",json!({"command":{"type":"string"},"cwd":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!(["command"])),
+ ("write_file","创建或覆盖项目内 UTF-8 文件。由系统安全策略决定自动批准或等待用户确认；父目录必须存在。",json!({"path":{"type":"string"},"content":{"type":"string"}}),json!(["path","content"])),
+ ("apply_patch","精确替换项目文件内唯一匹配的 oldText 为 newText；oldText 不能为空。由系统安全策略决定自动批准或等待用户确认。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"}}),json!(["path","oldText","newText"])),
+ ("run_command","提出本机 shell 命令，默认在当前项目根目录运行。系统按安全模式决定自动批准或等待用户确认完整命令和执行目录。以 Keeper 用户权限执行，不是文件沙箱。timeoutSeconds 默认 60，最多 120。",json!({"command":{"type":"string"},"cwd":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!(["command"])),
 ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).collect()
 }
 pub(crate) fn is_action(name: &str) -> bool {
@@ -177,6 +177,10 @@ enum Action {
         timeout: u64,
     },
 }
+pub(crate) fn command_shell()->Result<String,String>{
+    #[cfg(windows)] {Ok(std::env::var("SystemRoot").map_err(|_|"无法确定 Windows shell")?+"\\System32\\cmd.exe")}
+    #[cfg(not(windows))] {Ok("/bin/sh".to_owned())}
+}
 pub(crate) fn prepare(
     root: Arc<Dir>,
     directory: &str,
@@ -216,11 +220,7 @@ pub(crate) fn prepare(
                 .filter(|n| (1..=120).contains(n))
                 .ok_or("超时须为 1–120 秒")?,
         };
-        #[cfg(windows)]
-        let shell = std::env::var("SystemRoot").map_err(|_| "无法确定 Windows shell")?
-            + "\\System32\\cmd.exe";
-        #[cfg(not(windows))]
-        let shell = "/bin/sh".to_owned();
+        let shell=command_shell()?;
         let review = json!({"kind":"command","command":command,"cwd":cwd,"directory":Path::new(directory).join(&cwd).components().collect::<PathBuf>().to_string_lossy(),"shell":shell,"timeoutSeconds":timeout,"scope":"Keeper 用户权限；执行目录不是文件访问沙箱"});
         return Ok(Prepared {
             review,

@@ -1,0 +1,19 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),{JSDOM}=require('jsdom');
+const html=fs.readFileSync('ui/index.html','utf8'),source=fs.readFileSync('ui/thread-nav.js','utf8');
+const entries=[{id:'u1',role:'user',content:'alpha <img src=x onerror=bad()>',createdAt:1},{id:'a1',role:'assistant',content:'Alpha reply',createdAt:2,modelMetadata:{generationStatus:'complete'}},{id:'u2',role:'user',content:'beta question',createdAt:3},{id:'a2',role:'assistant',content:'Beta reply',createdAt:4,modelMetadata:{generationStatus:'streaming'}}];
+function setup(saved){
+ const dom=new JSDOM(html,{runScripts:'outside-only',url:'http://localhost/',pretendToBeVisual:true}),w=dom.window,d=w.document,t=d.querySelector('#agent-timeline'),m=d.querySelector('#agent-messages');let scroll=0;
+ Object.defineProperties(t,{clientHeight:{get:()=>200},scrollHeight:{get:()=>1600},scrollTop:{get:()=>scroll,set:v=>scroll=Math.max(0,Math.min(1400,v))}});t.getBoundingClientRect=()=>({top:0,height:200});
+ function mount(data){m.replaceChildren();data.forEach((entry,i)=>{const n=d.createElement('article');n.dataset.rootMessageId=entry.replyGroup?.rootId || entry.id;n.getBoundingClientRect=()=>({top:i*400-t.scrollTop,height:400});m.append(n);});}
+ if(saved)w.localStorage.setItem('keeper-reading:v1:A:s',saved);w.eval(source);const nav=w.createKeeperThreadNav();nav.begin({account:'A',session:'s'});mount(entries);nav.update({messages:entries,detail:{runs:[]}});return {dom,w,d,t,m,nav,mount};
+}
+let a=setup();assert.equal(a.d.querySelectorAll('.thread-tick').length,2,'one node per user turn');assert.equal(a.t.scrollTop,1400,'new conversation starts at bottom');
+a.t.scrollTop=530;a.nav.save();const saved=a.w.localStorage.getItem('keeper-reading:v1:A:s');assert.equal(JSON.parse(saved).root,'a1');assert.equal(JSON.parse(saved).offset,-130);
+a.d.querySelector('#thread-directory-toggle').click();assert.equal(a.d.querySelector('#thread-directory').hidden,false);const search=a.d.querySelector('#thread-search');search.value='beta';search.dispatchEvent(new a.w.Event('input'));assert.equal(a.d.querySelectorAll('.thread-directory-item').length,1);
+a.d.querySelector('.thread-directory-item').click();assert.equal(a.t.scrollTop,776);assert.equal(a.d.querySelector('#thread-directory').hidden,true);assert.ok(a.m.querySelector('.thread-target'));
+let tick=a.d.querySelector('.thread-tick');tick.dispatchEvent(new a.w.Event('mouseenter'));assert.match(a.d.querySelector('#thread-preview').textContent,/alpha <img/);assert.equal(a.d.querySelector('#thread-preview img'),null,'preview is text, never HTML');
+a.nav.begin({account:'A',session:'s'});const updated=entries.map(e=>e.id==='a1'?{...e,content:'updated answer'}:e);a.nav.update({messages:updated,detail:{runs:[]}});tick=a.d.querySelector('.thread-tick');tick.dispatchEvent(new a.w.Event('mouseenter'));assert.match(a.d.querySelector('#thread-preview').textContent,/updated answer/);a.dom.window.close();
+a=setup(saved);assert.equal(a.t.scrollTop,530,'refresh restores root and relative offset');
+a.nav.begin({account:'A',session:'s'});const versions=entries.map(e=>e.id==='a1'?{...e,id:'a1-version2',replyGroup:{rootId:'a1'},content:'new version'}:e);a.mount(versions);a.nav.update({messages:versions,detail:{runs:[]}});assert.equal(a.d.querySelectorAll('.thread-tick').length,2);assert.equal(a.t.scrollTop,530,'selected version retains stable root position');
+a.nav.begin({account:'B',session:'s'});a.mount(entries);a.nav.update({messages:entries,detail:{runs:[]}});assert.equal(a.t.scrollTop,1400,'another account never restores A reading state');assert.equal(a.d.querySelector('#thread-preview').hidden,true);a.nav.save();assert.ok(a.w.localStorage.getItem('keeper-reading:v1:B:s'));
+a.dom.window.close();console.log('PASS: turn grouping, directory search, text-safe previews, jump/highlight, latest reply preview, refresh/version anchor restore and account isolation');

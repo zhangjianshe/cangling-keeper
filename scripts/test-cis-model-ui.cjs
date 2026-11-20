@@ -1,0 +1,15 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{JSDOM}=require('jsdom');
+const dom=new JSDOM(fs.readFileSync('ui/index.html','utf8'),{runScripts:'outside-only',url:'http://localhost/'}),c=dom.getInternalVMContext(),d=dom.window.document,source=fs.readFileSync('ui/agent.js','utf8');
+let calls=[],confirmResolve;
+const shared={id:'shared',name:'CIS Shared',provider:'deepseek',baseUrl:'https://example.test/v1',model:'central',contextLimit:32768,enabled:true,hasApiKey:true};
+Object.assign(c,{$:s=>d.querySelector(s),element:(tag,cls,text)=>{const e=d.createElement(tag);e.className=cls;if(text!==undefined)e.textContent=text;return e;},llmRemote:false,llmIdentityEpoch:0,llmReturnFocus:null,agent:{identityEpoch:1,selected:null},bootstrap:async()=>{},select:async()=>{},renderModel(){},uiConfirm:()=>new Promise(r=>confirmResolve=r),invoke:async(name,args)=>{calls.push({name,args});if(name==='agent_cis_models_admin')return {models:[shared]};if(name==='agent_cis_usage')return {rows:[{userName:'alice',model:'central',calls:3,completed:2,failed:1,disconnected:0,inProgress:0,missingUsage:1,promptTokens:20,completionTokens:5,totalTokens:25}]};if(name==='agent_cis_model_save')return {id:'shared'};if(name==='agent_cis_model_delete')return {};throw Error(name);}});
+let start=source.indexOf('  function openLlm('),end=source.indexOf("  $('#llm-add').onclick=",start);assert(start>=0&&end>start);vm.runInContext(source.slice(start,end),c);
+(async()=>{
+ await c.loadCisUsage(false);assert.match(d.querySelector('#cis-model-usage-content').textContent,/alice/);assert.match(d.querySelector('#cis-model-usage-content').textContent,/25/);
+ await c.loadCisAdmin();assert.equal(d.querySelector('#cis-model-admin').hidden,false);assert.match(d.querySelector('#cis-model-admin-list').textContent,/CIS Shared/);
+ d.querySelector('#cis-model-admin-list button').click();assert.equal(d.querySelector('#deepseek-key').value,'');assert.equal(d.querySelector('#deepseek-test').hidden,true);assert.equal(d.querySelector('#llm-clear-key').closest('label').hidden,true);assert.equal(d.querySelector('#llm-dialog-title').textContent,'编辑 CIS 模型');
+ d.querySelector('#deepseek-key').value='explicit-server-fixture';await c.saveLlm();let save=calls.find(x=>x.name==='agent_cis_model_save');assert.equal(save.args.apiKey,'explicit-server-fixture');assert.equal(d.querySelector('#deepseek-key').value,'');
+ c.openLlm(shared,null,true);c.agent.identityEpoch++;await assert.rejects(c.saveLlm(),/账号已改变/);assert.equal(calls.filter(x=>x.name==='agent_cis_model_save').length,1);
+ await c.loadCisAdmin();d.querySelectorAll('#cis-model-admin-list button')[1].click();c.agent.identityEpoch++;confirmResolve(true);await new Promise(r=>setTimeout(r,0));assert.equal(calls.filter(x=>x.name==='agent_cis_model_delete').length,0);assert.match(d.querySelector('#llm-list-status').textContent,/账号已改变/);
+ dom.window.close();console.log('PASS: CIS admin UI, secret entry, account-switch safeguards');
+})().catch(e=>{console.error(e);dom.window.close();process.exitCode=1;});

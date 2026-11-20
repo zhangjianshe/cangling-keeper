@@ -92,7 +92,7 @@ fn event(
 }
 pub(crate) fn begin(store: &Store, session: &str, response: &str) -> Result<PathBuf, String> {
     let directory:String=store.conn.query_row("SELECT p.directory FROM agent_sessions s JOIN agent_projects p ON p.id=s.project_id WHERE s.id=?1",[session],|r|r.get(0)).map_err(|_|"会话项目不存在")?;
-    store.conn.execute("INSERT INTO agent_tasks(response_id,session_id,project_directory,status,created_at,updated_at) VALUES (?1,?2,?3,'model',?4,?4)",params![response,session,directory,now()]).map_err(|e|e.to_string())?;
+    store.conn.execute("INSERT INTO agent_tasks(response_id,session_id,project_directory,status,created_at,updated_at,security_mode) VALUES (?1,?2,?3,'model',?4,?4,?5)",params![response,session,directory,now(),crate::agent_security::mode(store,session)]).map_err(|e|e.to_string())?;
     event(
         store,
         session,
@@ -235,7 +235,7 @@ pub(crate) async fn execute(
             crate::agent_actions::prepare(worker_root, &directory, &tool, &args, &worker_flag)
         });
         let plan = tokio::select! {biased;_=&mut *cancel=>{flag.store(true,Ordering::Relaxed);let _=tokio::time::timeout(std::time::Duration::from_secs(2),&mut worker).await;persist_run(&core,session,response,&run,"stopped","操作已停止，未请求执行",sink.as_ref())?;return Ok(None)},value=&mut worker=>value.map_err(|_|"操作预览生成失败")?};
-        let plan = match plan {
+        let mut plan = match plan {
             Ok(v) => v,
             Err(error) => {
                 return finish_result(
@@ -250,6 +250,9 @@ pub(crate) async fn execute(
                 );
             }
         };
+        let security_mode={let store=core.store.lock().map_err(|e|e.to_string())?;store.conn.query_row("SELECT security_mode FROM agent_tasks WHERE response_id=?1",[response],|r|r.get::<_,String>(0)).unwrap_or_else(|_|"ask".into())};
+        let automatic=crate::agent_security::auto_approve(&security_mode,&call.name);
+        for (key,value) in crate::agent_security::audit(&security_mode,&call.name).as_object().unwrap(){plan.review[key]=value.clone();}
         let review = plan.review.to_string();
         let hash = crate::agent_actions::hash(review.as_bytes());
         {
@@ -265,7 +268,7 @@ pub(crate) async fn execute(
                     params![run, review, hash],
                 )
                 .map_err(|e| e.to_string())?;
-            store.conn.execute("UPDATE agent_runs SET status='pending_approval' WHERE id=?1 AND status='running'",[&run]).map_err(|e|e.to_string())?;
+            store.conn.execute("UPDATE agent_runs SET status=?2 WHERE id=?1 AND status='running'",params![run,if automatic{"approved"}else{"pending_approval"}]).map_err(|e|e.to_string())?;
             tx.commit().map_err(|e| e.to_string())?;
         }
         persist_run(
@@ -273,11 +276,11 @@ pub(crate) async fn execute(
             session,
             response,
             &run,
-            "pending_approval",
-            "等待确认，尚未执行",
+            if automatic{"approved"}else{"pending_approval"},
+            if automatic{"已按会话安全策略自动批准"}else{"等待确认，尚未执行"},
             sink.as_ref(),
         )?;
-        phase(&core, session, response, "approval", step, sink.as_ref())?;
+        phase(&core, session, response, if automatic{"tool"}else{"approval"}, step, sink.as_ref())?;
         let waiting = tokio::time::Instant::now();
         loop {
             tokio::select! {biased;_=&mut *cancel=>{persist_run(&core,session,response,&run,"stopped","已停止，操作未执行",sink.as_ref())?;return Ok(None)},_ = tokio::time::sleep(std::time::Duration::from_millis(100))=>{}}
@@ -303,7 +306,7 @@ pub(crate) async fn execute(
             if state == "pending_approval" {
                 continue;
             }
-            *deadline += waiting.elapsed();
+            if !automatic {*deadline += waiting.elapsed();}
             if state == "rejected" {
                 let result = json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});
                 persist_run(

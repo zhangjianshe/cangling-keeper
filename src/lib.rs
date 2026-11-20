@@ -1,4 +1,8 @@
+mod cis_models;
 mod agent;
+mod agent_account;
+mod agent_security;
+mod agent_environment;
 mod model;
 mod agent_files;
 mod agent_runtime;
@@ -2158,6 +2162,7 @@ async fn login(
     let data = sync::login(&url, username.trim(), &password).await?;
     {
         let store = state.store.lock().map_err(|e| e.to_string())?;
+        crate::agent_account::stop_tasks(&state,&store)?;
         store.set_setting(sync::SETTING_SERVER_URL, &url)?;
         store.set_setting(sync::SETTING_TOKEN, &data.token)?;
         store.set_setting(sync::SETTING_USERNAME, &data.user_name)?;
@@ -2174,6 +2179,7 @@ async fn login(
 
 async fn logout(state: State<'_, AppState>) -> Result<LoginStatus, String> {
     let store = state.store.lock().map_err(|e| e.to_string())?;
+    crate::agent_account::stop_tasks(&state,&store)?;
     store.delete_setting(sync::SETTING_TOKEN)?;
     store.delete_setting(sync::SETTING_USERNAME)?;
     store.delete_setting(sync::SETTING_NICKNAME)?;
