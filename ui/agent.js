@@ -359,10 +359,12 @@
     container.dataset.signature=signature;container.replaceChildren();
     $('#agent-welcome').hidden=agent.detail.messages.length>0 || agent.detail.runs.length>0;
     const entries=[...visibleMessages().map(m=>({...m,kind:'message'})),...agent.detail.runs.filter(run=>!run.responseId).map(run=>({...run,kind:'run'}))].sort((a,b)=>a.createdAt-b.createdAt);
+    let replyNumber=0;
     for(const entry of entries){
       if(entry.kind==='message'){
         const message=element('article','agent-message '+entry.role);message.dataset.messageId=entry.id;message.dataset.rootMessageId=entry.replyGroup?.rootId || entry.id;
         if(entry.role!=='user'){
+          if(entry.role==='assistant'){const number=element('span','agent-reply-number',String(++replyNumber));number.setAttribute('aria-label','回复 '+replyNumber);message.append(number);}
           const metadata=entry.modelMetadata || {};
           const label=entry.role==='error'?'模型调用失败':metadata.source==='local'?'苍灵智能 · 本地工具':metadata.model?(metadata.serverName?metadata.serverName+' · ':'')+metadata.model:'苍灵智能 · 模型未记录';
           const heading=element('span','agent-message-label agent-reply-model',label);

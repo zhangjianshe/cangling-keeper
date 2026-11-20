@@ -17,6 +17,9 @@ assert.match(document.querySelector('.agent-stream-status').textContent,/正在�
 listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',context:{status:'compacted',estimatedTokens:10000,limit:32768},usage:{promptTokens:321,completionTokens:45}}});
 assert.match(document.querySelector('.agent-context-info').textContent,/累计实际输入 321/);
 assert.equal(document.querySelector('.agent-context-info').parentElement,document.querySelector('.agent-reply-model').parentElement,'model and context share the reply header');
+assert.equal(document.querySelector('.agent-reply-number').textContent,'1','selected version retains the reply number');
+context.agent.detail.messages.push({id:'q2',role:'user',content:'next',createdAt:4},{id:'a2',role:'assistant',content:'second',createdAt:5,modelMetadata:{source:'llm',model:'fixture'}});context.renderConversation();
+assert.deepEqual([...document.querySelectorAll('.agent-reply-number')].map(n=>n.textContent),['1','2']);context.agent.detail.messages.splice(-2);context.renderConversation();
 context.renderConversation();
 assert.equal(document.querySelectorAll('.agent-model-tool').length,1,'only selected reply tool history is displayed');
 assert.equal(document.querySelector('.agent-model-tool').dataset.runId,'new-run');
