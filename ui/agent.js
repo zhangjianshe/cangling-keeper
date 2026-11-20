@@ -3,10 +3,10 @@
   const $ = selector => document.querySelector(selector);
   const invoke = (name, args = {}) => window.__KEEPER__.core.invoke(name, args);
   const agent = {projects:[], project:localStorage.getItem('keeper-agent-project') || 'general', sessions:[], tools:[], hosts:[], selected:null, detail:{messages:[],runs:[]}, generation:0, timer:null, sending:false};
-  const statusNames = {running:'正在执行',pending_approval:'等待确认',succeeded:'已完成',failed:'执行失败',rejected:'已取消',interrupted:'执行中断'};
+  const statusNames = {running:'正在执行',pending_approval:'等待确认',succeeded:'已完成',failed:'执行失败',rejected:'已取消',interrupted:'执行中断',stopped:'已停止',approved:'已确认'};
   function element(tag, cls, text) { const node=document.createElement(tag); if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node; }
   function notice(message='') {$('#agent-notice').textContent=message;$('#agent-notice').hidden=!message;}
-  function titleFor(tool) {return agent.tools.find(item=>item.name===tool)?.title || tool;}
+  function titleFor(tool) {return ({list_directory:'列出项目目录',read_file:'读取项目文件',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
   function sessionRow(session){
     const row=element('div','agent-session-row');
     const button=element('button','agent-session'+(session.id===agent.selected?' active':''),session.title);button.type='button';
@@ -72,6 +72,9 @@
       if(generation!==agent.generation)return;
       // A WebSocket checkpoint can arrive while this snapshot request is in flight.
       for(const item of data.messages){const current=agent.detail.messages.find(m=>m.id===item.id);if(current && current.content.length>item.content.length)item.content=current.content;}
+      if(agent.detail.sessionId===session){
+        for(const key of ['runs','tasks']){const id=key==='runs'?'id':'responseId';for(const current of agent.detail[key] || []){const index=(data[key] || []).findIndex(v=>v[id]===current[id]);if(index<0)(data[key] ||= []).push(current);else if((current.updatedAt || 0)>(data[key][index].updatedAt || 0))data[key][index]=current;}}
+      }
       agent.detail=data;renderModel(data.model);localStorage.setItem('keeper-agent-session',session);renderSessions();renderConversation();poll();notice();
     }catch(error){if(generation===agent.generation)notice(String(error));}
   }
@@ -105,7 +108,7 @@
       item.onclick=()=>chooseModel(server.id);menu.append(item);
     }
     if(picker.disabled)closeModelMenu();
-    $('#agent-model-note').textContent=enabled?(config.name || 'LLM')+' · 当前会话文字发送至模型 API · 远程命令执行前需要确认':'尚未启用模型 · 会话保存在本机 · 远程命令执行前需要确认';
+    $('#agent-model-note').textContent=enabled?(config.name || 'LLM')+' · 项目工具已启用 · 写入和命令需确认':'尚未启用模型 · 会话保存在本机 · 远程命令执行前需要确认';
     const list=$('#llm-server-list');list.replaceChildren();
     if(!config.servers?.length)list.append(element('p','llm-empty','尚未添加 LLM Server，点击右侧按钮添加。'));
     for(const server of config.servers || []){
@@ -196,10 +199,11 @@
     $('#agent-model-picker').disabled=$('#agent-model-picker').dataset.available==='0' || !!agent.detail.modelPending;
     if(agent.detail.modelPending)closeModelMenu();
     for(const node of container.querySelectorAll('.agent-message'))node.classList.toggle('streaming',agent.detail.modelPending && node.dataset.messageId===agent.detail.streamingMessageId);
+    for(const actions of container.querySelectorAll('[data-review-run]'))for(const button of actions.querySelectorAll('button'))button.disabled=!!agent.reviewing?.has(actions.dataset.reviewRun) || !!agent.stopping || !!agent.detail.stopRequested;
     for(const button of container.querySelectorAll('.agent-edit-message'))button.disabled=!!agent.detail.modelPending || !!agent.savingEdit;
     for(const button of container.querySelectorAll('.agent-version-button'))button.disabled=button.dataset.boundary==='true' || !!agent.detail.modelPending;
     let status=container.querySelector('.agent-stream-status');
-    if(agent.detail.modelPending){if(!status){status=element('div','agent-message-label agent-stream-status');status.setAttribute('role','status');container.append(status);}status.textContent=agent.detail.stopRequested?'正在停止生成…':'模型正在生成…';}
+    if(agent.detail.modelPending){if(!status){status=element('div','agent-message-label agent-stream-status');status.setAttribute('role','status');container.append(status);}const task=agent.detail.tasks?.find(t=>t.responseId===agent.detail.streamingMessageId);status.textContent=agent.detail.stopRequested?'正在停止生成…':task?.status==='approval'?`等待你确认操作 · 第 ${task.step} 轮`:task?.status==='tool'?`正在执行工具 · 第 ${task.step} 轮`:`模型正在生成…${task?.step?' · 第 '+task.step+' 轮':''}`;}
     else status?.remove();
   }
   async function saveEditedMessage(entry){
@@ -238,6 +242,7 @@
     const container=$('#agent-messages'),timeline=$('#agent-timeline');
     const follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<90;
     const draft=container.querySelector('.agent-run-form');
+    const toolOpen=new Map([...container.querySelectorAll('.agent-model-tool')].map(node=>[node.dataset.runId,node.open]));
     const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata]),agent.detail.replyGroups,agent.detail.runs,agent.editing?.session===agent.selected?agent.editing.id:null]);
     if(!draft && container.dataset.signature===signature){
       for(const entry of agent.detail.messages){const body=container.querySelector('[data-message-id="'+entry.id+'"] .agent-message-body');if(body)window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');}
@@ -245,7 +250,7 @@
     }
     container.dataset.signature=signature;container.replaceChildren();
     $('#agent-welcome').hidden=agent.detail.messages.length>0 || agent.detail.runs.length>0;
-    const entries=[...visibleMessages().map(m=>({...m,kind:'message'})),...agent.detail.runs.map(run=>({...run,kind:'run'}))].sort((a,b)=>a.createdAt-b.createdAt);
+    const entries=[...visibleMessages().map(m=>({...m,kind:'message'})),...agent.detail.runs.filter(run=>!run.responseId).map(run=>({...run,kind:'run'}))].sort((a,b)=>a.createdAt-b.createdAt);
     for(const entry of entries){
       if(entry.kind==='message'){
         const message=element('article','agent-message '+entry.role);message.dataset.messageId=entry.id;message.dataset.rootMessageId=entry.replyGroup?.rootId || entry.id;
@@ -256,6 +261,10 @@
           if(metadata.requestedModel && metadata.requestedModel!==metadata.model)heading.title='请求模型：'+metadata.requestedModel+'；服务端返回模型：'+metadata.model;
           message.append(heading);
           if(['stopped','interrupted'].includes(metadata.generationStatus))message.append(element('span','agent-generation-status',metadata.generationStatus==='stopped'?'已停止生成':'生成已中断'));
+        }
+        if(entry.role==='assistant'){
+          const runs=agent.detail.runs.filter(run=>run.responseId===entry.id);
+          if(runs.length){const steps=element('div','agent-tool-steps');steps.setAttribute('aria-label','工具执行过程');for(const run of runs)steps.append(runCard(run,toolOpen));message.append(steps);}
         }
         const body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');message.append(body);
         if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id){
@@ -298,7 +307,52 @@
     if(entry && update.content.length>=entry.content.length){entry.content=update.content;renderConversation();}
   });
   window.__KEEPER__.event.listen('agent-model-finished',event=>{if(event.payload.sessionId===agent.selected)select(agent.selected);});
-  function runCard(run){
+  function updateAgentRun(event){
+    const run=event.payload;if(run.sessionId!==agent.selected || agent.detail.sessionId!==agent.selected)return;
+    const index=agent.detail.runs.findIndex(r=>r.id===run.id);
+    if(index<0)agent.detail.runs.push(run);else if((run.updatedAt || 0)>=(agent.detail.runs[index].updatedAt || 0))agent.detail.runs[index]=run;
+    renderConversation();
+  }
+  window.__KEEPER__.event.listen('agent-tool-update',updateAgentRun);
+  window.__KEEPER__.event.listen('agent-task-update',event=>{
+    const task=event.payload;if(task.sessionId!==agent.selected || agent.detail.sessionId!==agent.selected)return;
+    agent.detail.tasks ||= [];const index=agent.detail.tasks.findIndex(t=>t.responseId===task.responseId);
+    if(index<0)agent.detail.tasks.push(task);else agent.detail.tasks[index]=task;
+    renderPending($('#agent-messages'));
+  });
+  async function reviewAgentTool(run,approved){
+    if(agent.detail.stopRequested || agent.stopping || agent.reviewing?.has(run.id))return;
+    const session=agent.selected;agent.reviewing ||= new Set();agent.reviewing.add(run.id);
+    for(const button of $('#agent-messages').querySelectorAll('[data-review-run="'+run.id+'"] button'))button.disabled=true;
+    try{await invoke('agent_review_tool',{sessionId:session,runId:run.id,reviewHash:run.review.hash,approved});if(agent.selected===session)await select(session);}
+    catch(error){notice(String(error));}finally{agent.reviewing.delete(run.id);if(agent.selected===session)renderConversation();}
+  }
+  function runCard(run,openStates){
+    if(run.responseId){
+      const card=element('details','agent-run agent-model-tool');card.dataset.runId=run.id;card.open=run.status==='pending_approval' || (openStates?.has(run.id)?openStates.get(run.id):run.status==='running');
+      const header=element('summary');header.append(element('strong','',titleFor(run.tool)),element('span','run-state',statusNames[run.status] || run.status));card.append(header);
+      if(run.review?.kind==='file'){
+        card.append(element('div','agent-review-path',(run.review.newFile?'新建文件：':'修改文件：')+run.review.path));
+        const diff=element('pre','agent-file-diff');
+        for(const line of (run.review.diff || '新建空文件').split('\n'))diff.append(element('span',line.startsWith('@@')?'diff-hunk':line.startsWith('+')?'diff-add':line.startsWith('-')?'diff-delete':'',line+'\n'));
+        card.append(diff);
+      }else if(run.review?.kind==='command'){
+        card.append(element('div','agent-review-path','执行目录：'+run.review.directory));
+        card.append(element('div','agent-command-meta',run.review.shell+' · 超时 '+run.review.timeoutSeconds+' 秒'));
+        card.append(element('pre','agent-command-preview',run.review.command));
+        card.append(element('p','agent-command-scope',run.review.scope));
+      }else card.append(element('pre','agent-tool-arguments',JSON.stringify(run.arguments,null,2)));
+      if(run.status==='pending_approval' && run.review?.hash){
+        const actions=element('div','agent-review-actions');actions.dataset.reviewRun=run.id;
+        for(const [approved,label] of [[false,'拒绝'],[true,run.review.kind==='command'?'确认执行':'确认写入']]){
+          const button=element('button',approved?'approve':'',label);button.type='button';button.disabled=!!agent.reviewing?.has(run.id) || !!agent.detail.stopRequested;
+          button.onclick=()=>reviewAgentTool(run,approved);actions.append(button);
+        }
+        card.append(actions);
+      }
+      if(run.output)card.append(element('pre','agent-tool-output',run.output));
+      return card;
+    }
     const card=element('article','agent-run');card.dataset.runId=run.id;
     const head=element('header');head.append(element('strong','',titleFor(run.tool)),element('span','run-state',statusNames[run.status]||run.status));card.append(head);
     if(run.tool==='ssh_execute'){

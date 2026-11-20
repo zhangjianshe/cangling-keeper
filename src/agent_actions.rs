@@ -1,0 +1,818 @@
+//! Reviewed file edits and owned local subprocesses. Preparation never mutates a project.
+use cap_std::fs::Dir;
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use std::{
+    io::{Read, Write},
+    path::{Component, Path, PathBuf},
+    process::{Child, Command, Stdio},
+    sync::{
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
+};
+
+pub(crate) fn definitions() -> Vec<Value> {
+    [
+ ("write_file","创建或覆盖项目内 UTF-8 文件。必须等待用户审阅完整文件差异并确认；父目录必须存在。",json!({"path":{"type":"string"},"content":{"type":"string"}}),json!(["path","content"])),
+ ("apply_patch","精确替换项目文件内唯一匹配的 oldText 为 newText；oldText 不能为空。必须等待用户审阅文件差异并确认。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"}}),json!(["path","oldText","newText"])),
+ ("run_command","提出本机 shell 命令，默认在当前项目根目录运行。必须等待用户确认完整命令和执行目录。以 Keeper 用户权限执行，不是文件沙箱。timeoutSeconds 默认 60，最多 120。",json!({"command":{"type":"string"},"cwd":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!(["command"])),
+].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).collect()
+}
+pub(crate) fn is_action(name: &str) -> bool {
+    matches!(name, "write_file" | "apply_patch" | "run_command")
+}
+pub(crate) fn hash(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+fn check(cancel: &AtomicBool) -> Result<(), String> {
+    if cancel.load(Ordering::Relaxed) {
+        Err("操作已停止，未开始新的写入或命令".into())
+    } else {
+        Ok(())
+    }
+}
+fn text<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
+    args[key]
+        .as_str()
+        .ok_or_else(|| format!("{key} 必须是字符串"))
+}
+fn path(value: &str, allow_root: bool) -> Result<PathBuf, String> {
+    if value.len() > 2048
+        || value.chars().any(char::is_control)
+        || value.contains('\\')
+        || value.contains(':')
+    {
+        return Err("无效的项目相对路径".into());
+    }
+    let mut result = PathBuf::new();
+    for part in Path::new(value).components() {
+        match part {
+            Component::Normal(name) => {
+                if crate::agent_files::excluded(&name.to_string_lossy().to_ascii_lowercase()) {
+                    return Err("未开放修改此私密文件或构建缓存路径".into());
+                }
+                result.push(name);
+            }
+            Component::CurDir => {}
+            _ => return Err("仅允许项目相对路径，不能使用 .. 或绝对路径".into()),
+        }
+    }
+    if result.as_os_str().is_empty() {
+        if allow_root {
+            result.push(".")
+        } else {
+            return Err("文件路径不能为空".into());
+        }
+    }
+    Ok(result)
+}
+fn no_links(root: &Dir, path: &Path, missing_last: bool) -> Result<(), String> {
+    let mut current = PathBuf::new();
+    let parts = path.components().collect::<Vec<_>>();
+    for (i, part) in parts.iter().enumerate() {
+        current.push(part);
+        match root.symlink_metadata(&current) {
+            Ok(m) => {
+                if m.file_type().is_symlink() {
+                    return Err("不通过符号链接执行操作".into());
+                }
+            }
+            Err(e)
+                if missing_last
+                    && i + 1 == parts.len()
+                    && e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("项目路径不存在或不可访问".into()),
+        }
+    }
+    Ok(())
+}
+fn snapshot(
+    parent: &Dir,
+    name: &Path,
+) -> Result<Option<(String, cap_std::fs::Permissions)>, String> {
+    match parent.symlink_metadata(name) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err("无法检查文件".into()),
+        Ok(m) => {
+            if !m.is_file() || m.file_type().is_symlink() {
+                return Err("仅支持普通 UTF-8 文件，不操作链接或特殊文件".into());
+            }
+            if m.len() > 131072 {
+                return Err("编辑文件最多 128 KiB".into());
+            }
+            let mut opts = cap_std::fs::OpenOptions::new();
+            opts.read(true);
+            #[cfg(unix)]
+            {
+                use cap_std::fs::OpenOptionsExt;
+                opts.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+            }
+            let file = parent.open_with(name, &opts).map_err(|_| "无法打开文件")?;
+            if !file.metadata().map_err(|_| "无法检查文件类型")?.is_file() {
+                return Err("仅支持普通文本文件".into());
+            }
+            let mut bytes = Vec::new();
+            file.take(131073)
+                .read_to_end(&mut bytes)
+                .map_err(|_| "无法读取文件")?;
+            if bytes.len() > 131072 || bytes.contains(&0) {
+                return Err("文件过大或为二进制文件".into());
+            }
+            let content = String::from_utf8(bytes).map_err(|_| "仅支持 UTF-8 文本文件")?;
+            Ok(Some((content, m.permissions())))
+        }
+    }
+}
+fn same_directory(a: &Dir, b: &Dir) -> Result<bool, String> {
+    #[cfg(unix)]
+    {
+        use cap_std::fs::MetadataExt;
+        let a = a.dir_metadata().map_err(|_| "无法检查目录")?;
+        let b = b.dir_metadata().map_err(|_| "无法检查目录")?;
+        Ok(a.dev() == b.dev() && a.ino() == b.ino())
+    }
+    #[cfg(windows)]
+    {
+        use std::{mem::zeroed, os::windows::io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+        let mut x: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+        let mut y: BY_HANDLE_FILE_INFORMATION = unsafe { zeroed() };
+        if unsafe { GetFileInformationByHandle(a.as_raw_handle() as _, &mut x) } == 0
+            || unsafe { GetFileInformationByHandle(b.as_raw_handle() as _, &mut y) } == 0
+        {
+            return Err("无法检查目录标识".into());
+        }
+        Ok((x.dwVolumeSerialNumber, x.nFileIndexHigh, x.nFileIndexLow)
+            == (y.dwVolumeSerialNumber, y.nFileIndexHigh, y.nFileIndexLow))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (a, b);
+        Err("此平台尚不支持写操作".into())
+    }
+}
+pub(crate) struct Prepared {
+    pub review: Value,
+    action: Action,
+}
+enum Action {
+    File {
+        root: Arc<Dir>,
+        parent: Dir,
+        parent_path: PathBuf,
+        name: PathBuf,
+        before: Option<String>,
+        after: String,
+        permissions: Option<cap_std::fs::Permissions>,
+    },
+    Command {
+        root: Arc<Dir>,
+        cwd: Dir,
+        path: PathBuf,
+        command: String,
+        timeout: u64,
+    },
+}
+pub(crate) fn prepare(
+    root: Arc<Dir>,
+    directory: &str,
+    name: &str,
+    args: &Value,
+    cancel: &AtomicBool,
+) -> Result<Prepared, String> {
+    check(cancel)?;
+    let definition = definitions()
+        .into_iter()
+        .find(|d| d["function"]["name"] == name)
+        .ok_or("未知操作")?;
+    let object = args.as_object().ok_or("工具参数必须为对象")?;
+    if object.keys().any(|k| {
+        definition["function"]["parameters"]["properties"]
+            .get(k)
+            .is_none()
+    }) {
+        return Err("工具参数包含未定义字段".into());
+    }
+    if name == "run_command" {
+        let command = text(args, "command")?;
+        if command.trim().is_empty() || command.len() > 8192 || command.contains('\0') {
+            return Err("命令为空、超过 8192 字节或包含空字符".into());
+        }
+        let cwd = match args.get("cwd") {
+            None => ".",
+            Some(v) => v.as_str().ok_or("cwd 必须为字符串")?,
+        };
+        let cwd = path(cwd, true)?;
+        no_links(&root, &cwd, false)?;
+        let dir = root.open_dir(&cwd).map_err(|_| "命令执行目录不可访问")?;
+        let timeout = match args.get("timeoutSeconds") {
+            None => 60,
+            Some(v) => v
+                .as_u64()
+                .filter(|n| (1..=120).contains(n))
+                .ok_or("超时须为 1–120 秒")?,
+        };
+        #[cfg(windows)]
+        let shell = std::env::var("SystemRoot").map_err(|_| "无法确定 Windows shell")?
+            + "\\System32\\cmd.exe";
+        #[cfg(not(windows))]
+        let shell = "/bin/sh".to_owned();
+        let review = json!({"kind":"command","command":command,"cwd":cwd,"directory":Path::new(directory).join(&cwd).components().collect::<PathBuf>().to_string_lossy(),"shell":shell,"timeoutSeconds":timeout,"scope":"Keeper 用户权限；执行目录不是文件访问沙箱"});
+        return Ok(Prepared {
+            review,
+            action: Action::Command {
+                root,
+                cwd: dir,
+                path: cwd,
+                command: command.to_owned(),
+                timeout,
+            },
+        });
+    }
+    let raw = text(args, "path")?;
+    let relative = path(raw, false)?;
+    no_links(&root, &relative, true)?;
+    let parent_path = relative
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .to_owned();
+    let parent = root
+        .open_dir(&parent_path)
+        .map_err(|_| "父目录必须已存在")?;
+    let filename = PathBuf::from(relative.file_name().ok_or("无效文件名")?);
+    let old = snapshot(&parent, &filename)?;
+    let before = old.as_ref().map(|(s, _)| s.as_str()).unwrap_or("");
+    let after = if name == "write_file" {
+        let content = text(args, "content")?;
+        if content.len() > 32768 {
+            return Err("write_file 内容最多 32 KiB".into());
+        }
+        content.to_owned()
+    } else {
+        if old.is_none() {
+            return Err("补丁目标文件不存在".into());
+        }
+        let old_text = text(args, "oldText")?;
+        let new_text = text(args, "newText")?;
+        if old_text.is_empty()
+            || before.find(old_text).is_none()
+            || before.find(old_text) != before.rfind(old_text)
+        {
+            return Err("oldText 必须在原文件中唯一匹配；请先读取文件并提供足够上下文".into());
+        }
+        before.replacen(old_text, new_text, 1)
+    };
+    if after.len() > 131072 {
+        return Err("修改后文件最多 128 KiB".into());
+    }
+    if old.is_some() && before == after {
+        return Err("文件内容未变化，无需执行写入".into());
+    }
+    let diff = similar::TextDiff::configure()
+        .timeout(Duration::from_millis(200))
+        .diff_lines(before, after.as_str())
+        .unified_diff()
+        .context_radius(3)
+        .header(if old.is_some() { raw } else { "/dev/null" }, raw)
+        .to_string();
+    check(cancel)?;
+    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"bytes":after.len()});
+    Ok(Prepared {
+        review,
+        action: Action::File {
+            root,
+            parent,
+            parent_path,
+            name: filename,
+            before: old.as_ref().map(|(s, _)| hash(s.as_bytes())),
+            after,
+            permissions: old.map(|(_, p)| p),
+        },
+    })
+}
+struct TempFile<'a> {
+    dir: &'a Dir,
+    path: PathBuf,
+}
+impl Drop for TempFile<'_> {
+    fn drop(&mut self) {
+        let _ = self.dir.remove_file(&self.path);
+    }
+}
+impl Prepared {
+    pub(crate) fn execute(
+        self,
+        cancel: Arc<AtomicBool>,
+        mut progress: impl FnMut(String),
+    ) -> Result<Value, String> {
+        register(&cancel)?;
+        match self.action {
+            Action::File {
+                root,
+                parent,
+                parent_path,
+                name,
+                before,
+                after,
+                permissions,
+            } => {
+                static WRITES: Mutex<()> = Mutex::new(());
+                let _guard = loop {
+                    check(&cancel)?;
+                    match WRITES.try_lock() {
+                        Ok(guard) => break guard,
+                        Err(std::sync::TryLockError::WouldBlock) => {
+                            std::thread::sleep(Duration::from_millis(10))
+                        }
+                        Err(_) => return Err("文件写入锁异常".into()),
+                    }
+                };
+                check(&cancel)?;
+                no_links(&root, &parent_path, false)?;
+                if !same_directory(
+                    &parent,
+                    &root.open_dir(&parent_path).map_err(|_| "父目录已变化")?,
+                )? {
+                    return Err("父目录已变化，请重新生成差异后确认".into());
+                }
+                let current = snapshot(&parent, &name)?;
+                if current.as_ref().map(|(s, _)| hash(s.as_bytes())) != before {
+                    return Err("文件内容已变化，拒绝覆盖；请重新读取并生成差异".into());
+                }
+                let temp = TempFile {
+                    dir: &parent,
+                    path: PathBuf::from(format!(".cangling-agent-{}.tmp", uuid::Uuid::new_v4())),
+                };
+                let mut opts = cap_std::fs::OpenOptions::new();
+                opts.write(true).create_new(true);
+                #[cfg(unix)]
+                {
+                    use cap_std::fs::OpenOptionsExt;
+                    opts.mode(0o600);
+                }
+                let mut file = parent
+                    .open_with(&temp.path, &opts)
+                    .map_err(|_| "无法创建临时文件")?;
+                for bytes in after.as_bytes().chunks(8192) {
+                    check(&cancel)?;
+                    file.write_all(bytes).map_err(|_| "文件写入失败")?;
+                }
+                if let Some(p) = permissions {
+                    file.set_permissions(p).map_err(|_| "无法保留文件权限")?;
+                }
+                file.sync_all().map_err(|_| "文件同步失败")?;
+                drop(file);
+                check(&cancel)?;
+                let current = snapshot(&parent, &name)?;
+                if current.as_ref().map(|(s, _)| hash(s.as_bytes())) != before {
+                    return Err("文件内容已变化，拒绝覆盖".into());
+                }
+                if before.is_none() {
+                    parent
+                        .hard_link(&temp.path, &parent, &name)
+                        .map_err(|_| "目标已存在或文件系统不支持安全创建，未覆盖")?;
+                } else {
+                    parent
+                        .rename(&temp.path, &parent, &name)
+                        .map_err(|_| "无法原子替换目标文件")?;
+                }
+                Ok(
+                    json!({"applied":true,"path":self.review["path"],"bytes":after.len(),"sha256":hash(after.as_bytes())}),
+                )
+            }
+            Action::Command {
+                root,
+                cwd,
+                path,
+                command,
+                timeout,
+            } => {
+                no_links(&root, &path, false)?;
+                if !same_directory(&cwd, &root.open_dir(&path).map_err(|_| "执行目录已变化")?)?
+                {
+                    return Err("执行目录已变化，请重新确认".into());
+                }
+                command_run(cwd, &self.review, &command, timeout, cancel, &mut progress)
+            }
+        }
+    }
+}
+#[derive(Default)]
+struct Registry {
+    stopping: bool,
+    entries: Vec<Weak<AtomicBool>>,
+}
+fn registry() -> &'static Mutex<Registry> {
+    static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
+    REGISTRY.get_or_init(Default::default)
+}
+fn register(cancel: &Arc<AtomicBool>) -> Result<(), String> {
+    let mut registry = registry().lock().map_err(|_| "无法注册操作")?;
+    if registry.stopping {
+        return Err("Keeper 正在关闭，未执行操作".into());
+    }
+    registry.entries.retain(|e| e.strong_count() > 0);
+    registry.entries.push(Arc::downgrade(cancel));
+    Ok(())
+}
+pub(crate) fn is_shutting_down() -> bool {
+    registry().lock().map(|r| r.stopping).unwrap_or(true)
+}
+pub(crate) fn shutdown() {
+    if let Ok(mut active) = registry().lock() {
+        active.stopping = true;
+        for flag in active.entries.drain(..).filter_map(|f| f.upgrade()) {
+            flag.store(true, Ordering::Relaxed);
+        }
+    }
+}
+struct OwnedChild {
+    child: Child,
+    tree: Option<crate::sync_process::ProcessTree>,
+    terminated: bool,
+}
+impl OwnedChild {
+    fn terminate(&mut self) {
+        if self.terminated {
+            return;
+        }
+        self.terminated = true;
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(-(self.child.id() as i32), libc::SIGKILL);
+        }
+        self.tree.take();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        self.terminate();
+    }
+}
+fn command_run(
+    cwd: Dir,
+    review: &Value,
+    command: &str,
+    timeout: u64,
+    cancel: Arc<AtomicBool>,
+    progress: &mut impl FnMut(String),
+) -> Result<Value, String> {
+    check(&cancel)?;
+    let mut cmd = Command::new(review["shell"].as_str().ok_or("缺少 shell")?);
+    #[cfg(unix)]
+    {
+        use std::os::{fd::AsRawFd, unix::process::CommandExt};
+        cmd.args(["-c", command]).process_group(0);
+        let fd = cwd.as_raw_fd();
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::fchdir(fd) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        let _ = &cwd;
+        cmd.args(["/D", "/S", "/C", command])
+            .current_dir(review["directory"].as_str().ok_or("缺少执行目录")?);
+    }
+    cmd.env_clear();
+    for name in [
+        "PATH",
+        "HOME",
+        "USERPROFILE",
+        "SystemRoot",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "PATHEXT",
+        "APPDATA",
+    ] {
+        if let Some(v) = std::env::var_os(name) {
+            cmd.env(name, v);
+        }
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let (child, tree) =
+        crate::sync_process::spawn(&mut cmd).map_err(|e| format!("命令启动失败：{e}"))?;
+    let mut owned = OwnedChild {
+        child,
+        tree: Some(tree),
+        terminated: false,
+    };
+    let stdout = owned.child.stdout.take().ok_or("无法捕获标准输出")?;
+    let stderr = owned.child.stderr.take().ok_or("无法捕获标准错误")?;
+    let (tx, rx) = std::sync::mpsc::sync_channel(32);
+    fn reader(
+        mut source: impl Read + Send + 'static,
+        tx: std::sync::mpsc::SyncSender<(bool, Vec<u8>)>,
+        err: bool,
+    ) -> std::thread::JoinHandle<()> {
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 4096];
+            loop {
+                match source.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if tx.send((err, buf[..n].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        })
+    }
+    let out_thread = reader(stdout, tx.clone(), false);
+    let err_thread = reader(stderr, tx, true);
+    let start = Instant::now();
+    let mut last = Instant::now();
+    let mut last_progress = (0, 0, false);
+    let mut out = Vec::new();
+    let mut err = Vec::new();
+    let mut truncated = false;
+    let mut stopped = false;
+    let mut timed_out = false;
+    let mut exit = None;
+    loop {
+        for _ in 0..32 {
+            let Ok((is_err, chunk)) = rx.try_recv() else {
+                break;
+            };
+            let remaining = 32768usize.saturating_sub(out.len() + err.len());
+            truncated |= chunk.len() > remaining;
+            let dest = if is_err { &mut err } else { &mut out };
+            dest.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+        }
+        if last.elapsed() >= Duration::from_millis(100)
+            && last_progress != (out.len(), err.len(), truncated)
+        {
+            last_progress = (out.len(), err.len(), truncated);
+            progress(format!(
+                "[stdout]\n{}\n[stderr]\n{}{}",
+                String::from_utf8_lossy(&out),
+                String::from_utf8_lossy(&err),
+                if truncated { "\n[输出已截断]" } else { "" }
+            ));
+            last = Instant::now();
+        }
+        if cancel.load(Ordering::Relaxed) {
+            stopped = true;
+            owned.terminate();
+            break;
+        }
+        if start.elapsed() >= Duration::from_secs(timeout) {
+            timed_out = true;
+            owned.terminate();
+            break;
+        }
+        match owned.child.try_wait() {
+            Ok(Some(code)) => {
+                exit = code.code();
+                owned.terminate();
+                break;
+            }
+            Ok(None) => {}
+            Err(_) => {
+                owned.terminate();
+                return Err("无法获取命令状态".into());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Killing the owned tree also closes inherited pipes. Drain before joining readers.
+    while let Ok((is_err, chunk)) = rx.recv_timeout(Duration::from_millis(100)) {
+        let remaining = 32768usize.saturating_sub(out.len() + err.len());
+        truncated |= chunk.len() > remaining;
+        let dest = if is_err { &mut err } else { &mut out };
+        dest.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+    }
+    let _ = out_thread.join();
+    let _ = err_thread.join();
+    let result = json!({"exitCode":exit,"stdout":String::from_utf8_lossy(&out),"stderr":String::from_utf8_lossy(&err),"stopped":stopped,"timedOut":timed_out,"outputTruncated":truncated});
+    progress(serde_json::to_string_pretty(&result).unwrap_or_default());
+    Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn fixture() -> (PathBuf, Arc<Dir>) {
+        let path = std::env::temp_dir().join(format!("keeper-actions-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(path.join("sub")).unwrap();
+        let root = Arc::new(Dir::open_ambient_dir(&path, cap_std::ambient_authority()).unwrap());
+        (path, root)
+    }
+    fn flag() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+    #[test]
+    fn preparation_is_read_only_and_commits_exact_reviewed_content() {
+        let (path, root) = fixture();
+        let prepared = prepare(
+            root.clone(),
+            path.to_str().unwrap(),
+            "write_file",
+            &json!({"path":"hello.txt","content":"hello\n"}),
+            &flag(),
+        )
+        .unwrap();
+        assert!(!path.join("hello.txt").exists());
+        assert!(prepared.review["diff"].as_str().unwrap().contains("+hello"));
+        assert_eq!(prepared.execute(flag(), |_| {}).unwrap()["applied"], true);
+        assert_eq!(
+            std::fs::read_to_string(path.join("hello.txt")).unwrap(),
+            "hello\n"
+        );
+        let patch = prepare(
+            root.clone(),
+            path.to_str().unwrap(),
+            "apply_patch",
+            &json!({"path":"hello.txt","oldText":"hello","newText":"updated"}),
+            &flag(),
+        )
+        .unwrap();
+        assert!(patch.review["diff"].as_str().unwrap().contains("-hello"));
+        patch.execute(flag(), |_| {}).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(path.join("hello.txt")).unwrap(),
+            "updated\n"
+        );
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn conflict_cancellation_and_parent_replacement_do_not_overwrite() {
+        let (path, root) = fixture();
+        std::fs::write(path.join("hello.txt"), "before").unwrap();
+        let plan = prepare(
+            root.clone(),
+            "fixture",
+            "write_file",
+            &json!({"path":"hello.txt","content":"after"}),
+            &flag(),
+        )
+        .unwrap();
+        std::fs::write(path.join("hello.txt"), "user edit").unwrap();
+        assert!(plan.execute(flag(), |_| {}).is_err());
+        assert_eq!(
+            std::fs::read_to_string(path.join("hello.txt")).unwrap(),
+            "user edit"
+        );
+        let plan = prepare(
+            root.clone(),
+            "fixture",
+            "write_file",
+            &json!({"path":"new.txt","content":"new"}),
+            &flag(),
+        )
+        .unwrap();
+        assert!(
+            plan.execute(Arc::new(AtomicBool::new(true)), |_| {})
+                .is_err()
+        );
+        assert!(!path.join("new.txt").exists());
+        let plan = prepare(
+            root.clone(),
+            "fixture",
+            "write_file",
+            &json!({"path":"sub/new.txt","content":"new"}),
+            &flag(),
+        )
+        .unwrap();
+        std::fs::rename(path.join("sub"), path.join("moved")).unwrap();
+        std::fs::create_dir(path.join("sub")).unwrap();
+        assert!(plan.execute(flag(), |_| {}).is_err());
+        assert!(!path.join("moved/new.txt").exists());
+        assert!(!path.join("sub/new.txt").exists());
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn invalid_patches_and_outside_paths_never_prepare() {
+        let (path, root) = fixture();
+        std::fs::write(path.join("repeat.txt"), "same same").unwrap();
+        assert!(
+            prepare(
+                root.clone(),
+                "fixture",
+                "apply_patch",
+                &json!({"path":"repeat.txt","oldText":"same","newText":"other"}),
+                &flag()
+            )
+            .is_err()
+        );
+        for value in ["../outside", "/tmp/outside", ".env", "sub/../outside"] {
+            assert!(
+                prepare(
+                    root.clone(),
+                    "fixture",
+                    "write_file",
+                    &json!({"path":value,"content":"bad"}),
+                    &flag()
+                )
+                .is_err()
+            );
+        }
+        assert!(!path.join("outside").exists());
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn overlapping_patch_and_concurrent_write_conflicts_are_rejected() {
+        let (path, root) = fixture();
+        std::fs::write(path.join("overlap.txt"), "aaa").unwrap();
+        assert!(
+            prepare(
+                root.clone(),
+                "fixture",
+                "apply_patch",
+                &json!({"path":"overlap.txt","oldText":"aa","newText":"b"}),
+                &flag()
+            )
+            .is_err()
+        );
+        std::fs::write(path.join("same.txt"), "base").unwrap();
+        let first = prepare(
+            root.clone(),
+            "fixture",
+            "write_file",
+            &json!({"path":"same.txt","content":"first"}),
+            &flag(),
+        )
+        .unwrap();
+        let second = prepare(
+            root.clone(),
+            "fixture",
+            "write_file",
+            &json!({"path":"same.txt","content":"second"}),
+            &flag(),
+        )
+        .unwrap();
+        let a = std::thread::spawn(move || first.execute(flag(), |_| {}));
+        let b = std::thread::spawn(move || second.execute(flag(), |_| {}));
+        assert_eq!(
+            [a.join().unwrap(), b.join().unwrap()]
+                .iter()
+                .filter(|r| r.is_ok())
+                .count(),
+            1
+        );
+        let content = std::fs::read_to_string(path.join("same.txt")).unwrap();
+        assert!(content == "first" || content == "second");
+        assert!(!std::fs::read_dir(&path).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".cangling-agent-")
+        }));
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn command_captures_both_streams_and_times_out_tree() {
+        let (path, root) = fixture();
+        let plan = prepare(
+            root.clone(),
+            path.to_str().unwrap(),
+            "run_command",
+            &json!({"command":"printf out; printf err >&2","timeoutSeconds":5}),
+            &flag(),
+        )
+        .unwrap();
+        let result = plan.execute(flag(), |_| {}).unwrap();
+        assert_eq!(result["exitCode"], 0);
+        assert_eq!(result["stdout"], "out");
+        assert_eq!(result["stderr"], "err");
+        let plan = prepare(
+            root.clone(),
+            path.to_str().unwrap(),
+            "run_command",
+            &json!({"command":"sleep 10; printf bad > late.txt","timeoutSeconds":1}),
+            &flag(),
+        )
+        .unwrap();
+        let start = Instant::now();
+        let result = plan.execute(flag(), |_| {}).unwrap();
+        assert_eq!(result["timedOut"], true);
+        assert!(start.elapsed() < Duration::from_secs(3));
+        assert!(!path.join("late.txt").exists());
+        drop(root);
+        std::fs::remove_dir_all(path).unwrap();
+    }
+}

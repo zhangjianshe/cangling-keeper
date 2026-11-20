@@ -1,4 +1,4 @@
-//! Local agent foundation. No model is connected; tools are explicit user actions.
+//! Persistent conversations, read-only model tools and explicit maintenance approvals.
 //! Conversations and immutable approval requests survive browser refreshes in SQLite.
 use crate::{AppState, store::Store};
 use rusqlite::params;
@@ -57,6 +57,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     if !columns.iter().any(|c|c=="stop_requested"){store.conn.execute_batch("ALTER TABLE agent_model_pending ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0;").map_err(|e|e.to_string())?;}
     store.conn.execute_batch("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus','interrupted') WHERE id IN (SELECT message_id FROM agent_model_pending); INSERT INTO agent_messages(id,session_id,role,content,created_at) SELECT lower(hex(randomblob(16))),session_id,'error','Keeper 已重启，模型请求已中断；已生成的回复已保留，请重新发送消息。',CAST(strftime('%s','now') AS INTEGER)*1000 FROM agent_model_pending; DELETE FROM agent_model_pending;").map_err(|e|e.to_string())?;
     store.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_reply_versions (session_id TEXT NOT NULL,root_id TEXT NOT NULL,selected_id TEXT NOT NULL,PRIMARY KEY(session_id,root_id)); CREATE TABLE IF NOT EXISTS agent_model_contexts (message_id TEXT PRIMARY KEY,messages TEXT NOT NULL);").map_err(|e|e.to_string())?;
+    crate::agent_runtime::initialize(store)?;
     crate::model::initialize(store)?;
     let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
     let columns=store.conn.prepare("PRAGMA table_info(agent_sessions)").map_err(|e|e.to_string())?.query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
@@ -215,14 +216,15 @@ fn detail(store: &Store, session: &str) -> Result<Value, String> {
     require_session(store, session)?;
     let messages = reply_messages(store, session, None)?;
     let groups = reply_groups(store, session, &messages)?;
-    let mut stmt=store.conn.prepare("SELECT id,tool,arguments,status,output,created_at FROM agent_runs WHERE session_id=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
-    let rows=stmt.query_map([session],|r|Ok(json!({"id":r.get::<_,String>(0)?,"tool":r.get::<_,String>(1)?,"arguments":serde_json::from_str::<Value>(&r.get::<_,String>(2)?).unwrap_or(Value::Null),"status":r.get::<_,String>(3)?,"output":r.get::<_,String>(4)?,"createdAt":r.get::<_,i64>(5)?}))).map_err(|e|e.to_string())?;
+    let mut stmt=store.conn.prepare("SELECT id,tool,arguments,status,output,created_at,response_id,tool_call_id,step,updated_at FROM agent_runs WHERE session_id=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
+    let rows=stmt.query_map([session],|r|Ok(json!({"id":r.get::<_,String>(0)?,"tool":r.get::<_,String>(1)?,"arguments":serde_json::from_str::<Value>(&r.get::<_,String>(2)?).unwrap_or(Value::Null),"status":r.get::<_,String>(3)?,"output":r.get::<_,String>(4)?,"createdAt":r.get::<_,i64>(5)?,"responseId":r.get::<_,String>(6)?,"toolCallId":r.get::<_,String>(7)?,"step":r.get::<_,i64>(8)?,"updatedAt":r.get::<_,i64>(9)?}))).map_err(|e|e.to_string())?;
     let runs = rows
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
+    let mut runs=runs;for run in &mut runs {run["review"]=crate::agent_runtime::review(store,run["id"].as_str().unwrap())?;}
     let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[session],|r|r.get(0)).map_err(|e|e.to_string())?;
     let model=crate::model::session_config(store,session)?;
-    Ok(json!({"sessionId":session,"model":model,"messages":messages,"replyGroups":groups,"runs":runs,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
+    Ok(json!({"sessionId":session,"model":model,"messages":messages,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
 }
 fn host_snapshot(store: &Store, host_id: &str) -> Result<Value, String> {
     let h = store.get_host(host_id)?;
@@ -269,7 +271,7 @@ fn create_run(
 }
 fn decide(store: &Store, run: &str, approved: bool) -> Result<(), String> {
     let status = if approved { "running" } else { "rejected" };
-    let count=store.conn.execute("UPDATE agent_runs SET status=?2,updated_at=?3 WHERE id=?1 AND status='pending_approval'",params![run,status,now()]).map_err(|e|e.to_string())?;
+    let count=store.conn.execute("UPDATE agent_runs SET status=?2,updated_at=?3 WHERE id=?1 AND status='pending_approval' AND response_id=''",params![run,status,now()]).map_err(|e|e.to_string())?;
     if count != 1 {
         return Err("工具请求已处理或不存在，不能重复执行".into());
     }
@@ -370,7 +372,7 @@ fn launch_model(core:Arc<AppState>,session:String,response_id:String,cancel_rx:t
                 let model_core=core;let model_session=session;
                 tokio::spawn(async move{
                     let progress_sink=sink.clone();
-                    let response=crate::model::reply(&model_core,&model_session,&response_id,cancel_rx,|content|{
+                    let response=crate::model::reply(&model_core,&model_session,&response_id,cancel_rx,sink.clone(),|content|{
                         let store=model_core.store.lock().map_err(|e|e.to_string())?;
                         store.conn.execute("UPDATE agent_messages SET content=?2 WHERE id=?1 AND session_id=?3",params![response_id,content,model_session]).map_err(|e|e.to_string())?;
                         progress_sink.emit_json("agent-model-stream",json!({"sessionId":model_session,"messageId":response_id,"content":content}));Ok(())
@@ -379,6 +381,7 @@ fn launch_model(core:Arc<AppState>,session:String,response_id:String,cancel_rx:t
                         if let Ok(tx)=store.conn.unchecked_transaction(){
                             let status=match &response{Ok(crate::model::ReplyFinish::Complete)=>"complete",Ok(crate::model::ReplyFinish::Stopped)=>"stopped",Err(_)=>"failed"};
                             let _=store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus',?2) WHERE id=?1",params![response_id,status]);
+                            let _=crate::agent_runtime::finish(&store,&model_session,&response_id,status);
                             let result=match response{Ok(_)=>Ok(()),Err(error)=>message(&store,&model_session,"error",&error)};
                             if result.is_ok(){let _=store.conn.execute("DELETE FROM agent_model_pending WHERE session_id=?1",[&model_session]);let _=tx.commit();}
                         }
@@ -582,6 +585,10 @@ pub(crate) async fn dispatch(
                 launch(core, run["id"].as_str().unwrap().into());
             }
             Ok(run)
+        }
+        "agent_review_tool" => {
+            let session=text(&args,"sessionId")?;let run=text(&args,"runId")?;let hash=text(&args,"reviewHash")?;let approved=args["approved"].as_bool().ok_or("缺少确认决定")?;
+            let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_runtime::decide(&store,&session,&run,&hash,approved)?;detail(&store,&session)
         }
         "agent_decide_tool" => {
             let run = text(&args, "runId")?;

@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Isolated read-only agent loop fixture. All model requests stay on localhost."""
+import asyncio,http.server,json,os,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.error,urllib.request
+from pathlib import Path
+import websockets
+release=threading.Event();requests=[];preview='--preview' in sys.argv
+class API(http.server.BaseHTTPRequestHandler):
+ def log_message(self,*args):pass
+ def do_POST(self):
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  assert {t['function']['name'] for t in body['tools']}=={'list_directory','read_file','search_files','write_file','apply_patch','run_command'}
+  assert self.headers['Authorization']=='Bearer fixture-only-key'
+  user=next(m['content'] for m in reversed(body['messages']) if m['role']=='user')
+  results=[m for m in body['messages'] if m['role']=='tool']
+  self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
+  def event(delta,reason=None):
+   packet=('data: '+json.dumps({'model':'fixture-agent','choices':[{'delta':delta,'finish_reason':reason}]},ensure_ascii=False)+'\r\n\r\n').encode()
+   for i in range(0,len(packet),5):self.wfile.write(packet[i:i+5]);self.wfile.flush()
+  def tools(calls,broken=False):
+   event({'content':'我先检查项目文件。'})
+   for index,(name,args) in enumerate(calls):
+    arg=json.dumps(args,ensure_ascii=False);split=max(1,len(arg)//2)
+    event({'tool_calls':[{'index':index,'id':'call-'+str(len(results))+'-'+str(index),'type':'function','function':{'name':name,'arguments':arg[:split]}}]})
+    if broken:release.wait(10);return
+    event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
+   event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
+  try:
+   if 'broken' in user:tools([('read_file',{'path':'README.md'})],True);return
+   if 'escape' in user and not results:
+    tools([('read_file',{'path':'../secret.txt'}),('not_registered',{'command':'touch unsafe'}),('search_files',{'query':''})]);return
+   if 'loop' in user:tools([('list_directory',{})]);return
+   if not results:tools([('list_directory',{'path':'.'})]);return
+   if 'escape' not in user and len(results)==1:
+    assert any(e['name']=='README.md' for e in json.loads(results[0]['content'])['entries'])
+    tools([('read_file',{'path':'README.md','startLine':1,'lineCount':10}),('search_files',{'query':'needle'})]);return
+   if 'escape' in user:
+    assert all('error' in json.loads(m['content']) for m in results)
+   else:
+    assert json.loads(results[1]['content'])['lines'][0]['text']=='# Fixture project'
+    assert len(json.loads(results[2]['content'])['matches'])>=2
+   event({'content':'已读取项目资料，正在整理总结。'})
+   if 'escape' not in user:release.wait(300 if preview else 30)
+   event({'content':'\n\n项目包含 README.md 和 src/main.rs；检索到了 needle。' if 'escape' not in user else '已拒绝越界和未开放操作。'},'stop')
+   self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
+  except (BrokenPipeError,ConnectionResetError):pass
+api=http.server.ThreadingHTTPServer(('127.0.0.1',0),API);threading.Thread(target=api.serve_forever,daemon=True).start()
+with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
+ with socket.socket() as s:s.bind(('127.0.0.1',0));port=s.getsockname()[1]
+ base=f'http://127.0.0.1:{port}';process=None;log=open(Path(folder)/'server.log','wb')
+ def call(name,args=None,expected=200):
+  request=urllib.request.Request(base+'/api/invoke/'+name,data=json.dumps(args or {}).encode(),headers={'Content-Type':'application/json','Origin':base})
+  try:
+   with urllib.request.urlopen(request,timeout=10) as r:status=r.status;data=json.load(r)
+  except urllib.error.HTTPError as e:status=e.code;data=json.load(e)
+  assert status==expected,(name,status,data)
+  return data.get('result') if status==200 else data
+ def start():
+  global process
+  process=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'HOME':folder,'TMPDIR':folder},stdout=log,stderr=log)
+  for _ in range(100):
+   try:call('agent_bootstrap');return
+   except Exception:time.sleep(.05)
+  raise RuntimeError('Keeper startup failed')
+ def wait_for(session,predicate):
+  for _ in range(200):
+   detail=call('agent_session',{'sessionId':session})
+   if predicate(detail):return detail
+   time.sleep(.025)
+  raise AssertionError('Session did not reach expected state')
+ def session(prompt):
+  s=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':s,'content':prompt});return s
+ events=[];untrusted_events=[];ready=threading.Event();untrusted_ready=threading.Event()
+ async def collect(trusted=True):
+  async with websockets.connect(base.replace('http:','ws:')+'/api/events',origin=base if trusted else 'http://untrusted.invalid') as ws:
+   (ready if trusted else untrusted_ready).set()
+   try:
+    async for raw in ws:(events if trusted else untrusted_events).append(json.loads(raw))
+   except websockets.ConnectionClosed:pass
+ try:
+  start();root=Path(call('agent_bootstrap')['projects'][0]['directory']);(root/'src').mkdir();(root/'README.md').write_text('# Fixture project\nproject needle\n');(root/'src/main.rs').write_text('fn main() { /* needle */ }\n');(root.parent/'secret.txt').write_text('never-expose-outside-project')
+  call('agent_model_save',{'enabled':True,'baseUrl':f'http://127.0.0.1:{api.server_port}','model':'fixture','apiKey':'fixture-only-key'})
+  threading.Thread(target=lambda:asyncio.run(collect()),daemon=True).start();assert ready.wait(5)
+  threading.Thread(target=lambda:asyncio.run(collect(False)),daemon=True).start();assert untrusted_ready.wait(5)
+  normal=session('阅读项目并总结 normal')
+  detail=wait_for(normal,lambda d:len(d['runs'])==3 and all(r['status']=='succeeded' for r in d['runs']) and '正在整理' in d['messages'][-1]['content'])
+  assert detail['modelPending'] and detail['tasks'][-1]['status']=='model'
+  assert len({r['toolCallId'] for r in detail['runs']})==3
+  assert all(r['responseId']==detail['streamingMessageId'] for r in detail['runs'])
+  fresh=call('agent_session',{'sessionId':normal});assert fresh['runs']==detail['runs']
+  assert any(e['event']=='agent-tool-update' and e['payload']['status']=='running' for e in events)
+  assert any(e['event']=='agent-tool-update' and e['payload']['status']=='succeeded' for e in events)
+  assert not any(e['event'].startswith('agent-') for e in untrusted_events),'cross-origin WebSocket must not receive file contents'
+  if preview:
+   print(json.dumps({'url':base,'session':normal,'directory':str(root)}),flush=True);input();release.set();wait_for(normal,lambda d:not d['modelPending']);print('Completed.',flush=True);input()
+  else:
+   call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
+   stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   complete=session('阅读项目并总结 complete');complete_detail=wait_for(complete,lambda d:not d['modelPending']);assert complete_detail['tasks'][-1]['status']=='complete';assert len(complete_detail['runs'])==3
+   # A regenerated answer owns a separate tool history and selects the new version.
+   source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
+   escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert all(r['status']=='failed' for r in escaped['runs']);assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
+   looping=session('loop');looped=wait_for(looping,lambda d:not d['modelPending']);assert looped['tasks'][-1]['status']=='failed' and len(looped['runs'])==8
+   release.clear();broken=session('broken');partial=wait_for(broken,lambda d:bool(d['messages'][-1]['content']));call('agent_stop_generation',{'sessionId':broken,'messageId':partial['streamingMessageId']});assert wait_for(broken,lambda d:not d['modelPending'])['runs']==[]
+   interrupted=session('阅读项目并总结 restart');persisted=wait_for(interrupted,lambda d:len(d['runs'])==3 and '正在整理' in d['messages'][-1]['content']);count=len(requests)
+   process.terminate();process.wait(timeout=10);start();restored=call('agent_session',{'sessionId':interrupted});assert not restored['modelPending'] and restored['tasks'][-1]['status']=='interrupted';assert len(restored['runs'])==3
+   time.sleep(.1);assert len(requests)==count,'restart must not replay tools or model calls'
+   with sqlite3.connect(Path(folder)/'data.sql') as db:assert db.execute('SELECT count(*) FROM agent_events WHERE response_id=?',(persisted['streamingMessageId'],)).fetchone()[0]>5
+   print('ReAct checks passed: fragmented native tool calls, multi-round results, realtime events, reload snapshots, stop, regeneration isolation, denied paths/tools, round limit and restart without replay.')
+ finally:
+  release.set()
+  if process and process.poll() is None:process.terminate();process.wait(timeout=10)
+  log.close();api.shutdown();api.server_close()

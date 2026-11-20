@@ -129,6 +129,11 @@ fn default_data_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "无法确定用户数据目录，请使用 --data-dir 指定".into())
 }
 
+async fn termination_signal(){
+    #[cfg(unix)]{if let Ok(mut signal)=tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()){signal.recv().await;}else{std::future::pending::<()>().await;}}
+    #[cfg(not(unix))]std::future::pending::<()>().await;
+}
+
 async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), String> {
     proxy::ensure_loopback_not_proxied();
     let core = Arc::new(create_app_state(data_dir).map_err(|error| error.to_string())?);
@@ -144,7 +149,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
         .route("/api/events", get(events_socket))
         .route("/api/invoke/{command}", post(invoke))
         .fallback(static_asset)
-        .with_state(state);
+        .with_state(state.clone());
     let listener = tokio::net::TcpListener::bind(address)
         .await
         .map_err(|error| format!("监听 {address} 失败：{error}"))?;
@@ -163,15 +168,19 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async {
+    .with_graceful_shutdown(async move {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {},
             _ = shutdown_rx => {},
+            _ = termination_signal() => {},
         }
+        crate::agent_actions::shutdown();
+        state.emit("server-shutdown",json!({}));
         crate::sync_process::shutdown();
     })
     .await
     .map_err(|error| error.to_string());
+    crate::agent_actions::shutdown();
     crate::sync_process::shutdown();
     result
 }
@@ -195,15 +204,18 @@ async fn static_asset(uri: Uri) -> Response {
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-async fn events_socket(State(state): State<WebState>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| forward_events(socket, state.events.subscribe()))
+async fn events_socket(ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap, State(state): State<WebState>, upgrade: WebSocketUpgrade) -> Response {
+    let allow_agent=authorize_root_install(peer,&headers).is_ok();
+    upgrade.on_upgrade(move |socket| forward_events(socket, state.events.subscribe(),allow_agent))
 }
 
-async fn forward_events(mut socket: WebSocket, mut events: broadcast::Receiver<WebEvent>) {
+async fn forward_events(mut socket: WebSocket, mut events: broadcast::Receiver<WebEvent>,allow_agent:bool) {
     loop {
         tokio::select! {
             event = events.recv() => match event {
                 Ok(event) => {
+                    if event.event=="server-shutdown" {break;}
+                    if event.event.starts_with("agent-") && !allow_agent {continue;}
                     let Ok(text) = serde_json::to_string(&event) else { continue };
                     if socket.send(Message::Text(text.into())).await.is_err() { break; }
                 }
