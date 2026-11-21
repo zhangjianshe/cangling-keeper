@@ -401,11 +401,12 @@ pub(crate) async fn dispatch(
         "agent_mcp_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;let result=crate::agent_mcp::delete(&store,&text(&args,"id")?)?;core.mcp_pool.clear()?;Ok(result)}
         "agent_mcp_refresh" => {
             let id=text(&args,"id")?;
-            let (owner,server)={let store=core.store.lock().map_err(|e|e.to_string())?;let owner=crate::agent_account::owner(&store)?;let server=crate::agent_mcp::list(&store)?.as_array().unwrap().iter().find(|s|s["id"]==id).cloned().ok_or("MCP 服务不存在")?;(owner,server)};
-            let tools=crate::agent_mcp::merge_selection(&server,crate::agent_mcp::discover(&server).await?);
+            let (owner,server,launch)={let store=core.store.lock().map_err(|e|e.to_string())?;let owner=crate::agent_account::owner(&store)?;let server=crate::agent_mcp::list(&store)?.as_array().unwrap().iter().find(|s|s["id"]==id).cloned().ok_or("MCP 服务不存在")?;let launch=crate::agent_mcp::launch_config(&store,&server)?;(owner,server,launch)};
+            let tools=crate::agent_mcp::merge_selection(&server,crate::agent_mcp::discover(&launch).await?);
             let store=core.store.lock().map_err(|e|e.to_string())?;
             if crate::agent_account::owner(&store)?!=owner {return Err("账号已切换，请重试".into());}
-            let updated=store.conn.execute("UPDATE agent_mcp_servers SET tools=?1,enabled=1 WHERE id=?2 AND owner_key=?3 AND command=?4 AND args=?5 AND transport=?6",params![json!(tools).to_string(),id,owner,server["command"].as_str().unwrap(),server["args"].to_string(),server["transport"].as_str().unwrap()]).map_err(|e|e.to_string())?;
+            if !crate::agent_mcp::list(&store)?.as_array().unwrap().iter().any(|current|current==&server){return Err("MCP 服务配置已变更，请重试".into());}
+            let updated=store.conn.execute("UPDATE agent_mcp_servers SET tools=?1,enabled=1 WHERE id=?2 AND owner_key=?3 AND command=?4 AND args=?5 AND transport=?6 AND environment_revision=?7 AND project_ids=?8",params![json!(tools).to_string(),id,owner,server["command"].as_str().unwrap(),server["args"].to_string(),server["transport"].as_str().unwrap(),server["environmentRevision"].as_str().unwrap_or(""),server["projectIds"].to_string()]).map_err(|e|e.to_string())?;
             if updated!=1{return Err("MCP 服务配置已变更，请重试".into());}core.mcp_pool.clear()?;crate::agent_mcp::list(&store)
         }
         "agent_model_config" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::config(&store)}

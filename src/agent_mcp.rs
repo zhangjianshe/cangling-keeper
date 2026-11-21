@@ -1,5 +1,7 @@
 //! Local MCP stdio connections and persisted, user-configured server metadata.
 use crate::store::Store;
+#[path = "agent_mcp_settings.rs"]
+mod settings;
 use rusqlite::params;
 use serde_json::{Value, json};
 use std::{process::Stdio, time::Duration};
@@ -26,14 +28,48 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
             )
             .map_err(|e| e.to_string())?;
     }
+    let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
+    for (name,statement) in [
+        ("environment","ALTER TABLE agent_mcp_servers ADD COLUMN environment TEXT NOT NULL DEFAULT '{}';"),
+        ("environment_revision","ALTER TABLE agent_mcp_servers ADD COLUMN environment_revision TEXT NOT NULL DEFAULT '';"),
+        ("project_ids","ALTER TABLE agent_mcp_servers ADD COLUMN project_ids TEXT NOT NULL DEFAULT 'null';"),
+    ] {
+        if !columns.iter().any(|column|column==name){store.conn.execute_batch(statement).map_err(|e|e.to_string())?;}
+    }
+    tx.commit().map_err(|e|e.to_string())?;
     Ok(())
+}
+fn environment(store:&Store,id:&str,owner:&str)->Result<Value,String>{
+    let raw:String=store.conn.query_row("SELECT environment FROM agent_mcp_servers WHERE id=?1 AND owner_key=?2",params![id,owner],|r|r.get(0)).map_err(|_|"MCP 环境配置不存在或无法读取")?;
+    let value:Value=serde_json::from_str(&raw).map_err(|_|"MCP 环境配置无效")?;
+    settings::environment(&value,None)
 }
 pub(crate) fn list(store: &Store) -> Result<Value, String> {
     let owner = crate::agent_account::owner(store)?;
-    let mut stmt=store.conn.prepare("SELECT id,name,command,args,enabled,tools,transport FROM agent_mcp_servers WHERE owner_key=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
-    let rows=stmt.query_map([owner],|r|Ok(json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"command":r.get::<_,String>(2)?,"args":serde_json::from_str::<Value>(&r.get::<_,String>(3)?).unwrap_or(json!([])),"enabled":r.get::<_,bool>(4)?,"tools":serde_json::from_str::<Value>(&r.get::<_,String>(5)?).unwrap_or(json!([])),"transport":r.get::<_,String>(6)?}))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
-    Ok(json!(rows))
+    let mut stmt=store.conn.prepare("SELECT id,name,command,args,enabled,tools,transport,environment,environment_revision,project_ids FROM agent_mcp_servers WHERE owner_key=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
+    let rows=stmt.query_map([owner],|r|Ok((json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"command":r.get::<_,String>(2)?,"args":serde_json::from_str::<Value>(&r.get::<_,String>(3)?).unwrap_or(json!([])),"enabled":r.get::<_,bool>(4)?,"tools":serde_json::from_str::<Value>(&r.get::<_,String>(5)?).unwrap_or(json!([])),"transport":r.get::<_,String>(6)?,"environmentRevision":r.get::<_,String>(8)?}),r.get::<_,String>(7)?,r.get::<_,String>(9)?))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+    let mut result=Vec::new();
+    for (mut item,raw_environment,raw_projects) in rows {
+        let values:Value=serde_json::from_str(&raw_environment).map_err(|_|"MCP 环境配置无效")?;
+        let validated=settings::environment(&values,None)?;
+        item["environmentKeys"]=json!(validated.as_object().ok_or("MCP 环境配置无效")?.keys().cloned().collect::<Vec<_>>());
+        item["projectIds"]=serde_json::from_str::<Value>(&raw_projects).map_err(|_|"MCP 项目范围配置无效")?;
+        result.push(item);
+    }
+    Ok(json!(result))
 }
+/// Build the private process configuration only at the launch boundary.
+/// Values must never enter public lists, approvals, model definitions or cache fingerprints.
+pub(crate) fn launch_config(store:&Store,server:&Value)->Result<Value,String>{
+    let owner=crate::agent_account::owner(store)?;
+    let public=list(store)?.as_array().unwrap().iter().find(|s|s["id"]==server["id"] && *s==server).cloned().ok_or("MCP 服务配置已变更，请重试")?;
+    let mut launch=public;
+    if launch["transport"]=="stdio" {
+        launch["_keeperEnvironment"]=environment(store,launch["id"].as_str().ok_or("MCP 服务无效")?,&owner)?;
+    }
+    Ok(launch)
+}
+
 pub(crate) fn save(store: &Store, args: &Value) -> Result<Value, String> {
     let owner = crate::agent_account::owner(store)?;
     let name = args["name"].as_str().unwrap_or("").trim();
@@ -75,16 +111,22 @@ pub(crate) fn save(store: &Store, args: &Value) -> Result<Value, String> {
     if args["id"].as_str().is_some_and(|s| !s.is_empty()) && existing.is_none() {
         return Err("MCP 服务不存在或不属于当前账号".into());
     }
+    let previous_environment=if existing.is_some(){environment(store,&id,&owner)?}else{json!({})};
+    if transport!="stdio" && args.get("environmentChanges").is_some_and(|value|!value.as_object().is_some_and(|object|object.is_empty())) {
+        return Err("只有本机 stdio MCP 服务可以设置环境变量".into());
+    }
+    let next_environment=if transport=="stdio" {settings::environment(&previous_environment,args.get("environmentChanges"))?}else{json!({})};
+    let environment_changed=previous_environment!=next_environment;
+    let environment_revision=if environment_changed{uuid::Uuid::new_v4().to_string()}else{existing.as_ref().and_then(|s|s["environmentRevision"].as_str()).unwrap_or("").to_owned()};
+    let previous_projects=existing.as_ref().map(|s|s["projectIds"].clone()).unwrap_or(Value::Null);
+    let projects=settings::project_ids(store,args.get("projectIds"),&previous_projects)?;
     let unchanged = existing.as_ref().is_some_and(|v| {
-        v["command"] == command && v["args"] == args["args"] && v["transport"] == transport
+        v["command"] == command && v["args"] == args["args"] && v["transport"] == transport && !environment_changed
     });
-    let tools = if unchanged {
-        existing.as_ref().unwrap()["tools"].to_string()
-    } else {
-        "[]".to_string()
-    };
-    let enabled = unchanged && args["enabled"] == true;
-    store.conn.execute("INSERT INTO agent_mcp_servers(id,owner_key,name,command,args,enabled,tools,transport) VALUES (?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(id) DO UPDATE SET name=excluded.name,command=excluded.command,args=excluded.args,enabled=excluded.enabled,tools=excluded.tools,transport=excluded.transport WHERE owner_key=excluded.owner_key",params![id,owner,name,command,json!(argv).to_string(),enabled,tools,transport]).map_err(|e|e.to_string())?;
+    let tools = if unchanged {existing.as_ref().unwrap()["tools"].to_string()} else {"[]".to_string()};
+    let requested_enabled=match args.get("enabled") {None=>existing.as_ref().is_some_and(|s|s["enabled"]==true),Some(v)=>v.as_bool().ok_or("MCP 启用状态必须是布尔值")?};
+    let enabled = unchanged && requested_enabled;
+    store.conn.execute("INSERT INTO agent_mcp_servers(id,owner_key,name,command,args,enabled,tools,transport,environment,environment_revision,project_ids) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO UPDATE SET name=excluded.name,command=excluded.command,args=excluded.args,enabled=excluded.enabled,tools=excluded.tools,transport=excluded.transport,environment=excluded.environment,environment_revision=excluded.environment_revision,project_ids=excluded.project_ids WHERE owner_key=excluded.owner_key",params![id,owner,name,command,json!(argv).to_string(),enabled,tools,transport,next_environment.to_string(),environment_revision,projects.to_string()]).map_err(|e|e.to_string())?;
     Ok(json!({"id":id,"servers":list(store)?}))
 }
 pub(crate) fn delete(store: &Store, id: &str) -> Result<Value, String> {
@@ -133,6 +175,12 @@ impl StdioClient {
         ] {
             if let Some(value) = std::env::var_os(key) {
                 process.env(key, value);
+            }
+        }
+        if let Some(values)=server.get("_keeperEnvironment") {
+            let environment=settings::environment(values,None)?;
+            for (name,value) in environment.as_object().ok_or("MCP 环境配置无效")? {
+                process.env(name,value.as_str().ok_or("MCP 环境配置无效")?);
             }
         }
         #[cfg(unix)]
@@ -262,25 +310,33 @@ pub(crate) async fn discover(server: &Value) -> Result<Vec<Value>, String> {
     }).await.map_err(|_|"MCP Server 连接超时".to_owned())?
 }
 
-pub(crate) fn definitions(store: &Store) -> Result<Vec<Value>, String> {
-    let servers = list(store)?;
+fn session_project(store:&Store,session:&str)->Result<String,String>{
+    crate::agent_history::require_active(store,session)?;
+    store.conn.query_row("SELECT project_id FROM agent_sessions WHERE id=?1",[session],|r|r.get(0)).map_err(|_|"MCP 会话项目不存在".to_owned())
+}
+fn require_scope(store:&Store,session:&str,server:&Value)->Result<String,String>{
+    let project=session_project(store,session)?;
+    if !settings::applies(&server["projectIds"],&project){return Err("当前项目未启用此 MCP 服务".into());}
+    Ok(project)
+}
+fn definitions_from(servers:Value,project:Option<&str>)->Vec<Value>{
     let mut result = Vec::new();
-    for server in servers
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|s| s["enabled"] == true)
-    {
+    for server in servers.as_array().unwrap().iter().filter(|s|s["enabled"]==true && project.is_none_or(|project|settings::applies(&s["projectIds"],project))) {
         for (index, tool) in server["tools"].as_array().unwrap().iter().enumerate() {
-            if !selected(tool, index) {
-                continue;
-            }
+            if !selected(tool,index){continue;}
             let title=tool["title"].as_str().unwrap_or_else(||tool["name"].as_str().unwrap_or(""));
             result.push(json!({"type":"function","function":{"name":tool_id(server,tool,index),"description":format!("MCP 服务 {} / {}: {}",server["name"].as_str().unwrap_or(""),title,tool["description"].as_str().unwrap_or("")),"parameters":tool["inputSchema"]}}));
         }
     }
-    Ok(result)
+    result
 }
+// Kept for internal compatibility; model requests must use definitions_for.
+pub(crate) fn definitions(store:&Store)->Result<Vec<Value>,String>{Ok(definitions_from(list(store)?,None))}
+pub(crate) fn definitions_for(store:&Store,session:&str)->Result<Vec<Value>,String>{
+    let project=session_project(store,session)?;
+    Ok(definitions_from(list(store)?,Some(&project)))
+}
+
 fn selected(tool: &Value, index: usize) -> bool {
     tool["enabled"].as_bool().unwrap_or(tool.get("kind").is_none() && index < 8)
 }
@@ -389,6 +445,11 @@ pub(crate) fn resolve(store: &Store, name: &str) -> Result<(Value, Value), Strin
         return Err("MCP 工具配置已变更，请重试".into());
     }
     Ok((server, tool))
+}
+pub(crate) fn resolve_for(store:&Store,session:&str,name:&str)->Result<(Value,Value),String>{
+    let (server,tool)=resolve(store,name)?;
+    require_scope(store,session,&server)?;
+    Ok((server,tool))
 }
 // Only idle connections live in the pool. A checked-out connection is owned by a
 // lease, so dropping an interrupted request always drops its transport too.
@@ -539,12 +600,11 @@ pub(crate) async fn call(
     tool: &Value,
     args: &Value,
 ) -> Result<Value, String> {
-    let owner = {
+    let (owner,launch) = {
         let store = core.store.lock().map_err(|e| e.to_string())?;
-        if !crate::agent_account::owns(&store, session) {
-            return Err("会话不属于当前账号".into());
-        }
-        crate::agent_account::owner(&store)?
+        require_scope(&store,session,server)?;
+        if server["enabled"]!=true || !server["tools"].as_array().is_some_and(|items|items.iter().enumerate().any(|(index,item)|item==tool && selected(item,index))){return Err("MCP 工具未启用或配置已变更".into());}
+        (crate::agent_account::owner(&store)?,launch_config(&store,server)?)
     };
     let native=tool["kind"].as_str();
     let (method,parameters)=if native.is_some(){crate::agent_mcp_content::params(tool,args)?}else{("tools/call".to_owned(),json!({"name":tool["name"],"arguments":args}))};
@@ -557,7 +617,7 @@ pub(crate) async fn call(
     let mut lease = core.mcp_pool.checkout(key)?;
     let result=tokio::time::timeout(Duration::from_secs(60),async {
         if lease.connection.is_none(){
-            let client=tokio::select!{biased;_=&mut lease.invalidated=>return Err("MCP 连接已断开或配置已变更".to_string()),result=Client::start(server)=>result?};
+            let client=tokio::select!{biased;_=&mut lease.invalidated=>return Err("MCP 连接已断开或配置已变更".to_string()),result=Client::start(&launch)=>result?};
             lease.connection=Some(Connection{client,next_id:2});
         }
         let connection=lease.connection.as_mut().unwrap();
@@ -574,7 +634,7 @@ pub(crate) async fn call(
     let valid = {
         let store = core.store.lock().map_err(|e| e.to_string())?;
         crate::agent_account::owner(&store)? == owner
-            && crate::agent_account::owns(&store, session)
+            && require_scope(&store,session,server).is_ok()
             && list(&store)?
                 .as_array()
                 .unwrap()
@@ -622,6 +682,51 @@ mod pool_tests {
         assert_eq!(merged[0]["enabled"],false);
         let merged=merge_selection(&json!({"tools":[]}),vec![json!({"name":"read_file","inputSchema":{"type":"object"}})]);
         assert_eq!(merged[0]["enabled"],true);
+    }
+    fn settings_store()->Store {
+        let store=Store{conn:rusqlite::Connection::open_in_memory().unwrap()};
+        store.conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE agent_projects(id TEXT PRIMARY KEY,name TEXT,directory TEXT,created_at INTEGER); INSERT INTO agent_projects VALUES ('p1','One','/tmp/one',0),('p2','Two','/tmp/two',0); CREATE TABLE agent_sessions(id TEXT PRIMARY KEY,title TEXT,updated_at INTEGER,project_id TEXT,pinned INTEGER,owner_key TEXT,archived_at INTEGER DEFAULT 0,deleted_at INTEGER DEFAULT 0); INSERT INTO agent_sessions(id,title,updated_at,project_id,pinned,owner_key) VALUES ('s1','one',0,'p1',0,'guest'),('s2','two',0,'p2',0,'guest'),('foreign','hidden',0,'p1',0,'other');").unwrap();
+        initialize(&store).unwrap();store
+    }
+    fn settings_server(store:&Store)->Value {
+        save(store,&json!({"name":"Fixture","command":"fixture-command","args":[],"transport":"stdio","environmentChanges":{"TEST_TOKEN":"private-env-sentinel","EMPTY":""},"projectIds":["p1"]})).unwrap()["servers"][0].clone()
+    }
+    fn enable_fixture(store:&Store,id:&str){
+        let tools=json!([{"name":"read_fixture","enabled":true,"inputSchema":{"type":"object","properties":{}}}]);
+        store.conn.execute("UPDATE agent_mcp_servers SET enabled=1,tools=?2 WHERE id=?1",params![id,tools.to_string()]).unwrap();
+    }
+    #[test]
+    fn legacy_schema_adds_private_environment_and_global_scope_without_changing_rows(){
+        let store=Store{conn:rusqlite::Connection::open_in_memory().unwrap()};
+        store.conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE agent_mcp_servers(id TEXT PRIMARY KEY,owner_key TEXT,name TEXT,command TEXT,args TEXT,enabled INTEGER,tools TEXT); INSERT INTO agent_mcp_servers VALUES ('legacy','guest','Legacy','tool','[]',1,'[]');").unwrap();
+        initialize(&store).unwrap();initialize(&store).unwrap();let servers=list(&store).unwrap();
+        assert_eq!(servers[0]["name"],"Legacy");assert_eq!(servers[0]["enabled"],true);assert_eq!(servers[0]["environmentKeys"],json!([]));assert_eq!(servers[0]["environmentRevision"],"");assert_eq!(servers[0]["projectIds"],Value::Null);
+    }
+    #[test]
+    fn environment_is_private_and_patch_revisions_change_only_with_values(){
+        let store=settings_store();let initial=settings_server(&store);let id=initial["id"].as_str().unwrap();
+        assert!(!initial.to_string().contains("private-env-sentinel"));assert!(uuid::Uuid::parse_str(initial["environmentRevision"].as_str().unwrap()).is_ok());
+        assert_eq!(launch_config(&store,&initial).unwrap()["_keeperEnvironment"]["TEST_TOKEN"],"private-env-sentinel");
+        enable_fixture(&store,id);let mut old=list(&store).unwrap()[0].clone();let revision=old["environmentRevision"].clone();
+        old.as_object_mut().unwrap().remove("enabled");let unchanged=save(&store,&old).unwrap()["servers"][0].clone();
+        assert_eq!(unchanged["enabled"],true);assert_eq!(unchanged["projectIds"],json!(["p1"]));assert_eq!(unchanged["environmentRevision"],revision);
+        let mut patch=unchanged.clone();patch["environmentChanges"]=json!({"TEST_TOKEN":"private-env-sentinel"});
+        assert_eq!(save(&store,&patch).unwrap()["servers"][0]["environmentRevision"],revision);
+        patch["environmentChanges"]=json!({"TEST_TOKEN":null,"NEW_TOKEN":"different-private-value"});let changed=save(&store,&patch).unwrap()["servers"][0].clone();
+        assert_ne!(changed["environmentRevision"],revision);assert_eq!(changed["enabled"],false);assert_eq!(changed["tools"],json!([]));assert_eq!(changed["environmentKeys"],json!(["EMPTY","NEW_TOKEN"]));assert!(!changed.to_string().contains("different-private-value"));
+        assert!(launch_config(&store,&unchanged).is_err());
+        let mut remote=changed.clone();remote["transport"]=json!("http");remote["command"]=json!("https://fixture.invalid/mcp");
+        let saved=save(&store,&remote).unwrap()["servers"][0].clone();assert_eq!(saved["environmentKeys"],json!([]));assert!(launch_config(&store,&saved).unwrap().get("_keeperEnvironment").is_none());
+        remote["environmentChanges"]=json!({"NEW_TOKEN":"should-not-be-sent"});assert!(save(&store,&remote).unwrap_err().find("should-not-be-sent").is_none());
+    }
+    #[test]
+    fn definitions_and_resolution_use_the_sessions_actual_project_and_owner(){
+        let store=settings_store();let initial=settings_server(&store);let id=initial["id"].as_str().unwrap();enable_fixture(&store,id);
+        let p1=definitions_for(&store,"s1").unwrap();assert_eq!(p1.len(),1);assert!(definitions_for(&store,"s2").unwrap().is_empty());assert!(definitions_for(&store,"foreign").is_err());assert!(!json!(p1).to_string().contains("private-env-sentinel"));
+        let name=p1[0]["function"]["name"].as_str().unwrap();assert!(resolve_for(&store,"s1",name).is_ok());assert!(resolve_for(&store,"s2",name).is_err());assert!(resolve_for(&store,"foreign",name).is_err());
+        let mut scope=list(&store).unwrap()[0].clone();let old_tools=scope["tools"].clone();let revision=scope["environmentRevision"].clone();scope["projectIds"]=json!(["p2"]);scope.as_object_mut().unwrap().remove("enabled");let changed=save(&store,&scope).unwrap()["servers"][0].clone();
+        assert_eq!(changed["enabled"],true);assert_eq!(changed["tools"],old_tools);assert_eq!(changed["environmentRevision"],revision);assert!(definitions_for(&store,"s1").unwrap().is_empty());assert_eq!(definitions_for(&store,"s2").unwrap().len(),1);assert!(resolve_for(&store,"s1",name).is_err());
+        store.conn.execute("UPDATE agent_sessions SET archived_at=1 WHERE id='s2'",[]).unwrap();assert!(definitions_for(&store,"s2").is_err());
     }
     #[tokio::test]
     async fn connection_limit_and_single_checkout_are_enforced() {

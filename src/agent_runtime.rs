@@ -416,7 +416,7 @@ pub(crate) async fn execute(
 }
 async fn execute_mcp(core:&AppState,session:&str,response:&str,run:&str,call:&ToolCall,parsed:Result<Value,serde_json::Error>,step:usize,cancel:&mut tokio::sync::oneshot::Receiver<()>,deadline:&mut tokio::time::Instant,sink:&dyn EventSink)->Result<Option<Value>,String>{
     let args=match parsed {Ok(v) if v.is_object() && v.to_string().len()<=16384=>v,_=>return finish_result(core,session,response,run,call,Err("MCP 参数必须是有效对象且不超过 16 KiB".into()),false,sink)};
-    let resolved={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::resolve(&store,&call.name).map(|(server,tool)|{let mode=store.conn.query_row("SELECT security_mode FROM agent_tasks WHERE response_id=?1",[response],|r|r.get::<_,String>(0)).unwrap_or_else(|_|"ask".into());(server,tool,mode)})};
+    let resolved={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::resolve_for(&store,session,&call.name).map(|(server,tool)|{let mode=store.conn.query_row("SELECT security_mode FROM agent_tasks WHERE response_id=?1",[response],|r|r.get::<_,String>(0)).unwrap_or_else(|_|"ask".into());(server,tool,mode)})};
     let (server,tool,mode)=match resolved {Ok(v)=>v,Err(e)=>return finish_result(core,session,response,run,call,Err(e),false,sink)};
     if tool.get("kind").is_some(){if let Err(error)=crate::agent_mcp_content::params(&tool,&args){return finish_result(core,session,response,run,call,Err(error),false,sink);}}
     let automatic=mode=="full";
@@ -433,7 +433,7 @@ async fn execute_mcp(core:&AppState,session:&str,response:&str,run:&str,call:&To
         if state=="rejected"{let result=json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});persist_run(core,session,response,run,"rejected",&result.to_string(),sink)?;phase(core,session,response,"tool",step,sink)?;return Ok(Some(json!({"role":"tool","tool_call_id":call.id,"content":result.to_string()})));}
         if state!="running"{persist_run(core,session,response,run,"stopped","操作已停止，未执行",sink)?;return Ok(None)}break;
     }
-    let unchanged={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::resolve(&store,&call.name).is_ok_and(|current|current.0==server && current.1==tool)};
+    let unchanged={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::resolve_for(&store,session,&call.name).is_ok_and(|current|current.0==server && current.1==tool)};
     if !unchanged{return finish_result(core,session,response,run,call,Err("MCP 服务配置已变更，未执行。".into()),false,sink);}
     phase(core,session,response,"tool",step,sink)?;persist_run(core,session,response,run,"running","已确认，正在调用 MCP 工具…",sink)?;
     let result=tokio::select!{biased;_=&mut *cancel=>{persist_run(core,session,response,run,"stopped","已请求停止 MCP 工具；外部操作的结果需要核实。",sink)?;return Ok(None)},_ = tokio::time::sleep_until(*deadline)=>{persist_run(core,session,response,run,"failed","MCP 工具超过任务时限；外部操作的结果需要核实。",sink)?;return Err("Agent 已达到执行时限".into())},result=crate::agent_mcp::call(core,session,&server,&tool,&args)=>result};

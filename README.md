@@ -566,9 +566,19 @@ DeepSeek 回复使用 SSE 流，生成中的同一条助手消息会持续写入
 
 工具调用记录和执行参数显示在对话中，并可在刷新后恢复。请求批准和自动审批模式需要逐次确认 MCP 操作；完全访问模式自动批准。修改或停用服务会使等待审批的旧操作失效。停止时关闭 MCP 本机子进程（Unix 下同时终止进程组），或向远程服务发送取消通知；外部系统中已经发生的操作不会自动撤销，结果不明时需自行核实。
 
-当前支持文本工具结果；stdio 进程仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR。暂不支持自定义进程环境变量、图像结果或插件安装。工具发现使用独立临时连接；正式工具调用按“当前账户 + Keeper 会话 + 服务配置”复用连接，跨轮次保留 MCP 服务端会话状态，不同 Keeper 会话相互隔离。连接池最多保留 32 个连接，闲置 5 分钟后回收，资源回收或 Keeper 重启后服务端会话状态不会恢复。连接失败或调用超时会丢弃连接，不自动重放该请求；下一次调用重新连接。修改服务配置、工具选择、重新发现工具、退出账号和关闭服务会清理 MCP 连接；账户页显示关联的连接会话数，并提供“断开 MCP 连接”操作。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
+当前支持文本工具结果；stdio 进程默认仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR，并可配置显式传入子进程的环境变量。暂不支持图像结果或插件安装。工具发现使用独立临时连接；正式工具调用按“当前账户 + Keeper 会话 + 服务配置”复用连接，跨轮次保留 MCP 服务端会话状态，不同 Keeper 会话相互隔离。连接池最多保留 32 个连接，闲置 5 分钟后回收，资源回收或 Keeper 重启后服务端会话状态不会恢复。连接失败或调用超时会丢弃连接，不自动重放该请求；下一次调用重新连接。修改服务配置、工具选择、重新发现工具、退出账号和关闭服务会清理 MCP 连接；账户页显示关联的连接会话数，并提供“断开 MCP 连接”操作。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
 
 验证：`cargo build --locked && python3 scripts/test-mcp-http.py && python3 scripts/test-mcp-remote-http.py && python3 scripts/test-mcp-sessions-http.py`；测试使用临时 MCP 和本机模拟模型，不访问外部模型服务。
+
+### MCP 项目范围与环境变量
+
+编辑 MCP 服务时，可选择“所有项目”（默认，包含以后新建的项目）或至少一个“指定项目”。只有范围内项目的会话会获得该服务的工具、资料和模板声明；服务端在执行前再次检查项目范围，不能通过旧工具名称绕过限制。配置仍按当前登录账户隔离。范围限制控制工具可用性，不改变 MCP 子进程的系统访问权限。
+
+本机 stdio 服务可逐项添加环境变量，值使用密码输入框，不回显已保存内容；已有变量留空表示保留，删除该行表示移除，新变量留空则显式设置为空字符串。值只传给配置的 MCP 子进程，不从 Keeper 的其他环境变量中自动继承。变量以明文保存在本机 SQLite；公开列表只返回变量名称和不含值的版本标识，环境值不进入模型工具声明、审批详情或对话历史备份。请只把凭证提供给信任的 MCP 服务。
+
+修改环境值会关闭旧连接、清空已发现能力并停用服务，需要再次“连接并发现”；只修改项目范围会保留能力选择及启用状态。配置变化会使等待审批的旧操作失效，发现期间的旧结果也不会覆盖新配置。切换到远程 HTTP/SSE 会清除 stdio 环境变量；远程服务使用其请求头配置，不接受进程环境变量。
+
+验证：`python3 scripts/test-mcp-project-env-http.py`；界面验证：`NODE_PATH=<jsdom 路径>/node_modules node scripts/test-mcp-project-env-ui.cjs`。测试使用临时数据库、项目目录及本机模拟服务；HTTP 测试加 `--preview` 可保留隔离界面供浏览器验证。
 
 ### MCP 资料与提示模板
 

@@ -27,7 +27,7 @@
 .agent-nav-section>summary:after,.agent-project-group>summary:after{font-size:20px;line-height:1;width:16px;height:20px;display:inline-flex;align-items:center;justify-content:center;flex:none;transform-origin:center}
 
 .agent-project-group>summary:after{content:none}
-.agent-project-icon{width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;color:#666670}
+.agent-project-icon{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1;stroke-linecap:round;stroke-linejoin:round;color:#666670}
 .agent-project-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .agent-project-group>summary{gap:9px;border-radius:8px}
 .agent-project-group>summary:hover{background:#ebebed}
@@ -38,7 +38,6 @@
 .agent-project-group>summary{padding-right:4px}
 .agent-nav-section>summary>#agent-new-project,.agent-project-group>summary>.agent-project-chat{box-sizing:border-box;width:28px;min-width:28px;height:28px;padding:0;display:inline-flex;align-items:center;justify-content:center;flex:none;margin-left:auto}
 
-.agent-project-icon{stroke-width:1.8}
 .agent-project-icon .folder-open{display:none}
 .agent-project-group[open]>summary .folder-open{display:inline}
 .agent-project-group[open]>summary .folder-closed{display:none}
@@ -251,3 +250,9 @@
 
 /* Explicit selection of native MCP resources and prompt templates. */
 .mcp-tools>.mcp-tools-list{display:block;max-height:420px}.mcp-capability-section+.mcp-capability-section{margin-top:18px;padding-top:12px;border-top:1px solid #ededf2}.mcp-capability-section h4{margin:0 0 8px;font-size:13px;font-weight:550;color:#595965}.mcp-capability-section>.hint{margin:0 0 9px;font-size:12px;color:#90909b}.mcp-capability-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:2px 14px}.mcp-capability-option{display:flex;align-items:flex-start;gap:8px;padding:7px 4px;border-radius:6px;min-width:0}.mcp-capability-option:hover{background:#f5f5f7}.mcp-capability-option .mcp-tool-option{flex:1;align-items:flex-start;min-width:0}.mcp-capability-option input{margin-top:2px}.mcp-capability-caption{display:flex;flex-direction:column;gap:3px;min-width:0}.mcp-capability-caption>span{overflow-wrap:anywhere}.mcp-capability-caption small{color:#9696a0;font-size:11px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}.mcp-capability-use{flex:none;border:0;border-radius:5px;background:transparent;color:#52815f;padding:2px 4px;font:inherit;font-size:11px;cursor:pointer}.mcp-capability-use:hover:not(:disabled){background:#e8f0ea}.mcp-capability-use:disabled{color:#b5b5bd;cursor:default}.mcp-capability-use:focus-visible{outline:2px solid #82aeee;outline-offset:2px}
+
+/* Private stdio settings and project-scoped MCP availability. */
+#mcp-modal .mcp-setting-section{margin:0;padding:14px 0 0;border:0;border-top:1px solid #ededf2;min-width:0}#mcp-modal .mcp-setting-section legend{float:left;width:100%;padding:0;margin:0 0 10px;font-size:13px;font-weight:600;color:#555561}#mcp-modal .mcp-setting-section>label{clear:both}#mcp-modal .mcp-setting-section>.hint{clear:both;margin-bottom:10px}#mcp-modal .mcp-setting-section[hidden]{display:none!important}.mcp-project-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:2px 8px;margin:10px 0}.mcp-project-options[hidden]{display:none!important}#mcp-modal .mcp-project-option{display:flex;flex-direction:row;align-items:center;gap:7px;padding:5px 0;font-weight:400}#mcp-modal .mcp-project-option input{width:15px;height:15px;margin:0;flex:none}.mcp-environment-rows{display:flex;flex-direction:column;gap:7px;margin:10px 0}.mcp-env-row{display:grid;grid-template-columns:minmax(120px,1fr) minmax(140px,1.3fr) 26px;align-items:center;gap:8px}#mcp-modal .mcp-env-row input{min-width:0;font-size:12px;padding:8px 9px}#mcp-modal .mcp-env-row input[readonly]{color:#777782;background:#f7f7f9}.mcp-env-remove{border:0;border-radius:5px;background:transparent;color:#9696a1;width:26px;height:28px;font-size:20px;cursor:pointer}.mcp-env-remove:hover{background:#f7eeee;color:#bc5a54}.mcp-server-scope{color:#92929b;font-size:11px;line-height:1.7;margin-top:4px;overflow-wrap:anywhere}#mcp-env-add{font-size:12px;padding:6px 9px}@media(max-width:560px){.mcp-env-row{grid-template-columns:minmax(95px,1fr) minmax(105px,1fr) 24px;gap:5px}}
+
+/* Keep MCP actions visible while the longer settings form scrolls. */
+#mcp-modal .llm-dialog-head,#mcp-modal .modal-actions{flex:none}#mcp-form{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;gap:0}#mcp-modal .llm-dialog-fields{flex:1;min-height:0;scrollbar-width:thin;scrollbar-color:#bdbdc477 transparent}#mcp-modal .mcp-setting-section{flex:none}

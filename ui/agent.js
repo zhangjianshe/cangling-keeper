@@ -306,12 +306,14 @@
     const result=await restoreHistoryRequest({mode:'restore',backup,confirmed:true,expectedAccount:preview.accountKey});if(epoch!==(agent.identityEpoch || 0))throw new Error('备份已恢复到确认时的账户，当前账号已切换');await bootstrap();$('#history-backup-status').textContent='已恢复 '+result.sessions+' 个会话，原有数据已保留。';
   }catch(error){$('#history-backup-status').textContent='恢复失败：'+String(error);}finally{historyBusy(false);}};
   let editingMcp=null,mcpEditEpoch=0;
-  function closeMcp(){$('#mcp-modal').classList.add('hidden');editingMcp=null;}
-  function updateMcpTransport(){const local=$('#mcp-transport').value==='stdio';$('#mcp-command-label').textContent=local?'启动命令':'服务地址';$('#mcp-args-label').textContent=local?'启动参数（每行一个）':'请求头（每行 名称: 值）';$('#mcp-command').placeholder=local?'例如 python3':'例如 http://127.0.0.1:64342/sse';$('#mcp-args').placeholder=local?'例如 /path/to/server.py':'例如 IJ_MCP_SERVER_PROJECT_PATH: /path/to/project';$('#mcp-hint').textContent=local?'连接时以当前用户权限运行命令，请只连接信任的服务。':'远程地址需要 HTTPS；本机允许 HTTP。请求头保存在本机，工具调用时会发送到此服务。';}
-  function openMcp(server=null){mcpEditEpoch=agent.identityEpoch || 0;editingMcp=server;$('#mcp-title').textContent=server?'编辑 MCP Server':'添加 MCP Server';$('#mcp-name').value=server?.name || '';$('#mcp-transport').value=server?.transport || 'stdio';$('#mcp-command').value=server?.command || '';$('#mcp-args').value=(server?.args || []).join('\n');updateMcpTransport();$('#mcp-form-status').textContent='';$('#mcp-modal').classList.remove('hidden');$('#mcp-name').focus();}
+  const mcpSettings=window.createMcpSettingsForm?.({element});
+  function closeMcp(){$('#mcp-modal').classList.add('hidden');editingMcp=null;mcpSettings?.reset();}
+  function updateMcpTransport(){const local=$('#mcp-transport').value==='stdio';$('#mcp-command-label').textContent=local?'启动命令':'服务地址';$('#mcp-args-label').textContent=local?'启动参数（每行一个）':'请求头（每行 名称: 值）';$('#mcp-command').placeholder=local?'例如 python3':'例如 http://127.0.0.1:64342/sse';$('#mcp-args').placeholder=local?'例如 /path/to/server.py':'例如 IJ_MCP_SERVER_PROJECT_PATH: /path/to/project';$('#mcp-hint').textContent=local?'连接时以当前用户权限运行命令，请只连接信任的服务。':'远程地址需要 HTTPS；本机允许 HTTP。请求头保存在本机，请求时会发送到此服务；切换为远程连接会清除本机进程环境变量。';mcpSettings?.update();}
+  function openMcp(server=null){mcpEditEpoch=agent.identityEpoch || 0;editingMcp=server;$('#mcp-title').textContent=server?'编辑 MCP Server':'添加 MCP Server';$('#mcp-name').value=server?.name || '';$('#mcp-transport').value=server?.transport || 'stdio';$('#mcp-command').value=server?.command || '';$('#mcp-args').value=(server?.args || []).join('\n');mcpSettings?.fill(server,agent.projects);updateMcpTransport();$('#mcp-form-status').textContent='';$('#mcp-modal').classList.remove('hidden');$('#mcp-name').focus();}
   async function useMcpCapability(server,tool){
     if(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview){notice('请先恢复会话或返回当前版本，再使用 MCP 能力。');return;}
-    const epoch=agent.identityEpoch || 0;
+    const epoch=agent.identityEpoch || 0,project=agent.detail.session?.projectId || agent.project;
+    if(server.projectIds!=null && (!Array.isArray(server.projectIds) || !server.projectIds.includes(project))){notice('当前项目未启用此 MCP 服务，请先调整服务的项目范围。');return;}
     if(!agent.selected){await newSession();if(!agent.selected || epoch!==(agent.identityEpoch || 0))return;}
     const tasks={'resources/list':'请列出 MCP 服务「'+server.name+'」提供的资料。','resources/read':'请读取 MCP 服务「'+server.name+'」中的资料，URI：','resources/templates/list':'请列出 MCP 服务「'+server.name+'」提供的资料 URI 模板。','prompts/list':'请列出 MCP 服务「'+server.name+'」提供的提示模板和所需参数。','prompts/get':'请使用 MCP 服务「'+server.name+'」的提示模板，名称及参数：'};
     const input=$('#agent-input');input.value=input.value+(input.value && !input.value.endsWith('\n')?'\n':'')+(tasks[tool.kind] || '');showConversation();input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();
@@ -323,6 +325,8 @@
       const native=tools.filter(t=>t.kind),ordinary=tools.filter(t=>!t.kind),chosen=tools.filter(checked),nativeSelected=native.filter(t=>t.enabled===true).length;
       const row=element('div','llm-server-row'),info=element('div','llm-server-info');
       info.append(element('strong','',server.name),element('div','llm-server-meta',(server.enabled?'已启用':'未启用')+' · 工具 '+chosen.filter(t=>!t.kind).length+'/'+ordinary.length+(native.length?' · 资料与模板 '+nativeSelected+'/'+native.length:'')+' · '+(server.connectedSessions?'连接会话 '+server.connectedSessions:'按需连接')),element('div','llm-server-url',server.command));
+      const scope=Array.isArray(server.projectIds)?'指定项目：'+server.projectIds.map(id=>agent.projects.find(p=>p.id===id)?.name || id).join('、'):'所有项目';
+      info.append(element('div','mcp-server-scope',scope+(server.environmentKeys?.length?' · 环境变量 '+server.environmentKeys.length+' 项':'')));
       const actions=element('div','llm-server-actions');
       const operations=[['编辑',()=>{if(current())openMcp(server);}],['连接并发现',async()=>{
         if(!await uiConfirm((server.transport==='stdio'?'将以当前用户权限运行 MCP Server：':'将连接 MCP 服务并发送配置的请求头：')+server.command+'。请确认你信任该服务。','连接 MCP Server') || !current())return;
@@ -341,7 +345,7 @@
           for(const tool of subset){
             const index=tools.indexOf(tool),option=element('div','mcp-capability-option'),label=element('label','mcp-tool-option'),check=element('input');check.type='checkbox';check.checked=checked(tool,index);check.value=tool.name;
             const caption=element('span','mcp-capability-caption');caption.append(element('span','',tool.title || tool.name));if(tool.description)caption.append(element('small','',tool.description));label.append(check,caption);option.append(label);
-            if(tool.kind){const use=element('button','mcp-capability-use','用于对话');use.type='button';use.disabled=!server.enabled || !checked(tool,index) || !!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);use.onclick=()=>{if(current())useMcpCapability(server,tool);};option.append(use);}options.append(option);
+            if(tool.kind){const use=element('button','mcp-capability-use','用于对话');use.type='button';const project=agent.detail.session?.projectId || agent.project,allowed=server.projectIds==null || (Array.isArray(server.projectIds) && server.projectIds.includes(project));use.disabled=!server.enabled || !checked(tool,index) || !allowed || !!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);if(!allowed)use.title='当前项目未启用此 MCP 服务';use.onclick=()=>{if(current())useMcpCapability(server,tool);};option.append(use);}options.append(option);
           }
           section.append(options);grid.append(section);
         }
@@ -355,7 +359,7 @@
   async function loadMcp(){const sequence=++mcpLoadSequence;try{const servers=await invoke('agent_mcp_list');if(sequence===mcpLoadSequence)renderMcp(servers);}catch(error){if(sequence===mcpLoadSequence)$('#mcp-status').textContent=String(error);}}
   $('#mcp-disconnect').onclick=async()=>{const epoch=agent.identityEpoch || 0;if(!await uiConfirm('断开所有 MCP 连接？正在调用的 MCP 工具将停止，已发生的外部操作需要核实。','断开 MCP 连接') || epoch!==(agent.identityEpoch || 0))return;try{const result=await invoke('agent_mcp_disconnect');if(epoch!==(agent.identityEpoch || 0))return;renderMcp(result);$('#mcp-status').textContent='连接已断开；下次调用会重新建立会话';}catch(error){if(epoch===(agent.identityEpoch || 0))$('#mcp-status').textContent=String(error);}};
   $('#mcp-transport').onchange=updateMcpTransport;$('#mcp-add').onclick=()=>openMcp();$('#mcp-close').onclick=closeMcp;$('#mcp-cancel').onclick=closeMcp;
-  $('#mcp-form').onsubmit=async event=>{event.preventDefault();const epoch=mcpEditEpoch;if(epoch!==(agent.identityEpoch || 0))return;try{const result=await invoke('agent_mcp_save',{id:editingMcp?.id || '',name:$('#mcp-name').value,transport:$('#mcp-transport').value,command:$('#mcp-command').value,args:$('#mcp-args').value.split('\n').filter(x=>x.trim()),enabled:editingMcp?.enabled || false});if(epoch!==(agent.identityEpoch || 0))return;renderMcp(result.servers);closeMcp();$('#mcp-status').textContent='已保存；连接并发现服务能力后可供对话使用';}catch(error){if(epoch===(agent.identityEpoch || 0))$('#mcp-form-status').textContent=String(error);}};
+  $('#mcp-form').onsubmit=async event=>{event.preventDefault();const epoch=mcpEditEpoch;if(epoch!==(agent.identityEpoch || 0))return;try{const extra=mcpSettings?.args($('#mcp-transport').value) || {};const result=await invoke('agent_mcp_save',{id:editingMcp?.id || '',name:$('#mcp-name').value,transport:$('#mcp-transport').value,command:$('#mcp-command').value,args:$('#mcp-args').value.split('\n').filter(x=>x.trim()),enabled:editingMcp?.enabled || false,...extra});if(epoch!==(agent.identityEpoch || 0))return;renderMcp(result.servers);closeMcp();$('#mcp-status').textContent='已保存；连接并发现服务能力后可供对话使用';}catch(error){if(epoch===(agent.identityEpoch || 0))$('#mcp-form-status').textContent=String(error);}};
   window.addEventListener('keeper-login-state',()=>loadMcp());loadMcp();
   invoke('agent_model_config').then(renderModel).catch(error=>{$('#llm-list-status').textContent=String(error);});
   function renderTools(){
