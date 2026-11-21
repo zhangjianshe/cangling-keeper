@@ -71,6 +71,7 @@ pub(crate) fn owns(store: &Store, session: &str) -> bool {
         .unwrap_or(false)
 }
 pub(crate) fn stop_tasks(core: &AppState, store: &Store) -> Result<(), String> {
+    core.mcp_pool.clear()?;
     store
         .conn
         .execute("UPDATE agent_model_pending SET stop_requested=1", [])

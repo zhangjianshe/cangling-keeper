@@ -1,7 +1,11 @@
 mod cis_models;
 mod agent;
 mod agent_account;
+mod agent_backup;
+mod agent_history;
+mod agent_skills;
 mod agent_mcp;
+mod agent_mcp_content;
 mod agent_mcp_http;
 mod agent_security;
 mod agent_environment;
@@ -51,6 +55,7 @@ use uuid::Uuid;
 
 pub(crate) struct AppState {
     pub(crate) store: Mutex<Store>,
+    pub(crate) mcp_pool: std::sync::Arc<agent_mcp::ConnectionPool>,
     pub(crate) model_cancellations: Mutex<HashMap<String,tokio::sync::oneshot::Sender<()>>>,
     active_tunnels: Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
     tunnel_diagnostics: Mutex<HashMap<String, tunnel::TunnelDiagnostic>>,
@@ -105,6 +110,7 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
     let proxy_settings = store.get_proxy_settings().unwrap_or_default();
     Ok(AppState {
         store: Mutex::new(store),
+        mcp_pool: std::sync::Arc::new(agent_mcp::ConnectionPool::default()),
         model_cancellations: Mutex::new(HashMap::new()),
         active_tunnels: Mutex::new(HashMap::new()),
         tunnel_diagnostics: Mutex::new(HashMap::new()),

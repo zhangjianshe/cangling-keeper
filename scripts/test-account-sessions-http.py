@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-account-') as folder:
   login('alice');process.terminate();process.wait(10);start();assert a in ids() and b not in ids();assert next(s for s in call('agent_bootstrap')['sessions'] if s['id']==a)['title']=='Alice private title'
   # Simulate a pre-ownership schema, then migrate all records to the current account without deleting history.
   process.terminate();process.wait(10)
-  with sqlite3.connect(str(Path(folder)/'data.sql')) as db:count=db.execute('SELECT count(*) FROM agent_messages').fetchone()[0];db.execute('DROP INDEX idx_agent_sessions_owner');db.execute('ALTER TABLE agent_sessions DROP COLUMN owner_key')
+  with sqlite3.connect(str(Path(folder)/'data.sql')) as db:count=db.execute('SELECT count(*) FROM agent_messages').fetchone()[0];db.execute('DROP INDEX idx_agent_sessions_owner');db.execute('DROP INDEX IF EXISTS idx_agent_sessions_lifecycle');db.execute('ALTER TABLE agent_sessions DROP COLUMN owner_key')
   start()
   with sqlite3.connect(str(Path(folder)/'data.sql')) as db:assert db.execute('SELECT count(*) FROM agent_messages').fetchone()[0]==count;assert db.execute('SELECT count(DISTINCT owner_key) FROM agent_sessions').fetchone()[0]==1
   print('PASS: server/user isolation, guest separation, direct-ID operation guards, stable identity, login cancels pending action, restart and legacy migration preserve history')

@@ -103,6 +103,7 @@ pub(crate) struct Client {
     headers: HeaderMap,
     transport: Transport,
     pending: Option<u64>,
+    capabilities: Value,
 }
 impl Client {
     pub(crate) async fn start(server: &Value) -> Result<Self, String> {
@@ -159,17 +160,17 @@ impl Client {
             headers,
             transport,
             pending: None,
+            capabilities: Value::Null,
         };
         let info=c.request(1,"initialize",json!({"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"cangling-keeper","version":env!("CARGO_PKG_VERSION")}})).await?;
-        if !info["capabilities"]["tools"].is_object() {
-            return Err("MCP Server 不支持工具能力".into());
-        }
+        c.capabilities = crate::agent_mcp::supported_capabilities(&info)?;
         if let Transport::Streamable { version, .. } = &mut c.transport {
             *version = info["protocolVersion"].as_str().map(str::to_owned);
         }
         c.notify("notifications/initialized", json!({})).await?;
         Ok(c)
     }
+    pub(crate) fn capabilities(&self) -> &Value { &self.capabilities }
     async fn post(
         &self,
         endpoint: &Url,

@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{ConnectInfo, Path as AxumPath, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path as AxumPath, State};
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -147,6 +147,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
     let app = Router::new()
         .route("/api/health", get(|| async { Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id() })) }))
         .route("/api/events", get(events_socket))
+        .route("/api/history/restore",post(restore_history).layer(DefaultBodyLimit::max(32*1024*1024)))
         .route("/api/invoke/{command}", post(invoke))
         .fallback(static_asset)
         .with_state(state.clone());
@@ -174,6 +175,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
             _ = shutdown_rx => {},
             _ = termination_signal() => {},
         }
+        let _ = state.core.mcp_pool.clear();
         crate::agent_actions::shutdown();
         state.emit("server-shutdown",json!({}));
         crate::sync_process::shutdown();
@@ -281,6 +283,14 @@ async fn invoke(
     match dispatch(&state, &command, args).await {
         Ok(value) => ok(value),
         Err(error) => fail(StatusCode::BAD_REQUEST, error),
+    }
+}
+
+async fn restore_history(ConnectInfo(peer):ConnectInfo<SocketAddr>,headers:HeaderMap,State(state):State<WebState>,Json(args):Json<Value>)->InvokeResponse {
+    if authorize_root_install(peer,&headers).is_err(){return fail(StatusCode::FORBIDDEN,"恢复备份仅允许从 Keeper 本机同源页面执行");}
+    let core=state.core.clone();match tokio::task::spawn_blocking(move ||crate::agent_backup::restore(&core,&args)).await {
+        Ok(Ok(result))=>{state.emit("keeper-history-restored",json!({}));ok(result)},
+        Ok(Err(error))=>fail(StatusCode::BAD_REQUEST,error),Err(_)=>fail(StatusCode::INTERNAL_SERVER_ERROR,"恢复备份失败")
     }
 }
 

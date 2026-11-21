@@ -15,7 +15,7 @@
   function updateMessageTimes(){for(const node of document.querySelectorAll('.agent-message-time[data-time]')){const time=Number(node.dataset.time);if(Number.isFinite(time) && time>0)node.textContent=relativeMessageTime(time);}}
   function notice(message='') {$('#agent-notice').textContent=message;$('#agent-notice').hidden=!message;}
   function sessionStorageKey(){return 'keeper-agent-session:'+(agent.ownerKey || 'guest');}
-  function titleFor(tool) {return ({list_directory:'列出项目目录',read_file:'读取项目文件',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
+  function titleFor(tool) {return ({list_directory:'列出项目目录',read_file:'读取项目文件',load_skill:'加载项目技能',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
   function sessionRow(session){
     const row=element('div','agent-session-row');
     const button=element('button','agent-session'+(session.id===agent.selected?' active':''),session.title);button.type='button';
@@ -24,19 +24,21 @@
     button.onclick=()=>{agent.project=session.projectId;renderProjects();showConversation();select(session.id);};
     const pin=element('button','agent-pin',session.pinned?'★':'☆');pin.type='button';pin.title=session.pinned?'取消置顶':'置顶会话';pin.setAttribute('aria-label',pin.title+'：'+session.title);
     pin.onclick=async()=>{try{await invoke('agent_pin_session',{sessionId:session.id,pinned:!session.pinned});await bootstrap();}catch(error){notice(String(error));}};
-    row.append(button,pin);return row;
+    row.append(button,pin);agent.history?.decorateRow(row,session);return row;
   }
   function renderSessions(){
     const list=$('#agent-sessions'),pinned=$('#agent-pinned');list.replaceChildren();pinned.replaceChildren();
-    for(const session of agent.sessions){list.append(sessionRow(session));if(session.pinned)pinned.append(sessionRow(session));}
-    if(!agent.sessions.length)list.append(element('div','agent-nav-empty','暂无会话'));
-    if(!agent.sessions.some(s=>s.pinned))pinned.append(element('div','agent-nav-empty','暂无置顶'));
+    const recent=agent.history?.recent() || agent.sessions,pins=agent.history?.pinned() || agent.sessions.filter(s=>s.pinned);
+    for(const session of recent)list.append(sessionRow(session));for(const session of pins)pinned.append(sessionRow(session));
+    if(!recent.length)list.append(element('div','agent-nav-empty','暂无会话'));
+    if(!pins.length)pinned.append(element('div','agent-nav-empty','暂无置顶'));
+    agent.history?.appendRecent(list);agent.history?.appendPinned(pinned);
     if(agent.titleEditor && agent.titleEditor.session!==agent.selected)agent.titleEditor.cancel(false);
-    $('#agent-session-title').disabled=!agent.selected;
+    $('#agent-session-title').disabled=!agent.selected || !!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);
     $('#agent-session-title').textContent=agent.sessions.find(s=>s.id===agent.selected)?.title || '新会话';
   }
   $('#agent-session-title').onclick=()=>{
-    if(!agent.selected || agent.titleEditor)return;
+    if(!agent.selected || agent.titleEditor || agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview)return;
     const session=agent.selected,button=$('#agent-session-title'),form=element('form','agent-title-editor'),input=element('input');
     input.type='text';input.maxLength=256;input.value=agent.sessions.find(s=>s.id===session)?.title || '新会话';input.setAttribute('aria-label','会话标题，最多128个字符');
     const count=element('span','agent-title-count');const update=()=>{const chars=Array.from(input.value);if(chars.length>128)input.value=chars.slice(0,128).join('');count.textContent=Array.from(input.value).length+'/128';};input.oninput=event=>{if(!event.isComposing)update();};input.oncompositionend=update;update();
@@ -54,7 +56,7 @@
     localStorage.setItem('keeper-agent-project',agent.project);
     const list=$('#agent-projects');list.replaceChildren();
     for(const project of agent.projects){
-      const group=element('details','agent-project-group');group.open=project.id===agent.project;
+      const group=element('details','agent-project-group');group.open=agent.history?agent.history.projectOpen(project.id):project.id===agent.project;
       const summary=element('summary');summary.title=project.directory;
       const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','agent-project-icon');icon.setAttribute('aria-hidden','true');
       // Lucide folder-closed / folder-open (ISC), see ui/vendor/lucide-LICENSE.
@@ -66,8 +68,9 @@
       const create=element('button','agent-project-chat','＋');create.type='button';create.title='在'+project.name+'中开始会话';create.setAttribute('aria-label',create.title);
       create.onclick=event=>{event.preventDefault();event.stopPropagation();agent.project=project.id;newSession();};
       summary.append(create);group.append(summary);
-      for(const session of agent.sessions.filter(s=>s.projectId===project.id))group.append(sessionRow(session));
-      if(!agent.sessions.some(s=>s.projectId===project.id))group.append(element('div','agent-nav-empty','暂无会话'));
+      const sessions=agent.history?.projectSessions(project.id) || agent.sessions.filter(s=>s.projectId===project.id);
+      for(const session of sessions)group.append(sessionRow(session));
+      if(agent.history)agent.history.attachProject(group,project.id);else if(!sessions.length)group.append(element('div','agent-nav-empty','暂无会话'));
       list.append(group);
     }
   }
@@ -82,11 +85,13 @@
     try{const project=await invoke('agent_new_project',{name:name.trim()});await bootstrap();await switchProject(project.id);}catch(error){notice(String(error));}
   };
   async function bootstrap() {
-    const epoch=agent.identityEpoch || 0,data=await invoke('agent_bootstrap');if(epoch!==(agent.identityEpoch || 0))return;agent.ownerKey=data.accountKey || 'guest';agent.projects=data.projects;agent.sessions=data.sessions;
+    const epoch=agent.identityEpoch || 0,data=await invoke('agent_bootstrap');if(epoch!==(agent.identityEpoch || 0))return;agent.ownerKey=data.accountKey || 'guest';agent.projects=data.projects;agent.sessions=data.sessions;agent.history?.acceptBootstrap(data);
     renderProjects();renderModel(data.model);agent.tools=data.tools;agent.hosts=data.hosts;
     renderSessions();renderTools();
   }
   async function ensureSession(){
+    if(agent.detail.historyPreview)throw new Error('正在预览历史版本，请先返回当前版本。');
+    if(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt)throw new Error('请先恢复会话，再发送消息或执行工具。');
     if(!agent.selected){const session=await invoke('agent_new_session',{projectId:agent.project});agent.selected=session.id;localStorage.setItem(sessionStorageKey(),agent.selected);}
     return agent.selected;
   }
@@ -100,8 +105,8 @@
       if(agent.detail.sessionId===session){
         for(const key of ['runs','tasks']){const id=key==='runs'?'id':'responseId';for(const current of agent.detail[key] || []){const index=(data[key] || []).findIndex(v=>v[id]===current[id]);if(index<0)(data[key] ||= []).push(current);else if((current.updatedAt || 0)>(data[key][index].updatedAt || 0))data[key][index]=current;}}
       }
-      agent.detail=data;renderModel(data.model);localStorage.setItem(sessionStorageKey(),session);renderSessions();renderConversation();poll();notice();
-    }catch(error){if(generation===agent.generation){if(String(error).includes('不属于当前账号'))refreshAccountSessions();else notice(String(error));}}
+      agent.detail=data;agent.history?.remember(data.session);renderModel(data.model);localStorage.setItem(sessionStorageKey(),session);renderSessions();renderConversation();poll();notice();return true;
+    }catch(error){if(generation===agent.generation){if(String(error).includes('不属于当前账号'))clearSelected();notice(String(error));}return false;}
   }
   function poll(){
     clearTimeout(agent.timer);
@@ -290,17 +295,67 @@
     const button=$('#deepseek-test');button.disabled=true;$('#deepseek-status').textContent='正在保存并测试连接…';
     try{const id=await saveLlm();if(!id)return;const result=await invoke('agent_model_test',{id});$('#deepseek-status').textContent='连接成功'+(result.models.length?' · '+result.models.join('、'):'');}catch(error){$('#deepseek-status').textContent=String(error);}finally{button.disabled=false;}
   };
-  let editingMcp=null;
+  function historyBusy(busy){$('#history-backup').disabled=busy;$('#history-restore').disabled=busy;}
+  $('#history-backup').onclick=async()=>{const epoch=agent.identityEpoch || 0;historyBusy(true);$('#history-backup-status').textContent='正在生成备份…';try{const backup=await invoke('agent_history_backup');if(epoch!==(agent.identityEpoch || 0))throw new Error('账号已切换，请重新备份');const blob=new Blob([JSON.stringify(backup)],{type:'application/json'}),url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download='cangling-keeper-history-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);$('#history-backup-status').textContent='备份已下载，共 '+backup.snapshot.sessions.length+' 个会话。';}catch(error){$('#history-backup-status').textContent='备份失败：'+String(error);}finally{historyBusy(false);}};
+  $('#history-restore').onclick=()=>{$('#history-backup-file').value='';$('#history-backup-file').click();};
+  async function restoreHistoryRequest(args){const response=await fetch('/api/history/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args)});if(response.status===413)throw new Error('备份文件过大');const data=await response.json();if(!response.ok || !data.ok)throw new Error(data.error || '无法恢复备份');return data.result;}
+  $('#history-backup-file').onchange=async event=>{const file=event.target.files?.[0];if(!file)return;historyBusy(true);const epoch=agent.identityEpoch || 0;$('#history-backup-status').textContent='正在检查备份…';try{
+    if(file.size>24*1024*1024)throw new Error('备份文件不能超过 24 MiB');const backup=JSON.parse(await file.text());const preview=await restoreHistoryRequest({mode:'preview',backup});if(epoch!==(agent.identityEpoch || 0))throw new Error('账号已切换，请重新选择备份');
+    const message='备份包含 '+preview.projects+' 个关联项目、'+preview.sessions+' 个会话、'+preview.messages+' 条消息、'+preview.runs+' 条工具记录。'+(preview.differentAccount?' 此备份来自其他账户，将导入当前账户。':'')+'\n恢复将新增会话并保留现有数据。工具不会重新执行，项目文件不会恢复。是否继续？';
+    if(!await uiConfirm(message,'恢复对话备份')){$('#history-backup-status').textContent='已取消恢复';return;}
+    const result=await restoreHistoryRequest({mode:'restore',backup,confirmed:true,expectedAccount:preview.accountKey});if(epoch!==(agent.identityEpoch || 0))throw new Error('备份已恢复到确认时的账户，当前账号已切换');await bootstrap();$('#history-backup-status').textContent='已恢复 '+result.sessions+' 个会话，原有数据已保留。';
+  }catch(error){$('#history-backup-status').textContent='恢复失败：'+String(error);}finally{historyBusy(false);}};
+  let editingMcp=null,mcpEditEpoch=0;
   function closeMcp(){$('#mcp-modal').classList.add('hidden');editingMcp=null;}
   function updateMcpTransport(){const local=$('#mcp-transport').value==='stdio';$('#mcp-command-label').textContent=local?'启动命令':'服务地址';$('#mcp-args-label').textContent=local?'启动参数（每行一个）':'请求头（每行 名称: 值）';$('#mcp-command').placeholder=local?'例如 python3':'例如 http://127.0.0.1:64342/sse';$('#mcp-args').placeholder=local?'例如 /path/to/server.py':'例如 IJ_MCP_SERVER_PROJECT_PATH: /path/to/project';$('#mcp-hint').textContent=local?'连接时以当前用户权限运行命令，请只连接信任的服务。':'远程地址需要 HTTPS；本机允许 HTTP。请求头保存在本机，工具调用时会发送到此服务。';}
-  function openMcp(server=null){editingMcp=server;$('#mcp-title').textContent=server?'编辑 MCP Server':'添加 MCP Server';$('#mcp-name').value=server?.name || '';$('#mcp-transport').value=server?.transport || 'stdio';$('#mcp-command').value=server?.command || '';$('#mcp-args').value=(server?.args || []).join('\n');updateMcpTransport();$('#mcp-form-status').textContent='';$('#mcp-modal').classList.remove('hidden');$('#mcp-name').focus();}
-  function renderMcp(servers){const list=$('#mcp-list');list.replaceChildren();for(const server of servers){const row=element('div','llm-server-row'),info=element('div','llm-server-info');info.append(element('strong','',server.name),element('div','llm-server-meta',(server.enabled?'已启用':'未启用')+' · 已选 '+server.tools.filter((t,i)=>t.enabled ?? i<8).length+' / '+server.tools.length+' 个工具'),element('div','llm-server-url',server.command));const actions=element('div','llm-server-actions');
-    for(const [label,handler] of [['编辑',()=>openMcp(server)],['连接并发现工具',async()=>{if(!await uiConfirm((server.transport==='stdio'?'将以当前用户权限运行 MCP Server：':'将连接 MCP 服务并发送配置的请求头：')+server.command+'。请确认你信任该服务。','连接 MCP Server'))return;try{$('#mcp-status').textContent='正在连接…';renderMcp(await invoke('agent_mcp_refresh',{id:server.id}));$('#mcp-status').textContent='连接成功，工具已启用';}catch(error){$('#mcp-status').textContent=String(error);}}],...(server.enabled?[['停用',async()=>{try{const result=await invoke('agent_mcp_save',{...server,enabled:false});renderMcp(result.servers);}catch(error){$('#mcp-status').textContent=String(error);}}]]:[]),['删除',async()=>{if(!await uiConfirm('删除 MCP 服务“'+server.name+'”？','删除 MCP Server'))return;try{renderMcp(await invoke('agent_mcp_delete',{id:server.id}));}catch(error){$('#mcp-status').textContent=String(error);}}]]){const button=element('button','btn',label);button.type='button';button.onclick=handler;actions.append(button);}row.append(info,actions);const group=element('div','mcp-server-group');group.append(row);
-    if(server.tools.length){const chooser=element('details','mcp-tools');chooser.append(element('summary','','选择工具（已启用 '+server.tools.filter((t,i)=>t.enabled ?? i<8).length+' / '+server.tools.length+'）'));const grid=element('div','mcp-tools-list');for(const [i,tool] of server.tools.entries()){const label=element('label','mcp-tool-option'),check=element('input');check.type='checkbox';check.checked=tool.enabled ?? i<8;check.value=tool.name;label.append(check,element('span','',tool.name));grid.append(label);}const save=element('button','btn','保存工具选择');save.type='button';save.onclick=async()=>{save.disabled=true;try{renderMcp(await invoke('agent_mcp_tools',{id:server.id,tools:[...grid.querySelectorAll('input:checked')].map(input=>input.value)}));$('#mcp-status').textContent='工具选择已保存';}catch(error){$('#mcp-status').textContent=String(error);save.disabled=false;}};chooser.append(grid,save);group.append(chooser);}list.append(group);}if(!servers.length)list.append(element('p','llm-empty','尚未配置 MCP 服务。'));}
+  function openMcp(server=null){mcpEditEpoch=agent.identityEpoch || 0;editingMcp=server;$('#mcp-title').textContent=server?'编辑 MCP Server':'添加 MCP Server';$('#mcp-name').value=server?.name || '';$('#mcp-transport').value=server?.transport || 'stdio';$('#mcp-command').value=server?.command || '';$('#mcp-args').value=(server?.args || []).join('\n');updateMcpTransport();$('#mcp-form-status').textContent='';$('#mcp-modal').classList.remove('hidden');$('#mcp-name').focus();}
+  async function useMcpCapability(server,tool){
+    if(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview){notice('请先恢复会话或返回当前版本，再使用 MCP 能力。');return;}
+    const epoch=agent.identityEpoch || 0;
+    if(!agent.selected){await newSession();if(!agent.selected || epoch!==(agent.identityEpoch || 0))return;}
+    const tasks={'resources/list':'请列出 MCP 服务「'+server.name+'」提供的资料。','resources/read':'请读取 MCP 服务「'+server.name+'」中的资料，URI：','resources/templates/list':'请列出 MCP 服务「'+server.name+'」提供的资料 URI 模板。','prompts/list':'请列出 MCP 服务「'+server.name+'」提供的提示模板和所需参数。','prompts/get':'请使用 MCP 服务「'+server.name+'」的提示模板，名称及参数：'};
+    const input=$('#agent-input');input.value=input.value+(input.value && !input.value.endsWith('\n')?'\n':'')+(tasks[tool.kind] || '');showConversation();input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();
+  }
+  function renderMcp(servers){
+    const list=$('#mcp-list');list.replaceChildren();
+    for(const server of servers){
+      const epoch=agent.identityEpoch || 0,current=()=>epoch===(agent.identityEpoch || 0),tools=server.tools || [],checked=(tool,index)=>tool.enabled ?? (!tool.kind && index<8);
+      const native=tools.filter(t=>t.kind),ordinary=tools.filter(t=>!t.kind),chosen=tools.filter(checked),nativeSelected=native.filter(t=>t.enabled===true).length;
+      const row=element('div','llm-server-row'),info=element('div','llm-server-info');
+      info.append(element('strong','',server.name),element('div','llm-server-meta',(server.enabled?'已启用':'未启用')+' · 工具 '+chosen.filter(t=>!t.kind).length+'/'+ordinary.length+(native.length?' · 资料与模板 '+nativeSelected+'/'+native.length:'')+' · '+(server.connectedSessions?'连接会话 '+server.connectedSessions:'按需连接')),element('div','llm-server-url',server.command));
+      const actions=element('div','llm-server-actions');
+      const operations=[['编辑',()=>{if(current())openMcp(server);}],['连接并发现',async()=>{
+        if(!await uiConfirm((server.transport==='stdio'?'将以当前用户权限运行 MCP Server：':'将连接 MCP 服务并发送配置的请求头：')+server.command+'。请确认你信任该服务。','连接 MCP Server') || !current())return;
+        try{$('#mcp-status').textContent='正在连接…';const result=await invoke('agent_mcp_refresh',{id:server.id});if(!current())return;renderMcp(result);const native=result.find(s=>s.id===server.id)?.tools?.some(t=>t.kind);$('#mcp-status').textContent=native?'已发现服务能力；资料与提示模板需要勾选后保存，才可用于对话。':'已发现工具，可在选择能力中调整。';}catch(error){if(current())$('#mcp-status').textContent=String(error);}
+      }],...(server.enabled?[['停用',async()=>{try{const result=await invoke('agent_mcp_save',{...server,enabled:false});if(current())renderMcp(result.servers);}catch(error){if(current())$('#mcp-status').textContent=String(error);}}]]:[]),['删除',async()=>{
+        if(!await uiConfirm('删除 MCP 服务“'+server.name+'”？','删除 MCP Server') || !current())return;
+        try{const result=await invoke('agent_mcp_delete',{id:server.id});if(current())renderMcp(result);}catch(error){if(current())$('#mcp-status').textContent=String(error);}
+      }]];
+      for(const [label,handler] of operations){const b=element('button','btn',label);b.type='button';b.onclick=handler;actions.append(b);}row.append(info,actions);const group=element('div','mcp-server-group');group.dataset.serverId=server.id;group.append(row);
+      if(tools.length){
+        const chooser=element('details','mcp-tools');chooser.append(element('summary','','选择能力（已启用 '+chosen.length+' / '+tools.length+'）'));const grid=element('div','mcp-tools-list');
+        for(const [heading,subset] of [['工具',ordinary],['资料与提示模板',native]]){
+          if(!subset.length)continue;const section=element('section','mcp-capability-section');section.append(element('h4','',heading));
+          if(heading==='资料与提示模板')section.append(element('p','hint','默认关闭。勾选后可在对话中请求读取；“用于对话”只加入草稿。模板内容按外部资料处理。'));
+          const options=element('div','mcp-capability-options');
+          for(const tool of subset){
+            const index=tools.indexOf(tool),option=element('div','mcp-capability-option'),label=element('label','mcp-tool-option'),check=element('input');check.type='checkbox';check.checked=checked(tool,index);check.value=tool.name;
+            const caption=element('span','mcp-capability-caption');caption.append(element('span','',tool.title || tool.name));if(tool.description)caption.append(element('small','',tool.description));label.append(check,caption);option.append(label);
+            if(tool.kind){const use=element('button','mcp-capability-use','用于对话');use.type='button';use.disabled=!server.enabled || !checked(tool,index) || !!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);use.onclick=()=>{if(current())useMcpCapability(server,tool);};option.append(use);}options.append(option);
+          }
+          section.append(options);grid.append(section);
+        }
+        const save=element('button','btn','保存能力选择');save.type='button';save.onclick=async()=>{save.disabled=true;try{const result=await invoke('agent_mcp_tools',{id:server.id,tools:[...grid.querySelectorAll('input:checked')].map(input=>input.value)});if(!current())return;renderMcp(result);$('#mcp-status').textContent='能力选择已保存；可在对话中使用已选能力。';}catch(error){if(current()){$('#mcp-status').textContent=String(error);save.disabled=false;}}};chooser.append(grid,save);group.append(chooser);
+      }
+      list.append(group);
+    }
+    if(!servers.length)list.append(element('p','llm-empty','尚未配置 MCP 服务。'));
+  }
   let mcpLoadSequence=0;
   async function loadMcp(){const sequence=++mcpLoadSequence;try{const servers=await invoke('agent_mcp_list');if(sequence===mcpLoadSequence)renderMcp(servers);}catch(error){if(sequence===mcpLoadSequence)$('#mcp-status').textContent=String(error);}}
+  $('#mcp-disconnect').onclick=async()=>{const epoch=agent.identityEpoch || 0;if(!await uiConfirm('断开所有 MCP 连接？正在调用的 MCP 工具将停止，已发生的外部操作需要核实。','断开 MCP 连接') || epoch!==(agent.identityEpoch || 0))return;try{const result=await invoke('agent_mcp_disconnect');if(epoch!==(agent.identityEpoch || 0))return;renderMcp(result);$('#mcp-status').textContent='连接已断开；下次调用会重新建立会话';}catch(error){if(epoch===(agent.identityEpoch || 0))$('#mcp-status').textContent=String(error);}};
   $('#mcp-transport').onchange=updateMcpTransport;$('#mcp-add').onclick=()=>openMcp();$('#mcp-close').onclick=closeMcp;$('#mcp-cancel').onclick=closeMcp;
-  $('#mcp-form').onsubmit=async event=>{event.preventDefault();try{const result=await invoke('agent_mcp_save',{id:editingMcp?.id || '',name:$('#mcp-name').value,transport:$('#mcp-transport').value,command:$('#mcp-command').value,args:$('#mcp-args').value.split('\n').filter(x=>x.trim()),enabled:editingMcp?.enabled || false});renderMcp(result.servers);closeMcp();$('#mcp-status').textContent='已保存；连接并发现工具后可供对话使用';}catch(error){$('#mcp-form-status').textContent=String(error);}};
+  $('#mcp-form').onsubmit=async event=>{event.preventDefault();const epoch=mcpEditEpoch;if(epoch!==(agent.identityEpoch || 0))return;try{const result=await invoke('agent_mcp_save',{id:editingMcp?.id || '',name:$('#mcp-name').value,transport:$('#mcp-transport').value,command:$('#mcp-command').value,args:$('#mcp-args').value.split('\n').filter(x=>x.trim()),enabled:editingMcp?.enabled || false});if(epoch!==(agent.identityEpoch || 0))return;renderMcp(result.servers);closeMcp();$('#mcp-status').textContent='已保存；连接并发现服务能力后可供对话使用';}catch(error){if(epoch===(agent.identityEpoch || 0))$('#mcp-form-status').textContent=String(error);}};
   window.addEventListener('keeper-login-state',()=>loadMcp());loadMcp();
   invoke('agent_model_config').then(renderModel).catch(error=>{$('#llm-list-status').textContent=String(error);});
   function renderTools(){
@@ -316,8 +371,9 @@
     }
   }
   function renderPending(container){
-    for(const button of container.querySelectorAll('.agent-regenerate'))button.disabled=!!agent.detail.modelPending || !!agent.regenerating || button.dataset.available!=='true';
-    $('#agent-send').disabled=agent.sending || !!agent.detail.modelPending;
+    const readonly=!!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);
+    for(const button of container.querySelectorAll('.agent-regenerate'))button.disabled=readonly || !!agent.detail.modelPending || !!agent.regenerating || button.dataset.available!=='true';
+    $('#agent-send').disabled=readonly || agent.sending || !!agent.detail.modelPending;
     $('#agent-send').hidden=!!agent.detail.modelPending;$('#agent-stop').hidden=!agent.detail.modelPending;
     $('#agent-stop').disabled=!!agent.stopping || !!agent.detail.stopRequested;
     $('#agent-stop').title=agent.detail.stopRequested?'正在停止…':'停止生成';
@@ -325,12 +381,13 @@
     $('#agent-security-picker').disabled=!!agent.detail.modelPending || !!agent.changingSecurity;
     if(agent.detail.modelPending){closeModelMenu();$('#agent-security-menu').hidden=true;$('#agent-security-picker').setAttribute('aria-expanded','false');}
     for(const node of container.querySelectorAll('.agent-message'))node.classList.toggle('streaming',agent.detail.modelPending && node.dataset.messageId===agent.detail.streamingMessageId);
-    for(const actions of container.querySelectorAll('[data-review-run]'))for(const button of actions.querySelectorAll('button'))button.disabled=!!agent.reviewing?.has(actions.dataset.reviewRun) || !!agent.stopping || !!agent.detail.stopRequested;
-    for(const button of container.querySelectorAll('.agent-edit-message'))button.disabled=!!agent.detail.modelPending || !!agent.savingEdit;
+    for(const actions of container.querySelectorAll('[data-review-run]'))for(const button of actions.querySelectorAll('button'))button.disabled=readonly || !!agent.reviewing?.has(actions.dataset.reviewRun) || !!agent.stopping || !!agent.detail.stopRequested;
+    for(const button of container.querySelectorAll('.agent-edit-message'))button.disabled=readonly || !!agent.detail.modelPending || !!agent.savingEdit;
     for(const button of container.querySelectorAll('.agent-version-button'))button.disabled=button.dataset.boundary==='true' || !!agent.detail.modelPending;
     let status=container.querySelector('.agent-stream-status');
     if(agent.detail.modelPending){if(!status){status=element('div','agent-message-label agent-stream-status');status.setAttribute('role','status');container.append(status);}const task=agent.detail.tasks?.find(t=>t.responseId===agent.detail.streamingMessageId);status.textContent=agent.detail.stopRequested?'正在停止生成…':agent.detail.messages.find(m=>m.id===agent.detail.streamingMessageId)?.modelMetadata?.context?.status==='compressing'?'正在整理上下文…':task?.status==='approval'?`等待你确认操作 · 第 ${task.step} 轮`:task?.status==='tool'?`正在执行工具 · 第 ${task.step} 轮`:`模型正在生成…${task?.step?' · 第 '+task.step+' 轮':''}`;}
     else status?.remove();
+    agent.history?.updateDetail();agent.guidance?.update();
   }
   async function saveEditedMessage(entry){
     if(agent.savingEdit || agent.detail.modelPending || !agent.editing)return;
@@ -360,7 +417,9 @@
   }
   async function chooseReplyVersion(group,index){
     if(agent.detail.modelPending || agent.switchingVersion)return;
-    const session=agent.selected,anchor=replyAnchor(group.rootId);agent.switchingVersion=true;
+    const session=agent.selected,anchor=replyAnchor(group.rootId);
+    if(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview){if(agent.history)agent.history.selectReadingVersion(group.versionIds[index]);else group.selectedId=group.versionIds[index];renderConversation();restoreReplyAnchor(anchor);return;}
+    agent.switchingVersion=true;
     try{await invoke('agent_reply_version',{sessionId:session,rootId:group.rootId,messageId:group.versionIds[index]});if(agent.selected===session){await select(session);restoreReplyAnchor(anchor);}}
     catch(error){notice(String(error));}finally{agent.switchingVersion=false;}
   }
@@ -479,7 +538,7 @@
     const header=element('summary','agent-run-summary');
     const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('fill','none');icon.setAttribute('stroke','currentColor');icon.setAttribute('stroke-width','1.7');icon.setAttribute('stroke-linecap','round');icon.setAttribute('stroke-linejoin','round');icon.setAttribute('aria-hidden','true');icon.classList.add('agent-run-icon');
     const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',['run_command','ssh_execute'].includes(run.tool)?'m5 7 5 5-5 5m8 0h6':'M9 3h6l1 4 4 1v8l-4 1-1 4H9l-1-4-4-1V8l4-1Z');icon.append(path);
-    const title=run.review?.kind==='mcp'?'MCP · '+run.review.server+' · '+run.review.tool:titleFor(run.tool);
+    const title=run.tool==='load_skill'?'加载项目技能 · '+(run.arguments?.name || ''):run.review?.kind==='mcp'?'MCP · '+run.review.server+' · '+run.review.tool:titleFor(run.tool);
     const toggle=element('span','agent-run-details-toggle',card.open?'收起':'详情');
     header.append(icon,element('strong','agent-run-title',title),element('span','run-state',statusNames[run.status] || run.status),toggle);card.append(header);
     card.ontoggle=()=>{toggle.textContent=card.open?'收起':'详情';};
@@ -495,7 +554,7 @@
         card.append(element('div','agent-command-meta',run.review.shell+' · 超时 '+run.review.timeoutSeconds+' 秒'));
         card.append(element('pre','agent-command-preview',run.review.command));
         card.append(element('p','agent-command-scope',run.review.scope));
-      }else if(run.review?.kind==='mcp'){card.append(element('div','agent-review-path','MCP 服务：'+run.review.server+' · 工具：'+run.review.tool),element('pre','agent-command-preview',JSON.stringify([run.review.command,...(run.review.launchArgs || [])],null,2)),element('pre','agent-tool-arguments',JSON.stringify(run.review.args,null,2)));}
+      }else if(run.review?.kind==='mcp'){card.append(element('div','agent-review-path','MCP 服务：'+run.review.server+' · '+(run.review.method?'操作：':'工具：')+run.review.tool),element('pre','agent-command-preview',JSON.stringify([run.review.command,...(run.review.launchArgs || [])],null,2)),element('pre','agent-tool-arguments',JSON.stringify(run.review.args,null,2)));}
       else card.append(element('pre','agent-tool-arguments',JSON.stringify(run.arguments,null,2)));
       if(run.status==='pending_approval' && run.review?.hash){
         const actions=element('div','agent-review-actions');actions.dataset.reviewRun=run.id;
@@ -585,7 +644,7 @@
     closeAccountMenu();$('#agent-main').classList.add('hidden');
     $('#keeper-account').classList.toggle('hidden',page!=='profile');
     $('#keeper-settings').classList.toggle('hidden',page!=='security');
-    $(page==='profile'?'#account-page-title':'#settings-page-title').focus();
+    $(page==='profile'?'#account-page-title':'#settings-page-title').focus();if(page==='profile')loadMcp();
   }
   function updateAccount(login={}){
     const name=login.loggedIn?(login.username || login.nickname || '已登录'):'未登录';
@@ -597,8 +656,8 @@
   async function refreshAccountSessions(){
     fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
-    agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
-    try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey()),session=agent.sessions.find(s=>s.id===saved)?.id || agent.sessions[0]?.id;if(session)await select(session);}
+    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
+    try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }
   let loginIdentity=null;
@@ -644,9 +703,15 @@
     loadRootCertificateStatus();
   };
   for(const button of document.querySelectorAll('.topnav .navlink'))if(button!==rootNav)button.addEventListener('click',()=>{$('#maintenance-app').classList.remove('root-certificate-view');rootPanel.classList.add('hidden');rootNav.classList.remove('active');});
+  function clearSelected(){
+    clearTimeout(agent.timer);++agent.generation;agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.detail={messages:[],runs:[],tasks:[],modelPending:false};localStorage.removeItem(sessionStorageKey());renderSessions();renderConversation();
+  }
+  agent.history=window.createKeeperHistory?.({agent,invoke,element,notice,bootstrap,select,showConversation,renderProjects,renderSessions,renderConversation,clearSelected});
+  agent.guidance=window.createKeeperGuidance?.({agent,invoke,element,notice});
   bootstrap().then(async()=>{
     const saved=(localStorage.getItem(sessionStorageKey()) || localStorage.getItem('keeper-agent-session'));
-    const selected=agent.sessions.find(s=>s.id===saved && s.projectId===agent.project)?.id || agent.sessions.find(s=>s.projectId===agent.project)?.id;
+    if(saved && await select(saved))return;
+    const selected=agent.sessions.find(s=>s.projectId===agent.project)?.id;
     if(selected)await select(selected);
   }).catch(error=>notice(String(error)));
 })();

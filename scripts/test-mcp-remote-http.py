@@ -2,7 +2,7 @@
 """Isolated SSE and Streamable HTTP MCP fixtures; no external services."""
 import http.server,json,os,queue,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error,uuid
 from pathlib import Path
-sessions={};calls=[];cancelled=[];fixture_header='fixture-secret-header';mcp_schema={'name':'echo','description':'fixture echo','inputSchema':{'type':'object','properties':{'value':{'type':'string'}}}}
+sessions={};http_sessions=set();connections=[];calls=[];cancelled=[];fixture_header='fixture-secret-header';mcp_schema={'name':'echo','description':'fixture echo','inputSchema':{'type':'object','properties':{'value':{'type':'string'}}}}
 class Handler(http.server.BaseHTTPRequestHandler):
  protocol_version='HTTP/1.1'
  def log_message(self,*args):pass
@@ -22,6 +22,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
    while True:
     event=q.get(timeout=30);self.wfile.write(('event: message\ndata: '+json.dumps(event)+'\n\n').encode());self.wfile.flush()
   except (BrokenPipeError,ConnectionResetError,queue.Empty):pass
+ def do_DELETE(self):
+  http_sessions.discard(self.headers.get('Mcp-Session-Id'));self.empty()
  def do_POST(self):
   assert self.headers.get('X-Test-Key')==fixture_header
   request=json.loads(self.rfile.read(int(self.headers.get('Content-Length','0'))) or b'{}');method=request.get('method');ident=request.get('id')
@@ -31,7 +33,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
   if method=='initialize':result={'protocolVersion':'2025-06-18','capabilities':{'tools':{}},'serverInfo':{'name':'fixture','version':'1'}}
   elif method=='tools/list':result={'tools':[mcp_schema]}
   elif method=='tools/call':
-   calls.append(request['params'])
+   calls.append(request['params']);connections.append((self.path.split('=',1)[1] if self.path.startswith('/messages?') else self.headers.get('Mcp-Session-Id'),ident))
    if request['params']['arguments']['value']=='slow':time.sleep(3)
    result={'content':[{'type':'text','text':'remote '+request['params']['arguments']['value']}]}
   else:self.send_error(400);return
@@ -39,17 +41,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
   if self.path.startswith('/messages?session='):
    sessions[self.path.split('=',1)[1]].put(msg);self.empty();return
   assert self.path=='/mcp'
-  if method!='initialize':assert self.headers.get('Mcp-Session-Id')=='fixture-session' and self.headers.get('MCP-Protocol-Version')=='2025-06-18'
+  if method!='initialize':assert self.headers.get('Mcp-Session-Id') in http_sessions and self.headers.get('MCP-Protocol-Version')=='2025-06-18'
+  session_id=uuid.uuid4().hex if method=='initialize' else None
+  if session_id:http_sessions.add(session_id)
   if method=='tools/list':
    raw=('event: message\ndata: '+json.dumps(msg)+'\n\n').encode();self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw);return
-  self.body(msg,headers={'Mcp-Session-Id':'fixture-session'} if method=='initialize' else None)
+  self.body(msg,headers={'Mcp-Session-Id':session_id} if method=='initialize' else None)
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_threads=True;threading.Thread(target=server.serve_forever,daemon=True).start()
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
   data=json.loads(self.rfile.read(int(self.headers['Content-Length'])));assert fixture_header not in json.dumps(data)
   tools=[x['function']['name'] for x in data['tools'] if x['function']['name'].startswith('mcp_')];assert len(tools)==1
-  results=[x for x in data['messages'] if x['role']=='tool'];delta={'content':'finished '+results[-1]['content']} if results else {'tool_calls':[{'index':0,'id':'remote-call','type':'function','function':{'name':tools[0],'arguments':json.dumps({'value':'slow' if any(x.get('content')=='slow test' for x in data['messages']) else 'hello'})}}]};reason='stop' if results else 'tool_calls'
+  last_user=max(i for i,x in enumerate(data['messages']) if x['role']=='user');results=[x for x in data['messages'][last_user+1:] if x['role']=='tool'];delta={'content':'finished '+results[-1]['content']} if results else {'tool_calls':[{'index':0,'id':'remote-call','type':'function','function':{'name':tools[0],'arguments':json.dumps({'value':'slow' if any(x.get('content')=='slow test' for x in data['messages']) else 'hello'})}}]};reason='stop' if results else 'tool_calls'
   raw=('data: '+json.dumps({'choices':[{'delta':delta,'finish_reason':reason}]})+'\n\ndata: [DONE]\n\n').encode();self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)
 model=http.server.ThreadingHTTPServer(('127.0.0.1',0),Model);model.daemon_threads=True;threading.Thread(target=model.serve_forever,daemon=True).start()
 with tempfile.TemporaryDirectory(prefix='keeper-mcp-remote-') as folder:
@@ -83,6 +87,13 @@ with tempfile.TemporaryDirectory(prefix='keeper-mcp-remote-') as folder:
    session=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':session,'content':'remote test'})
    pending=wait(session,lambda x:any(r['status']=='pending_approval' for r in x['runs']));run=pending['runs'][-1];assert fixture_header not in json.dumps(run)
    call('agent_review_tool',{'sessionId':session,'runId':run['id'],'reviewHash':run['review']['hash'],'approved':True});done=wait(session,lambda x:not x['modelPending']);assert 'remote hello' in done['messages'][-1]['content']
+   first_connection=connections[-1];call('agent_send_message',{'sessionId':session,'content':'second remote turn'})
+   pending=wait(session,lambda x:any(r['status']=='pending_approval' for r in x['runs']));run=next(r for r in reversed(pending['runs']) if r['status']=='pending_approval');call('agent_review_tool',{'sessionId':session,'runId':run['id'],'reviewHash':run['review']['hash'],'approved':True});wait(session,lambda x:not x['modelPending'])
+   assert connections[-1]==(first_connection[0],first_connection[1]+1),'MCP connection and request sequence must persist across turns'
+   assert call('agent_mcp_list')[0]['connectedSessions']==1
+   other=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':other,'content':'isolated remote turn'})
+   pending=wait(other,lambda x:any(r['status']=='pending_approval' for r in x['runs']));run=pending['runs'][-1];call('agent_review_tool',{'sessionId':other,'runId':run['id'],'reviewHash':run['review']['hash'],'approved':True});wait(other,lambda x:not x['modelPending']);assert connections[-1][0]!=first_connection[0] and connections[-1][1]==2
+   assert call('agent_mcp_list')[0]['connectedSessions']==2
    call('agent_mcp_delete',{'id':sid})
   value=call('agent_mcp_save',{'name':'slow','transport':'sse','command':f'http://127.0.0.1:{server.server_port}/sse','args':['X-Test-Key: '+fixture_header]});sid=value['id'];call('agent_mcp_refresh',{'id':sid})
   session=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':session,'content':'slow test'});pending=wait(session,lambda x:any(r['status']=='pending_approval' for r in x['runs']));run=pending['runs'][-1]

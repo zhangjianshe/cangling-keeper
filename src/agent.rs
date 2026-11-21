@@ -62,6 +62,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     crate::agent_mcp::initialize(store)?;
     crate::agent_security::initialize(store)?;
     crate::agent_account::initialize(store)?;
+    crate::agent_history::initialize(store)?;
     crate::model::initialize(store)?;
     let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
     let columns=store.conn.prepare("PRAGMA table_info(agent_sessions)").map_err(|e|e.to_string())?.query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
@@ -102,7 +103,7 @@ fn text(args: &Value, key: &str) -> Result<String, String> {
         .map(str::to_owned)
         .ok_or_else(|| format!("缺少参数 {key}"))
 }
-fn require_session(store:&Store,session:&str)->Result<(),String>{if crate::agent_account::owns(store,session){Ok(())}else{Err("会话不存在或不属于当前账号".into())}}
+fn require_session(store:&Store,session:&str)->Result<(),String>{crate::agent_history::require_active(store,session)}
 
 fn message(store: &Store, session: &str, role: &str, content: &str) -> Result<(), String> {
     store
@@ -139,18 +140,9 @@ fn tools() -> Value {
     }
     registry
 }
+#[cfg(test)]
 fn sessions(store: &Store) -> Result<Value, String> {
-    let mut stmt = store
-        .conn
-        .prepare(
-            "SELECT id,title,updated_at,project_id,pinned FROM agent_sessions WHERE owner_key=?1 ORDER BY updated_at DESC,rowid DESC",
-        )
-        .map_err(|e| e.to_string())?;
-    let rows=stmt.query_map([crate::agent_account::owner(store)?],|r|Ok(json!({"id":r.get::<_,String>(0)?,"title":r.get::<_,String>(1)?,"updatedAt":r.get::<_,i64>(2)?,"projectId":r.get::<_,String>(3)?,"pinned":r.get::<_,bool>(4)?}))).map_err(|e|e.to_string())?;
-    Ok(Value::Array(
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?,
-    ))
+    Ok(crate::agent_history::list(store,&json!({}))?["items"].clone())
 }
 // Keep the physical rows immutable; resolve alternative replies at the original position.
 fn reply_messages(store: &Store, session: &str, boundary: Option<&str>) -> Result<Vec<Value>, String> {
@@ -203,7 +195,7 @@ pub(crate) fn context_messages(store: &Store, session: &str, boundary: &str) -> 
     Ok(result)
 }
 fn detail(store: &Store, session: &str) -> Result<Value, String> {
-    require_session(store, session)?;
+    let session_info=crate::agent_history::info(store,session)?;
     let messages = reply_messages(store, session, None)?;
     let groups = reply_groups(store, session, &messages)?;
     let mut stmt=store.conn.prepare("SELECT id,tool,arguments,status,output,created_at,response_id,tool_call_id,step,updated_at FROM agent_runs WHERE session_id=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
@@ -214,7 +206,7 @@ fn detail(store: &Store, session: &str) -> Result<Value, String> {
     let mut runs=runs;for run in &mut runs {run["review"]=crate::agent_runtime::review(store,run["id"].as_str().unwrap())?;}
     let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[session],|r|r.get(0)).map_err(|e|e.to_string())?;
     let model=crate::model::session_config(store,session)?;
-    Ok(json!({"sessionId":session,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
+    Ok(json!({"sessionId":session,"session":session_info,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
 }
 fn host_snapshot(store: &Store, host_id: &str) -> Result<Value, String> {
     let h = store.get_host(host_id)?;
@@ -387,15 +379,26 @@ pub(crate) async fn dispatch(
     sink: Arc<dyn crate::EventSink>,
 ) -> Result<Value, String> {
     match command {
+        "agent_project_guidance" | "agent_skill_content" => {
+            let session=text(&args,"sessionId")?;
+            let (owner,directory)={let store=core.store.lock().map_err(|e|e.to_string())?;if !crate::agent_account::owns(&store,&session){return Err("会话不存在或不属于当前账号".into());}let dir:String=store.conn.query_row("SELECT p.directory FROM agent_projects p JOIN agent_sessions s ON p.id=s.project_id WHERE s.id=?1",[&session],|r|r.get(0)).map_err(|_|"会话项目不存在")?;(crate::agent_account::owner(&store)?,dir)};
+            let skill=command=="agent_skill_content";let mut file_args=args.clone();file_args.as_object_mut().ok_or("参数必须为对象")?.remove("sessionId");
+            let result=tokio::task::spawn_blocking(move ||{let root=cap_std::fs::Dir::open_ambient_dir(directory,cap_std::ambient_authority()).map_err(|_|"无法打开当前项目目录")?;let flag=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));if skill{crate::agent_skills::load(&root,&file_args,flag)}else{crate::agent_skills::snapshot(&root,flag)}}).await.map_err(|_|"读取项目指南失败")??;
+            let store=core.store.lock().map_err(|e|e.to_string())?;if crate::agent_account::owner(&store)?!=owner || !crate::agent_account::owns(&store,&session){return Err("账号已切换，请重试".into());}Ok(result)
+        }
+        "agent_sessions" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_history::list(&store,&args)}
+        "agent_archive_session" | "agent_delete_session" | "agent_restore_session" | "agent_purge_session" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_history::mutate(&store,command,&args)}
         "agent_cis_usage" => crate::cis_models::call(&core,reqwest::Method::GET,if args["all"]==true {"/admin/usage"} else {"/usage"},None).await,
         "agent_cis_models_admin" => crate::cis_models::call(&core,reqwest::Method::GET,"/admin",None).await,
         "agent_cis_model_save" => {let saved=crate::cis_models::call(&core,reqwest::Method::POST,"/admin/save",Some(args)).await?;let refreshed=crate::cis_models::refresh(&core).await;Ok(json!({"id":saved["id"],"refreshError":refreshed.err()}))},
         "agent_cis_model_delete" => {let id=text(&args,"id")?;if id.len()>64 || !id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_'){return Err("模型 ID 无效".into());}crate::cis_models::call(&core,reqwest::Method::POST,&format!("/admin/{id}/delete"),Some(json!({}))).await?;let refreshed=crate::cis_models::refresh(&core).await;Ok(json!({"refreshError":refreshed.err()}))},
         "agent_cis_models_refresh" => crate::cis_models::refresh(&core).await,
-        "agent_mcp_list" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::list(&store)}
-        "agent_mcp_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::save(&store,&args)}
-        "agent_mcp_tools" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::selection(&store,&text(&args,"id")?,&args["tools"])}
-        "agent_mcp_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::delete(&store,&text(&args,"id")?)}
+        "agent_history_backup" => {let core=core.clone();tokio::task::spawn_blocking(move ||{let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_backup::export(&store)}).await.map_err(|_|"备份失败".to_string())?}
+        "agent_mcp_list" => {let store=core.store.lock().map_err(|e|e.to_string())?;core.mcp_pool.annotate(&crate::agent_account::owner(&store)?,crate::agent_mcp::list(&store)?)}
+        "agent_mcp_disconnect" => {core.mcp_pool.clear()?;let store=core.store.lock().map_err(|e|e.to_string())?;core.mcp_pool.annotate(&crate::agent_account::owner(&store)?,crate::agent_mcp::list(&store)?)}
+        "agent_mcp_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;let result=crate::agent_mcp::save(&store,&args)?;core.mcp_pool.clear()?;Ok(result)}
+        "agent_mcp_tools" => {let store=core.store.lock().map_err(|e|e.to_string())?;let result=crate::agent_mcp::selection(&store,&text(&args,"id")?,&args["tools"])?;core.mcp_pool.clear()?;Ok(result)}
+        "agent_mcp_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;let result=crate::agent_mcp::delete(&store,&text(&args,"id")?)?;core.mcp_pool.clear()?;Ok(result)}
         "agent_mcp_refresh" => {
             let id=text(&args,"id")?;
             let (owner,server)={let store=core.store.lock().map_err(|e|e.to_string())?;let owner=crate::agent_account::owner(&store)?;let server=crate::agent_mcp::list(&store)?.as_array().unwrap().iter().find(|s|s["id"]==id).cloned().ok_or("MCP 服务不存在")?;(owner,server)};
@@ -403,7 +406,7 @@ pub(crate) async fn dispatch(
             let store=core.store.lock().map_err(|e|e.to_string())?;
             if crate::agent_account::owner(&store)?!=owner {return Err("账号已切换，请重试".into());}
             let updated=store.conn.execute("UPDATE agent_mcp_servers SET tools=?1,enabled=1 WHERE id=?2 AND owner_key=?3 AND command=?4 AND args=?5 AND transport=?6",params![json!(tools).to_string(),id,owner,server["command"].as_str().unwrap(),server["args"].to_string(),server["transport"].as_str().unwrap()]).map_err(|e|e.to_string())?;
-            if updated!=1{return Err("MCP 服务配置已变更，请重试".into());}crate::agent_mcp::list(&store)
+            if updated!=1{return Err("MCP 服务配置已变更，请重试".into());}core.mcp_pool.clear()?;crate::agent_mcp::list(&store)
         }
         "agent_model_config" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::config(&store)}
         "agent_model_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::save(&store,&args)}
@@ -421,8 +424,10 @@ pub(crate) async fn dispatch(
         "agent_model_select" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::select(&store,&text(&args,"id")?)}
         "agent_bootstrap" => {
             let store = core.store.lock().map_err(|e| e.to_string())?;
+            let page=crate::agent_history::list(&store,&json!({}))?;
+            let pinned=crate::agent_history::list(&store,&json!({"pinned":true,"limit":100}))?;
             Ok(
-                json!({"accountKey":crate::agent_account::owner(&store)?,"projects":projects(&store)?,"sessions":sessions(&store)?,"tools":tools(),"modelConnected":crate::model::connected(&store),"model":crate::model::config(&store)?,"hosts":store.list_hosts()?.iter().map(|h|json!({"id":h.id,"name":h.name,"hostname":h.hostname})).collect::<Vec<_>>()}),
+                json!({"accountKey":crate::agent_account::owner(&store)?,"projects":projects(&store)?,"sessions":page["items"],"sessionPage":{"nextCursor":page["nextCursor"],"hasMore":page["hasMore"]},"pinnedSessions":pinned["items"],"pinnedPage":{"nextCursor":pinned["nextCursor"],"hasMore":pinned["hasMore"]},"tools":tools(),"modelConnected":crate::model::connected(&store),"model":crate::model::config(&store)?,"hosts":store.list_hosts()?.iter().map(|h|json!({"id":h.id,"name":h.name,"hostname":h.hostname})).collect::<Vec<_>>()}),
             )
         }
         "agent_pin_session" => {

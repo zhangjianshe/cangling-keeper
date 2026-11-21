@@ -552,15 +552,55 @@ DeepSeek 回复使用 SSE 流，生成中的同一条助手消息会持续写入
 
 额外验证：`python3 scripts/test-agent-actions-http.py` 使用独立临时项目和本机模拟模型，检查执行前无副作用、审批绑定/防重放、差异写入、补丁、文件及父目录冲突、拒绝、停止、输出捕获、超时和重启；`--preview` 提供浏览器审批测试站点。`NODE_PATH=<jsdom 安装目录>/node_modules node scripts/test-react-ui.cjs` 验证差异和命令的安全文本展示及确认按钮。
 
+### 当前账户的对话备份与恢复
+
+在“账户 → 备份与恢复”点击“下载对话备份”，下载带 SHA-256 完整性校验的 JSON 文件（最多 24 MiB）。备份来自 SQLite 一致性快照，包含当前账户的全部会话、原始消息及其版本关系、选中版本、模型标识、历史请求上下文、工具执行记录与审批预览，以及这些会话关联的项目名称与 ID；未被会话引用的空项目不在此备份范围。备份不读取模型密钥、登录凭证、SSH 私钥、主机配置或项目目录文件。消息和工具输出本身可能包含敏感内容；JSON 备份没有加密，应妥善保管。
+
+“从备份恢复”先校验文件并显示记录数量，用户确认后才导入当前账户。恢复采用数据库事务，新增会话和记录，不覆盖已有数据；允许导入其他账户的备份，界面会提示。相同 ID 与名称的已有项目会被复用，其他项目创建到本机 `~/cangling/projects/<新ID>`，不会使用文件内传入的任意路径，也不会恢复项目文件。消息、版本关系、工具记录 ID 会统一映射；若本机仍有相同模型服务则保留会话选择，否则使用当前新会话默认服务。历史模型名称不被改写。会话安全模式重置为“请求批准”，未完成工具和流式消息标记为中断，审批不可重放，不会发起模型或工具请求。重复导入会再次新增会话。
+
+当前账户正在生成回复时不能恢复；恢复预览后如果切换账户，必须重新预览。历史摘要缓存可按需重建；备份不包含细粒度事件日志或运行中的任务。验证：`python3 scripts/test-history-backup-http.py`；界面测试：`NODE_PATH=<jsdom 路径>/node_modules node scripts/test-history-backup-ui.cjs`。
+
 ### MCP Server
 
-在“账户 → MCP 服务”添加服务，选择本机 stdio、Streamable HTTP 或旧版 HTTP + SSE。stdio 填写可执行文件及逐行启动参数；远程服务填写 URL 和逐行请求头（例如 `IJ_MCP_SERVER_PROJECT_PATH: /path/to/project`）。远程地址要求 HTTPS，本机回环地址允许 HTTP；不跟随重定向，旧版 SSE 返回的 endpoint 必须与配置地址同源。保存后点击“连接并发现工具”；发现的工具会显示在服务列表；首次默认启用最多 8 个工具，优先选择常见读取类名称，可在“选择工具”中调整，以控制模型上下文开销，工具定义计入上下文预算。配置按账户保存在本机 SQLite，不上传 CIS；请求头以明文存储，并会发送到所配置的 MCP 服务，不包含在模型请求和审批记录中。修改连接配置会清除已发现的工具并停用服务，需要重新连接。
+在“账户 → MCP 服务”添加服务，选择本机 stdio、Streamable HTTP 或旧版 HTTP + SSE。stdio 填写可执行文件及逐行启动参数；远程服务填写 URL 和逐行请求头（例如 `IJ_MCP_SERVER_PROJECT_PATH: /path/to/project`）。远程地址要求 HTTPS，本机回环地址允许 HTTP；不跟随重定向，旧版 SSE 返回的 endpoint 必须与配置地址同源。保存后点击“连接并发现”；发现的服务能力会显示在服务列表；普通工具首次默认启用最多 8 个，优先选择常见读取类名称，可在“选择能力”中调整，以控制模型上下文开销，工具定义计入上下文预算。配置按账户保存在本机 SQLite，不上传 CIS；请求头以明文存储，并会发送到所配置的 MCP 服务，不包含在模型请求和审批记录中。修改连接配置会清除已发现的工具并停用服务，需要重新连接。
 
 工具调用记录和执行参数显示在对话中，并可在刷新后恢复。请求批准和自动审批模式需要逐次确认 MCP 操作；完全访问模式自动批准。修改或停用服务会使等待审批的旧操作失效。停止时关闭 MCP 本机子进程（Unix 下同时终止进程组），或向远程服务发送取消通知；外部系统中已经发生的操作不会自动撤销，结果不明时需自行核实。
 
-当前支持文本工具结果；stdio 进程仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR。暂不支持自定义进程环境变量、图像结果或插件安装。每次发现或调用都会创建新的 MCP 会话，因此依赖跨调用会话状态的服务暂不可用。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
+当前支持文本工具结果；stdio 进程仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR。暂不支持自定义进程环境变量、图像结果或插件安装。工具发现使用独立临时连接；正式工具调用按“当前账户 + Keeper 会话 + 服务配置”复用连接，跨轮次保留 MCP 服务端会话状态，不同 Keeper 会话相互隔离。连接池最多保留 32 个连接，闲置 5 分钟后回收，资源回收或 Keeper 重启后服务端会话状态不会恢复。连接失败或调用超时会丢弃连接，不自动重放该请求；下一次调用重新连接。修改服务配置、工具选择、重新发现工具、退出账号和关闭服务会清理 MCP 连接；账户页显示关联的连接会话数，并提供“断开 MCP 连接”操作。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
 
-验证：`cargo build --locked && python3 scripts/test-mcp-http.py && python3 scripts/test-mcp-remote-http.py`；测试使用临时 MCP 和本机模拟模型，不访问外部模型服务。
+验证：`cargo build --locked && python3 scripts/test-mcp-http.py && python3 scripts/test-mcp-remote-http.py && python3 scripts/test-mcp-sessions-http.py`；测试使用临时 MCP 和本机模拟模型，不访问外部模型服务。
+
+### MCP 资料与提示模板
+
+连接并发现 MCP 服务时，Keeper 会识别该服务声明的 tools、resources 和 prompts 能力；只有资料或提示模板的服务也可使用。资料与模板通过内部生成的操作项出现在 MCP 服务选择列表中，首次发现默认关闭，需要用户明确勾选后才能供模型调用。重新发现会保留仍存在的同类操作选择。保存后，“用于对话”会将相应中文请求加入当前草稿，保留已有文字和缩进，不会自动发送；可补充资料 URI、模板名称及参数后再发送。归档和历史预览会话不能使用该快捷入口。资源列表、资料正文及提示模板均按需请求，不会在发现服务时预先读取。
+
+启用后，可在对话中要求“列出该服务的资料”“读取指定资料 URI”或“使用指定提示模板”。支持 `resources/list`、`resources/read`、`resources/templates/list`、`prompts/list` 和 `prompts/get`；列表的 `nextCursor` 可用于下一页。提示模板用于用户明确请求的任务，返回的 user/assistant 角色只作为一条外部工具结果中的数据，不会被提升为系统指令或直接拼接为模型历史消息。资源 URI 只传给所选 MCP 服务，不会被 Keeper 当作本机路径或另行访问网络地址。
+
+资料与模板复用现有 MCP 审批、执行记录、停止及连接池。请求批准和自动审批模式仍逐次确认，完全访问模式遵循用户已选择的会话策略；更改服务或操作选择会使等待中的旧调用失效。正文和参数有大小、条数限制；文本和嵌入文本资料可显示，二进制、图像与音频仅返回明确的不支持提示及基本元数据，不把 base64 内容送入模型。停止、刷新及重启后可以查看已有记录，重启不会自动重放。
+
+协议参考 [MCP Resources](https://modelcontextprotocol.io/specification/2025-06-18/server/resources) 和 [MCP Prompts](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts)。验证：`python3 scripts/test-mcp-content-http.py`，覆盖 stdio、Streamable HTTP 和旧版 SSE，全部使用临时数据库、本机模拟 MCP 及模型；加 `--preview` 可保留隔离界面供浏览器验证，不调用真实模型服务。界面验证：`NODE_PATH=<jsdom 路径>/node_modules node scripts/test-mcp-content-ui.cjs`。
+
+### 项目规则与 Skills
+
+Keeper 在每次生成开始时读取当前项目根目录的 `AGENTS.md`，将项目约定与技能目录计入统一上下文预算；同一轮工具循环使用这份规则快照。重新生成会读取当前项目规则，沿用现有环境与安全策略刷新机制。第一轮仅自动读取根目录规则，不会把各子目录的 `AGENTS.md` 混入全局。格式采用普通 Markdown，参考 [AGENTS.md](https://agents.md/)。
+
+会话标题旁的“项目指南”可查看当前项目根规则和技能目录，重新扫描文件变更，或按需展开技能正文。“用于任务”只将 `$技能名` 加到当前草稿，不会自动发送；归档或历史版本预览时不可向草稿插入技能。
+
+项目技能放在 `.agents/skills/<技能名>/SKILL.md`。技能文件使用 [Agent Skills 格式](https://agentskills.io/specification)：YAML frontmatter 中必须有与目录一致的 `name`，以及非空 `description`，后面是 Markdown 操作说明。例如：
+
+```markdown
+---
+name: write-notes
+description: 为当前项目整理说明和维护记录。
+---
+先阅读项目现状，再使用文件工具更新说明，并遵守当前审批策略。
+```
+
+首个模型请求只包含技能名称、说明和位置，不提前加载技能正文。模型通过只读 `load_skill` 工具按需读取说明；长内容以字符偏移分页，返回 `nextOffset` 和 SHA-256，可通过 `expectedSha256` 拒绝读取过程中已变更的文件。技能加载沿用工具执行记录，停止、刷新及重启后仍可查看，重启不会自动重放。技能中引用的其他资料可通过项目读取工具访问，脚本及写入操作仍使用原有工具和审批流程。`allowed-tools` 等元数据不会授予权限或绕过审批。
+
+根规则自动载入上限为 4096 字节；超过上限时显示未自动载入及分段读取提示，不会把部分文件伪装为完整规则。技能目录和提示词都有数量及总量限制，超限或格式错误显示警告。目录扫描和读取限定在当前项目内，拒绝符号链接、路径穿越和非普通文件；项目及账户的会话权限继续由后端校验。此版本不从用户主目录或其他项目扫描技能，也不提供远程插件安装。
+
+验证：`python3 scripts/test-skills-http.py`，使用隔离数据库、临时项目和本机模拟模型，覆盖规则快照、按需加载、分页、变更检测、权限、审批和重启；不调用真实模型服务，可加 `--preview` 保留临时界面供浏览器验证。界面验证：`NODE_PATH=<jsdom 路径>/node_modules node scripts/test-skills-ui.cjs`。
 
 ### 自动上下文压缩与用量
 
@@ -601,6 +641,14 @@ Keeper 在 Agent 请求的系统上下文中附带操作系统、CPU 架构、`r
 会话以规范化的 CIS Server URL 和稳定用户 ID 关联账号（旧服务无 ID 时使用用户名），归属键不包含登录 token。会话列表、读取、发送、编辑、标题、置顶、模型选择、安全模式和审批均校验归属，WebSocket 过滤其他账号的会话事件。登录、退出或切换服务器时停止当前模型任务，界面清空旧会话与草稿；每个账号独立记忆当前会话。未登录时使用单独的本机访客会话。
 
 首次升级会将已有会话关联到当时登录的账号；未登录则保留为访客，不删除或移动历史。归属、消息、摘要和执行记录保存在本机 SQLite，尚不提供会话云同步。项目目录、主机及模型服务仍为本机配置，本功能不等同于操作系统多用户文件隔离。验证：`python3 scripts/test-account-sessions-http.py`（模拟 CIS 与模型，无真实凭证）。
+
+### 会话搜索、归档与回收站
+
+侧栏的会话管理入口支持搜索当前账户的会话标题和原始消息正文，可按项目筛选；搜索包含编辑及重新生成的历史版本，点击命中结果可定位到对应消息。最近会话和搜索结果分批加载，旧的置顶会话仍可访问。搜索使用字面匹配，支持中文，不把 `%` 或 `_` 当作通配符。
+
+归档会话从活动列表隐藏，在归档列表中只读查看，可取消归档后继续对话。删除会话先移入回收站；恢复时保留删除前的归档状态。永久删除只允许从回收站执行，需再次确认；使用 SQLite 事务清除该会话的消息、版本、摘要、上下文快照、工具、审批及任务记录，保留项目目录和其中的实际文件。当前仍在生成回复、执行工具或等待工具审批的会话不能归档或删除，需先停止或完成操作。
+
+这些操作均按当前账户校验归属，不能通过直接传入其他账户会话 ID 绕过。备份包含活动、归档和回收站会话及其状态，旧版备份未包含状态时按活动会话恢复。验证：`python3 scripts/test-history-management-http.py`，使用临时目录和本机服务，无真实模型 API 调用；界面验证：`NODE_PATH=<jsdom 路径>/node_modules node scripts/test-history-management-ui.cjs`。
 
 ### 会话内导航
 
