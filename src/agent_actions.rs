@@ -823,3 +823,16 @@ mod tests {
         std::fs::remove_dir_all(path).unwrap();
     }
 }
+
+/// Explicit UI creation: a single name under an existing, capability-scoped parent.
+pub(crate) fn create_entry(root:&Dir,parent:&str,name:&str,directory:bool)->Result<(),String>{
+    if name.is_empty() || name.trim()!=name || name.len()>255 || name.contains('/') || name.contains('\\') || name=="." || name==".." || name.ends_with('.') {return Err("请输入有效名称（不能包含路径分隔符、首尾空格或末尾点）".into());}
+    let leaf=path(name,false)?;let parent_path=path(parent,true)?;
+    no_links(root,&parent_path,false)?;let parent=root.open_dir(&parent_path).map_err(|_|"父目录不可访问")?;
+    let result=if directory {parent.create_dir(&leaf)}else{
+        let mut options=cap_std::fs::OpenOptions::new();options.write(true).create_new(true);
+        #[cfg(unix)] {use cap_std::fs::OpenOptionsExt;options.mode(0o600);}
+        parent.open_with(&leaf,&options).map(|_|())
+    };
+    result.map_err(|e|if e.kind()==std::io::ErrorKind::AlreadyExists{"同名文件或目录已存在，未覆盖".into()}else{format!("创建失败：{e}")})
+}

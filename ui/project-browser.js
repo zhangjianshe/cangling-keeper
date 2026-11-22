@@ -7,13 +7,24 @@
   const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(code);layout.append(list,preview);panel.append(header,bar,layout);document.querySelector('#agent-main').after(panel);
   const save=node('button','btn primary','保存文件');bar.append(save);save.disabled=true;
   const editor=window.ace.edit(code);window.ace.config.set('basePath','/vendor/ace');editor.setTheme('ace/theme/github');editor.session.setUseWorker(false);editor.setOptions({fontSize:15,showPrintMargin:false});editor.setReadOnly(true);
-  let project=null,path='.',file=null,seq=0,popup=null,trigger=null,original='',hash='',editable=false,saving=false;
+  let project=null,path='.',file=null,seq=0,popup=null,trigger=null,original='',hash='',editable=false,saving=false,creating=false;
   const dirty=()=>!!file&&editor.getValue()!==original;
   function updateSave(){save.disabled=!editable||!dirty()||saving;save.textContent=saving?'正在保存…':dirty()?'保存文件 *':'保存文件';}
   editor.session.on('change',updateSave);
   const discard=async()=>!dirty()||await window.uiConfirm('当前文件有未保存的修改，放弃修改并继续？','未保存的修改');
   window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});
   save.onclick=async()=>{if(save.disabled)return;const ownerProject=project,ownerFile=file,epoch=agent.identityEpoch,text=editor.getValue();saving=true;updateSave();try{const data=await invoke('agent_project_file_save',{projectId:project.id,path:file,content:text,sha256:hash});if(project!==ownerProject||file!==ownerFile||epoch!==agent.identityEpoch)return;original=text;hash=data.sha256;status.textContent='已保存';}catch(e){if(project===ownerProject&&file===ownerFile&&epoch===agent.identityEpoch)status.textContent=String(e);}finally{saving=false;updateSave();}};
+  const newFile=node('button','btn','新建文件'),newDirectory=node('button','btn','新建目录');bar.insertBefore(newFile,refresh);bar.insertBefore(newDirectory,refresh);newFile.type=newDirectory.type='button';
+  async function create(kind){
+   if(creating||saving||!project)return;const version=seq,epoch=agent.identityEpoch,selected=project,parent=path;creating=true;newFile.disabled=newDirectory.disabled=true;
+   try{const name=await window.uiPrompt(kind==='file'?'请输入文件名称':'请输入目录名称','',kind==='file'?'新建文件':'新建目录');if(name===null||name===undefined||version!==seq||epoch!==agent.identityEpoch)return;
+    if(!name||name.trim()!==name||/[\\/:\x00-\x1f]/.test(name)||name==='.'||name==='..'){status.textContent='请输入有效名称，不能包含路径分隔符或首尾空格。';return;}
+    if(!await discard()||version!==seq||epoch!==agent.identityEpoch)return;
+    await invoke('agent_project_entry_create',{projectId:selected.id,parent,name,kind});if(version!==seq||epoch!==agent.identityEpoch)return;
+    creating=false;clearPreview();await loadDirectory(parent);if(seq===version+1&&project===selected&&epoch===agent.identityEpoch&&!panel.classList.contains('hidden')){if(kind==='file')await loadFile(parent==='.'?name:parent+'/'+name);status.textContent=kind==='file'?'文件已创建':'目录已创建';}
+   }catch(e){if(version===seq&&epoch===agent.identityEpoch)status.textContent=String(e);}finally{creating=false;newFile.disabled=newDirectory.disabled=false;}
+  }
+  newFile.onclick=()=>create('file');newDirectory.onclick=()=>create('directory');
   editor.commands.addCommand({name:'saveProjectFile',bindKey:{win:'Ctrl-S',mac:'Command-S'},exec:()=>save.click()});
 
   function closeMenu(focus=false){popup?.remove();popup=null;if(trigger){trigger.setAttribute('aria-expanded','false');if(focus)trigger.focus();}trigger=null;}
@@ -21,7 +32,7 @@
   function reset(){hide();project=null;file=null;list.replaceChildren();original='';editor.setValue('',-1);editor.setReadOnly(true);editable=false;updateSave();location.textContent='';}
   function clearPreview(){file=null;original='';hash='';editable=false;editor.setValue('',-1);editor.setReadOnly(true);updateSave();code.setAttribute('aria-label','文件编辑器');}
   async function loadDirectory(target){
-   const before=seq,identity=agent.identityEpoch;if(saving||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
+   const before=seq,identity=agent.identityEpoch;if(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
    const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';location.textContent=selected.directory+(target==='.'?'':' / '+target);location.title=location.textContent;
    try{const data=await invoke('agent_project_browse',{projectId:selected.id,path:target,action:'list'});if(version!==seq||epoch!==agent.identityEpoch)return;
     status.textContent=data.truncated?'目录条目较多，仅显示前 200 项。':`${data.entries.length} 项 · 隐藏敏感文件、链接及构建缓存`;
@@ -30,7 +41,7 @@
    }catch(e){if(version===seq)status.textContent=String(e);}
   }
   async function loadFile(target){
-   const before=seq,identity=agent.identityEpoch;if(saving||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
+   const before=seq,identity=agent.identityEpoch;if(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
    const version=++seq,epoch=agent.identityEpoch;clearPreview();code.setAttribute('aria-label',target);status.textContent='正在读取…';
    try{const data=await invoke('agent_project_browse',{projectId:project.id,path:target,action:'edit'});if(version!==seq||epoch!==agent.identityEpoch)return;
     file=target;list.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.path===target));original=data.content;hash=data.sha256;editable=data.editable;editor.setValue(original,-1);editor.setReadOnly(!editable);
@@ -39,7 +50,7 @@
    }catch(e){if(version===seq)status.textContent='不可预览：'+String(e);}
   }
   up.onclick=()=>loadDirectory(path.includes('/')?path.slice(0,path.lastIndexOf('/')):'.');refresh.onclick=()=>loadDirectory(path);
-  async function open(value){closeMenu();const before=seq,identity=agent.identityEpoch;const changed=project?.id!==value.id;if(changed&&(saving||!await discard()||before!==seq||identity!==agent.identityEpoch))return;const resume=!changed&&dirty();if(changed)clearPreview();project=value;for(const id of ['agent-main','keeper-account','keeper-settings'])document.getElementById(id).classList.add('hidden');panel.classList.remove('hidden');title.textContent=value.name+' · 项目目录';if(resume)editor.resize();else loadDirectory('.');}
+  async function open(value){closeMenu();const before=seq,identity=agent.identityEpoch;const changed=project?.id!==value.id;if(changed&&(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch))return;const resume=!changed&&dirty();if(changed)clearPreview();project=value;for(const id of ['agent-main','keeper-account','keeper-settings'])document.getElementById(id).classList.add('hidden');panel.classList.remove('hidden');title.textContent=value.name+' · 项目目录';if(resume)editor.resize();else loadDirectory('.');}
   function menu(button,value,manage){closeMenu();trigger=button;button.setAttribute('aria-expanded','true');popup=node('div','project-context-menu');popup.setAttribute('role','menu');
    for(const [label,action] of [['管理项目',manage],['项目目录',()=>open(value)]]){const item=node('button');const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');for(const [key,val] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))icon.setAttribute(key,val);const shape=document.createElementNS(icon.namespaceURI,'path');shape.setAttribute('d',label==='管理项目'?'m9 3-.6 2-2 .9-1.9-.5-2 3.4L4 10.5v3l-1.5 1.7 2 3.4 1.9-.5 2 .9.6 2h6l.6-2 2-.9 1.9.5 2-3.4-1.5-1.7v-3l1.5-1.7-2-3.4-1.9.5-2-.9-.6-2ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0':'M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v2M3 7v12a2 2 0 0 0 2 2h14l3-11H8l-3 7');icon.append(shape);item.append(icon,node('span','',label));item.type='button';item.setAttribute('role','menuitem');item.onclick=()=>{closeMenu();action();};popup.append(item);}
    document.body.append(popup);const rect=button.getBoundingClientRect();popup.style.left=Math.max(8,Math.min(rect.right-popup.offsetWidth,innerWidth-popup.offsetWidth-8))+'px';popup.style.top=Math.max(8,Math.min(rect.bottom+4,innerHeight-popup.offsetHeight-8))+'px';popup.firstChild.focus();

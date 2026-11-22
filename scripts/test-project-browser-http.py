@@ -21,6 +21,16 @@ with tempfile.TemporaryDirectory(prefix='keeper-browser-') as tmp:
   p=start();args={'projectId':'general'}
   data=call('agent_project_browse',args);names=[e['name'] for e in data['entries']];assert 'sub' in names and '.env' not in names and 'link' not in names
   data=call('agent_project_browse',{**args,'action':'read','path':'sub/readme.txt','startLine':201});assert data['totalLines']==450 and data['lines'][0]['line']==201
+  create={**args,'parent':'.','name':'新目录','kind':'directory'}
+  assert call('agent_project_entry_create',create)['created'];assert (root/'新目录').is_dir()
+  new={**args,'parent':'新目录','name':'hello.py','kind':'file'}
+  assert call('agent_project_entry_create',new)['created'];assert (root/'新目录/hello.py').read_bytes()==b''
+  (root/'新目录/hello.py').write_text('preserve')
+  (root/'outside-dir').symlink_to(Path(tmp),target_is_directory=True)
+  for invalid in [new,create,{**new,'name':'../bad'},{**new,'parent':'..'},{**new,'parent':'outside-dir'},{**new,'name':'.env'},{**new,'name':'x/y'},{**new,'name':'bad.'},{**new,'kind':'other'}]:
+   try:call('agent_project_entry_create',invalid);raise AssertionError(invalid)
+   except urllib.error.HTTPError as e:assert e.code==400
+  assert (root/'新目录/hello.py').read_text()=='preserve' and not (Path(tmp)/'hello.py').exists()
   current=call('agent_project_browse',{**args,'action':'edit','path':'sub/readme.txt'});assert current['editable'] and len(current['content'].splitlines())==450
   save={**args,'path':'sub/readme.txt','content':'changed\r\n','sha256':current['sha256']}
   result=call('agent_project_file_save',save);assert result['saved'] and (root/'sub/readme.txt').read_bytes()==b'changed\r\n'
