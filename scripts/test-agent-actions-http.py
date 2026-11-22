@@ -19,7 +19,8 @@ class API(http.server.BaseHTTPRequestHandler):
    elif body['messages'][-1]['role']=='tool':
     result=json.loads(body['messages'][-1]['content']);assert result['keeperResult']['automaticRetry'] is False;assert result['keeperResult']['outcome']==('rejected' if result.get('rejected') else 'timeout' if result.get('timedOut') else 'failed' if result.get('error') else 'success');event({'content':'操作结果已保存。'+('用户拒绝，未执行。' if result.get('rejected') else '')},'stop')
    else:
-    if 'stale revision' in prompt:name,args='write_file',{'path':'version.txt','content':'overwrite','expectedSha256':hashlib.sha256(b'old').hexdigest()}
+    if 'multi patch' in prompt:name,args='apply_patch',{'path':'multi.txt','edits':[{'oldText':'first','newText':'ONE'},{'oldText':'absent' if 'invalid' in prompt else 'second','newText':'TWO'}]}
+    elif 'stale revision' in prompt:name,args='write_file',{'path':'version.txt','content':'overwrite','expectedSha256':hashlib.sha256(b'old').hexdigest()}
     elif 'valid revision' in prompt:name,args='write_file',{'path':'version.txt','content':'updated','expectedSha256':hashlib.sha256(b'current').hexdigest()}
     elif 'patch' in prompt:name,args='apply_patch',{'path':'hello.txt','oldText':'hello v1','newText':'hello v2'}
     elif 'long' in prompt:name,args='run_command',{'command':"printf 'starting\\n'; sleep 120 & child=$!; echo $child > child.pid; wait $child; printf bad > after-stop.txt",'timeoutSeconds':120}
@@ -83,6 +84,9 @@ with tempfile.TemporaryDirectory(prefix='keeper-action-http-') as folder:
    wrong=call('agent_new_session')['id'];approve(wrong,run,expected=400)
    call('agent_review_tool',{'sessionId':s,'runId':run['id'],'reviewHash':run['review']['hash'],'approved':True},403,origin='http://untrusted.invalid')
    approve(s,run,content='not-reviewed',arguments={'path':'tampered.txt','content':'not-reviewed'});approve(s,run,expected=400);d=done(s);assert (root/'hello.txt').read_text()=='hello v1\n';assert d['runs'][-1]['status']=='succeeded'
+   (root/'multi.txt').write_text('first\nsecond\n')
+   invalid=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':invalid,'content':'invalid multi patch'});invalid_detail=done(invalid);assert invalid_detail['runs'][0]['status']=='failed';assert not invalid_detail['runs'][0].get('review');assert (root/'multi.txt').read_text()=='first\nsecond\n'
+   s,run,_=pending('multi patch');assert '+ONE' in run['review']['diff'] and '+TWO' in run['review']['diff'];assert (root/'multi.txt').read_text()=='first\nsecond\n';approve(s,run);multi_detail=done(s);assert len(multi_detail['runs'])==1 and multi_detail['runs'][0]['status']=='succeeded';assert (root/'multi.txt').read_text()=='ONE\nTWO\n'
    (root/'version.txt').write_text('current')
    stale=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':stale,'content':'stale revision'});stale_detail=done(stale)
    assert stale_detail['runs'][0]['status']=='failed' and not stale_detail['runs'][0].get('review');assert (root/'version.txt').read_text()=='current'

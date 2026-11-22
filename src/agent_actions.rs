@@ -16,7 +16,7 @@ use std::{
 pub(crate) fn definitions() -> Vec<Value> {
     [
  ("write_file","创建或覆盖项目内 UTF-8 文件。由系统安全策略决定自动批准或等待用户确认；父目录必须存在。修改已有文件时应将 read_file 返回的 sha256 传入 expectedSha256；不匹配则拒绝生成修改预览。",json!({"path":{"type":"string"},"content":{"type":"string"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path","content"])),
- ("apply_patch","精确替换项目文件内唯一匹配的 oldText 为 newText；oldText 不能为空。由系统安全策略决定自动批准或等待用户确认；应传入 read_file 的 sha256 作为 expectedSha256，拒绝基于旧版本修改。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path","oldText","newText"])),
+ ("apply_patch","精确替换同一文件：使用 oldText/newText 单组参数，或 edits 数组（1–20组），不能混用。各组按顺序基于上一步结果唯一匹配，oldText 不能为空；任何一组失败均不写入，全部成功后只生成一份审批差异并写入一次。由系统安全策略决定自动批准或等待用户确认；应传入 read_file 的 sha256 作为 expectedSha256，拒绝基于旧版本修改。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"},"edits":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"oldText":{"type":"string","minLength":1},"newText":{"type":"string"}},"required":["oldText","newText"],"additionalProperties":false}},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path"])),
  ("run_command","提出本机 shell 命令，默认在当前项目根目录运行。系统按安全模式决定自动批准或等待用户确认完整命令和执行目录。以 Keeper 用户权限执行，不是文件沙箱。timeoutSeconds 默认 60，最多 120。",json!({"command":{"type":"string"},"cwd":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!(["command"])),
 ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).collect()
 }
@@ -269,15 +269,20 @@ fn prepare_with_limit(
         if old.is_none() {
             return Err("补丁目标文件不存在".into());
         }
-        let old_text = text(args, "oldText")?;
-        let new_text = text(args, "newText")?;
-        if old_text.is_empty()
-            || before.find(old_text).is_none()
-            || before.find(old_text) != before.rfind(old_text)
-        {
-            return Err("oldText 必须在原文件中唯一匹配；请先读取文件并提供足够上下文".into());
+        let pairs:Vec<(&str,&str)>=if let Some(edits)=args.get("edits"){
+            if args.get("oldText").is_some() || args.get("newText").is_some(){return Err("edits 不能与 oldText/newText 单组参数混用".into());}
+            let edits=edits.as_array().filter(|v|!v.is_empty() && v.len()<=20).ok_or("edits 必须包含1–20组替换")?;
+            edits.iter().map(|edit|{let object=edit.as_object().ok_or("每组替换须为对象")?;if object.keys().any(|k|k!="oldText" && k!="newText"){return Err("替换组包含未定义字段".into());}Ok((text(edit,"oldText")?,text(edit,"newText")?))}).collect::<Result<_,String>>()?
+        }else{vec![(text(args,"oldText")?,text(args,"newText")?)]};
+        let mut content=before.to_owned();
+        for (index,(old_text,new_text)) in pairs.into_iter().enumerate(){
+            check(cancel)?;
+            if old_text.is_empty() || content.find(old_text).is_none() || content.find(old_text)!=content.rfind(old_text){return Err(format!("第 {} 组 oldText 必须在当前内容中唯一匹配；整次补丁未写入，请重新读取并调整。",index+1));}
+            if new_text.len()>131072{return Err("替换内容超过128 KiB，整次补丁未写入".into());}
+            content=content.replacen(old_text,new_text,1);
+            if content.len()>131072{return Err("修改后文件最多128 KiB，整次补丁未写入".into());}
         }
-        before.replacen(old_text, new_text, 1)
+        content
     };
     if after.len() > 131072 {
         return Err("修改后文件最多 128 KiB".into());
@@ -631,6 +636,16 @@ mod tests {
     }
     fn flag() -> Arc<AtomicBool> {
         Arc::new(AtomicBool::new(false))
+    }
+    #[test]
+    fn multiple_edits_prepare_once_and_never_partially_write(){
+        let (path,root)=fixture();std::fs::write(path.join("multi.txt"),"first\nsecond\n").unwrap();
+        let args=json!({"path":"multi.txt","edits":[{"oldText":"first","newText":"ONE"},{"oldText":"second","newText":"TWO"}],"expectedSha256":hash(b"first\nsecond\n")});
+        let plan=prepare(root.clone(),path.to_str().unwrap(),"apply_patch",&args,&flag()).unwrap();assert!(plan.review["diff"].as_str().unwrap().contains("+ONE"));assert!(plan.review["diff"].as_str().unwrap().contains("+TWO"));assert_eq!(std::fs::read_to_string(path.join("multi.txt")).unwrap(),"first\nsecond\n");plan.execute(flag(), |_|{}).unwrap();
+        assert_eq!(std::fs::read_to_string(path.join("multi.txt")).unwrap(),"ONE\nTWO\n");
+        let invalid=json!({"path":"multi.txt","edits":[{"oldText":"ONE","newText":"changed"},{"oldText":"missing","newText":"bad"}]});assert!(prepare(root.clone(),path.to_str().unwrap(),"apply_patch",&invalid,&flag()).is_err());assert_eq!(std::fs::read_to_string(path.join("multi.txt")).unwrap(),"ONE\nTWO\n");
+        for args in [json!({"path":"multi.txt","edits":[]}),json!({"path":"multi.txt","edits":[{"oldText":"ONE","newText":"x"}],"oldText":"ONE","newText":"x"})]{assert!(prepare(root.clone(),path.to_str().unwrap(),"apply_patch",&args,&flag()).is_err());}
+        drop(root);std::fs::remove_dir_all(path).unwrap();
     }
     #[test]
     fn read_revision_checked_before_write_or_patch_preview(){

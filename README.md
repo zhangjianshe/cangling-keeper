@@ -773,3 +773,5 @@ ReAct 综合验收：先执行 `cargo build`，再执行 `NODE_PATH=<jsdom 所�
 内容搜索结果的 `column` 为该行首个命中的原文Unicode字符列号（从1开始），`snippetStartColumn` 为片段起点；`lineTruncated` 表示仅返回行的一部分。`text` 围绕命中位置展示，`readArgs` 可直接用于 `read_file`，并通过文件SHA-256避免读取已变更版本。搜索依旧为字面匹配，每个匹配行返回一条结果。
 
 `write_file` 和 `apply_patch` 支持可选 `expectedSha256`：传入此前 `read_file` 返回的 `sha256`，在生成修改预览前确认文件仍为读取时版本。文件不存在或内容已变化则拒绝，不进入审批；通过后仍保留审批后至执行前的冲突检查。参数可选以兼容旧调用，不传时不能检测读取到预览之间的变化。系统提示要求模型修改已有文件时使用该参数，冲突后重新读取并调整修改。
+
+`apply_patch` 支持单文件多组替换：使用 `edits: [{oldText, newText}, ...]`，最多20组，不能与顶层 `oldText/newText` 混用。每组按顺序在上一步的内存结果中唯一匹配，全部成功后生成一份差异、一次审批并原子写入；任一组失败都不写文件。仍支持 `expectedSha256` 与执行前冲突检查；不提供跨文件事务。
