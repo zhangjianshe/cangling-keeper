@@ -99,12 +99,25 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
   if preview:
    print(json.dumps({'url':base,'session':normal,'directory':str(root)}),flush=True);input();release.set();wait_for(normal,lambda d:not d['modelPending']);print('Completed.',flush=True);input()
   else:
+   # Disconnect only the browser event channel; generation must continue and a
+   # fresh snapshot after reconnect must not replay model/tool operations.
+   async def reconnect():
+    url=base.replace('http:','ws:')+'/api/events'
+    async with websockets.connect(url,origin=base):pass
+    before=len(requests)
+    async with websockets.connect(url,origin=base):
+     restored=call('agent_session',{'sessionId':normal})
+     assert restored['modelPending'] and restored['runs']==detail['runs']
+     assert restored['tasks']==fresh['tasks']
+     await asyncio.sleep(.1)
+     assert len(requests)==before,'reconnect must not replay model requests'
+   asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
    complete=session('阅读项目并总结 complete');complete_detail=wait_for(complete,lambda d:not d['modelPending']);assert complete_detail['tasks'][-1]['status']=='complete';assert len(complete_detail['runs'])==3
    # A regenerated answer owns a separate tool history and selects the new version.
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
-   escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert all(r['status']=='failed' for r in escaped['runs']);assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
+   escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
    looping=session('loop');looped=wait_for(looping,lambda d:not d['modelPending']);assert looped['tasks'][-1]['status']=='failed' and len(looped['runs'])==3
    assert any(m.get('modelMetadata',{}).get('taskReason') for m in looped['messages'] if m['role']=='assistant')
    assert '无进展' in json.dumps(looped,ensure_ascii=False)

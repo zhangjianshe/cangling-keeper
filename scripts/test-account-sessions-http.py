@@ -32,6 +32,8 @@ with tempfile.TemporaryDirectory(prefix='keeper-account-') as folder:
  def login(name,path='ib'):call('login',{'serverUrl':f'http://127.0.0.1:{api.server_port}/{path}','username':name,'password':'dummy'})
  def ids():return [s['id'] for s in call('agent_bootstrap')['sessions']]
  try:
+  start();process.terminate();process.wait(10);root=Path(folder)/'project';root.mkdir();
+  with sqlite3.connect(str(Path(folder)/'data.sql')) as db:db.execute("UPDATE agent_projects SET directory=? WHERE id='general'",(str(root),))
   start();guest=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':guest,'content':'guest history'})
   login('alice');assert guest not in ids();a=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':a,'content':'Alice original history'});key=call('agent_bootstrap')['accountKey']
   login('bob');assert a not in ids();b=call('agent_new_session')['id']
@@ -50,7 +52,10 @@ with tempfile.TemporaryDirectory(prefix='keeper-account-') as folder:
    with sqlite3.connect(str(Path(folder)/'data.sql')) as db:pending=db.execute('SELECT count(*) FROM agent_model_pending').fetchone()[0]
    if not pending:break
    time.sleep(.03)
-  assert not pending;assert not Path(folder,'cangling/projects/general/must-not-write.txt').exists()
+  assert not pending;assert not (root/'must-not-write.txt').exists()
+  call('agent_session',{'sessionId':a},400)
+  call('agent_stop_generation',{'sessionId':a,'messageId':d['streamingMessageId']},400)
+  login('alice');own=call('agent_session',{'sessionId':a});assert not own['modelPending'];assert own['tasks'][-1]['status']=='stopped';assert own['runs'][-1]['status']!='succeeded';login('bob')
   call('logout');assert guest in ids() and a not in ids() and b not in ids()
   login('alice');process.terminate();process.wait(10);start();assert a in ids() and b not in ids();assert next(s for s in call('agent_bootstrap')['sessions'] if s['id']==a)['title']=='Alice private title'
   # Simulate a pre-ownership schema, then migrate all records to the current account without deleting history.
