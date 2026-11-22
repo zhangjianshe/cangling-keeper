@@ -5,7 +5,7 @@
     const $=s=>document.querySelector(s),empty=()=>({items:[],nextCursor:null,hasMore:false});
     let recent=empty(),pinned=empty(),projects=new Map(),opened=new Map(),cache=new Map(),revision=0,request=0,debounce=null,previousFocus=null,menu=null,queryBusy=false,mutationBusy=false;
     let result=empty(),state='active',lastOwner=null,previewDetail=null,previewSelection=null;
-    const icons={search:'M21 21l-4.4-4.4M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0',more:'M5 12h.01M12 12h.01M19 12h.01',archive:'M3 8h18M5 8v13h14V8M3 3h18v5H3zM10 12h4',restore:'M3 11a9 9 0 1 1 2.5 7M3 4v7h7',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',close:'M6 6l12 12M18 6 6 18'};
+    const icons={search:'M21 21l-4.4-4.4M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0',more:'M5 12h.01M12 12h.01M19 12h.01',pin:'m12 3 2.78 5.63L21 9.54l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.93 1.06-6.2L3 9.54l6.22-.91L12 3z',archive:'M3 8h18M5 8v13h14V8M3 3h18v5H3zM10 12h4',restore:'M3 11a9 9 0 1 1 2.5 7M3 4v7h7',trash:'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',close:'M6 6l12 12M18 6 6 18'};
     function icon(kind){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');for(const [k,v] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))svg.setAttribute(k,v);const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',icons[kind]);svg.append(path);return svg;}
     function button(label,kind,fn,cls=''){const node=element('button',cls);node.type='button';if(kind)node.append(icon(kind));node.append(element('span','',label));node.onclick=fn;return node;}
     const launch=button('搜索与管理会话','search',()=>open(),'history-launch');launch.id='agent-history-open';$('.agent-navigation-sections').before(launch);
@@ -23,11 +23,19 @@
     function sync(){const all=new Map(cache);for(const page of [recent,pinned,...projects.values()])for(const item of page.items){all.set(item.id,item);cache.set(item.id,item);}agent.sessions=[...all.values()];}
     function remember(item){if(item?.id){cache.set(item.id,item);sync();}}
     function pageButton(page,fetcher,host){if(!page?.hasMore)return;const b=button(page.loading?'加载中…':'加载更多',null,fetcher,'history-load-more');b.disabled=!!page.loading;host.append(b);}
-    function closeMenu(focus=false){if(!menu)return;const previous=menu.launch;menu.node.remove();menu=null;if(focus)previous.focus();}
+    function closeMenu(focus=false){if(!menu)return;const previous=menu.launch;previous.setAttribute('aria-expanded','false');menu.node.remove();menu=null;if(focus)previous.focus();}
     function decorateRow(row,item){
-      const action=button('会话操作','more',event=>{event.stopPropagation();if(menu?.launch===action){closeMenu();return;}closeMenu();const node=element('div','history-row-menu');node.setAttribute('role','menu');node.setAttribute('aria-label',item.title+'的操作');
-        for(const [name,kind,command] of [['归档','archive','archive'],['移到回收站','trash','delete']]){const b=button(name,kind,()=>{closeMenu();mutate(item,command);});b.setAttribute('role','menuitem');node.append(b);}document.body.append(node);const r=action.getBoundingClientRect();node.style.left=Math.max(8,Math.min(innerWidth-190,r.left))+'px';node.style.top=Math.max(8,Math.min(innerHeight-100,r.bottom+4))+'px';menu={node,launch:action};node.querySelector('button').focus();
-      },'history-row-more');action.title='会话操作';action.setAttribute('aria-label','会话操作：'+item.title);action.setAttribute('aria-haspopup','menu');row.append(action);
+      function openMenu(x,y){
+        closeMenu();const node=element('div','history-row-menu');node.setAttribute('role','menu');node.setAttribute('aria-label',item.title+'的操作');
+        for(const [name,kind,command] of [[item.pinned?'取消置顶':'置顶会话','pin','pin'],['归档','archive','archive'],['移到回收站','trash','delete']]){
+          const b=button(name,kind,()=>{closeMenu();mutate(item,command);});b.setAttribute('role','menuitem');b.disabled=mutationBusy;node.append(b);
+        }
+        document.body.append(node);node.style.left=Math.max(8,Math.min(innerWidth-(node.offsetWidth || 190)-8,x))+'px';node.style.top=Math.max(8,Math.min(innerHeight-(node.offsetHeight || 130)-8,y))+'px';menu={node,launch:action};action.setAttribute('aria-expanded','true');node.querySelector('button:not(:disabled)')?.focus();
+      }
+      const action=button('会话操作','more',event=>{event.stopPropagation();if(menu?.launch===action){closeMenu();return;}const r=action.getBoundingClientRect();openMenu(r.left,r.bottom+4);},'history-row-more');
+      action.title='会话操作';action.setAttribute('aria-label','会话操作：'+item.title);action.setAttribute('aria-haspopup','menu');action.setAttribute('aria-expanded','false');row.append(action);
+      row.addEventListener('contextmenu',event=>{event.preventDefault();event.stopPropagation();openMenu(event.clientX,event.clientY);});
+      row.addEventListener('keydown',event=>{if(event.key==='ContextMenu' || (event.shiftKey && event.key==='F10')){event.preventDefault();event.stopPropagation();const r=action.getBoundingClientRect();openMenu(r.left,r.bottom+4);}});
     }
     async function morePage(page,args,redraw){if(!page?.hasMore || page.loading)return;const rev=revision,epoch=agent.identityEpoch || 0;page.loading=true;redraw();try{const data=await invoke('agent_sessions',{state:'active',limit:30,...args,cursor:page.nextCursor});if(rev!==revision || epoch!==(agent.identityEpoch || 0))return;page.items=[...new Map([...page.items,...data.items].map(i=>[i.id,i])).values()];page.nextCursor=data.nextCursor;page.hasMore=data.hasMore;sync();}catch(error){if(rev===revision)notice(String(error));}finally{page.loading=false;if(rev===revision)redraw();}}
     function appendRecent(host){pageButton(recent,()=>morePage(recent,{},()=>{renderSessions();renderProjects();}),host);}
@@ -102,12 +110,12 @@
         if(action==='delete' && !await uiConfirm('将会话“'+item.title+'”移到回收站？之后可以恢复。项目目录中的文件会保留。','删除会话'))return;
         if(action==='purge' && !await uiConfirm('永久删除会话“'+item.title+'”及其消息、版本和工具记录？此操作无法撤销，项目目录中的文件会保留。','永久删除会话'))return;
         if(epoch!==(agent.identityEpoch || 0))return;
-        const commands={archive:'agent_archive_session',unarchive:'agent_archive_session',delete:'agent_delete_session',restore:'agent_restore_session',purge:'agent_purge_session'};
-        await invoke(commands[action],{sessionId:item.id,archived:action==='archive',confirm:action==='purge'});
+        const commands={pin:'agent_pin_session',archive:'agent_archive_session',unarchive:'agent_archive_session',delete:'agent_delete_session',restore:'agent_restore_session',purge:'agent_purge_session'};
+        await invoke(commands[action],action==='pin'?{sessionId:item.id,pinned:!item.pinned}:{sessionId:item.id,archived:action==='archive',confirm:action==='purge'});
         if(epoch!==(agent.identityEpoch || 0))return;
         if(agent.selected===item.id && ['delete','purge'].includes(action))clearSelected();
         await bootstrap();if(epoch!==(agent.identityEpoch || 0))return;
-        if(agent.selected===item.id)await select(item.id);if(!modal.hidden)await load();notice();
+        if(action!=='pin' && agent.selected===item.id)await select(item.id);if(!modal.hidden)await load();notice();
       }catch(error){if(epoch===(agent.identityEpoch || 0)){if(!modal.hidden)status.textContent=String(error);else notice(String(error));}}
       finally{mutationBusy=false;if(!modal.hidden)renderResults();}
     }

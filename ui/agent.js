@@ -22,9 +22,7 @@
     button.title=(agent.projects.find(p=>p.id===session.projectId)?.name || '')+' · '+session.title;
     button.setAttribute('aria-current',String(session.id===agent.selected));
     button.onclick=()=>{agent.project=session.projectId;renderProjects();showConversation();select(session.id);};
-    const pin=element('button','agent-pin',session.pinned?'★':'☆');pin.type='button';pin.title=session.pinned?'取消置顶':'置顶会话';pin.setAttribute('aria-label',pin.title+'：'+session.title);
-    pin.onclick=async()=>{try{await invoke('agent_pin_session',{sessionId:session.id,pinned:!session.pinned});await bootstrap();}catch(error){notice(String(error));}};
-    row.append(button,pin);agent.history?.decorateRow(row,session);return row;
+    row.append(button);agent.history?.decorateRow(row,session);return row;
   }
   function renderSessions(){
     const list=$('#agent-sessions'),pinned=$('#agent-pinned');list.replaceChildren();pinned.replaceChildren();
