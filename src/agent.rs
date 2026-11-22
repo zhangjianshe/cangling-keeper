@@ -63,6 +63,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     crate::agent_security::initialize(store)?;
     crate::agent_account::initialize(store)?;
     crate::agent_history::initialize(store)?;
+    crate::agent_attachments::initialize(store)?;
     crate::model::initialize(store)?;
     let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
     let columns=store.conn.prepare("PRAGMA table_info(agent_sessions)").map_err(|e|e.to_string())?.query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
@@ -190,14 +191,18 @@ pub(crate) fn context_messages(store: &Store, session: &str, boundary: &str) -> 
             let Some(group)=groups.iter().find(|g|g["rootId"]==message["id"]) else {continue};
             match messages.iter().find(|m|m["id"]==group["selectedId"]){Some(m)=>m,None=>continue}
         } else {message};
-        if matches!(chosen["role"].as_str(),Some("user"|"assistant")) && !chosen["content"].as_str().unwrap_or("").is_empty(){result.push(json!({"role":chosen["role"],"content":chosen["content"]}));}
+        if matches!(chosen["role"].as_str(),Some("user"|"assistant")) {
+            let canonical=crate::agent_attachments::context_message(store,session,chosen)?;
+            if !chosen["content"].as_str().unwrap_or("").is_empty() || canonical.get("keeperAttachments").is_some(){result.push(canonical);}
+        }
     }
     Ok(result)
 }
 fn detail(store: &Store, session: &str) -> Result<Value, String> {
     let session_info=crate::agent_history::info(store,session)?;
-    let messages = reply_messages(store, session, None)?;
+    let mut messages = reply_messages(store, session, None)?;
     let groups = reply_groups(store, session, &messages)?;
+    crate::agent_attachments::decorate_messages(store,session,&mut messages)?;
     let mut stmt=store.conn.prepare("SELECT id,tool,arguments,status,output,created_at,response_id,tool_call_id,step,updated_at FROM agent_runs WHERE session_id=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
     let rows=stmt.query_map([session],|r|Ok(json!({"id":r.get::<_,String>(0)?,"tool":r.get::<_,String>(1)?,"arguments":serde_json::from_str::<Value>(&r.get::<_,String>(2)?).unwrap_or(Value::Null),"status":r.get::<_,String>(3)?,"output":r.get::<_,String>(4)?,"createdAt":r.get::<_,i64>(5)?,"responseId":r.get::<_,String>(6)?,"toolCallId":r.get::<_,String>(7)?,"step":r.get::<_,i64>(8)?,"updatedAt":r.get::<_,i64>(9)?}))).map_err(|e|e.to_string())?;
     let runs = rows
@@ -206,7 +211,7 @@ fn detail(store: &Store, session: &str) -> Result<Value, String> {
     let mut runs=runs;for run in &mut runs {run["review"]=crate::agent_runtime::review(store,run["id"].as_str().unwrap())?;}
     let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[session],|r|r.get(0)).map_err(|e|e.to_string())?;
     let model=crate::model::session_config(store,session)?;
-    Ok(json!({"sessionId":session,"session":session_info,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
+    Ok(json!({"sessionId":session,"session":session_info,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"draftAttachments":crate::agent_attachments::draft(store,session)?,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
 }
 fn host_snapshot(store: &Store, host_id: &str) -> Result<Value, String> {
     let h = store.get_host(host_id)?;
@@ -386,6 +391,14 @@ pub(crate) async fn dispatch(
             let result=tokio::task::spawn_blocking(move ||{let root=cap_std::fs::Dir::open_ambient_dir(directory,cap_std::ambient_authority()).map_err(|_|"无法打开当前项目目录")?;let flag=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));if skill{crate::agent_skills::load(&root,&file_args,flag)}else{crate::agent_skills::snapshot(&root,flag)}}).await.map_err(|_|"读取项目指南失败")??;
             let store=core.store.lock().map_err(|e|e.to_string())?;if crate::agent_account::owner(&store)?!=owner || !crate::agent_account::owns(&store,&session){return Err("账号已切换，请重试".into());}Ok(result)
         }
+        "agent_attachment_upload" | "agent_attachment_content" | "agent_attachment_delete" => {
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            match command {
+                "agent_attachment_upload"=>crate::agent_attachments::upload(&store,&args),
+                "agent_attachment_content"=>crate::agent_attachments::content(&store,&args),
+                _=>crate::agent_attachments::delete(&store,&args),
+            }
+        }
         "agent_sessions" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_history::list(&store,&args)}
         "agent_archive_session" | "agent_delete_session" | "agent_restore_session" | "agent_purge_session" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_history::mutate(&store,command,&args)}
         "agent_cis_usage" => crate::cis_models::call(&core,reqwest::Method::GET,if args["all"]==true {"/admin/usage"} else {"/usage"},None).await,
@@ -521,7 +534,7 @@ pub(crate) async fn dispatch(
         "agent_regenerate" | "agent_edit_message" => {
             let session=text(&args,"sessionId")?;let mut original=text(&args,"messageId")?;
             let editing=command=="agent_edit_message";
-            let edit_content=if editing{let value=text(&args,"content")?;if value.len()>32000{return Err("消息过长".into());}Some(value)}else{None};
+            let edit_content=if editing{let value=args["content"].as_str().ok_or("缺少参数 content")?.to_owned();if value.len()>32000{return Err("消息过长".into());}Some(value)}else{None};
             let response_id=id();let (cancel_tx,cancel_rx)=tokio::sync::oneshot::channel();
             {
                 let store=core.store.lock().map_err(|e|e.to_string())?;require_session(&store,&session)?;
@@ -531,21 +544,25 @@ pub(crate) async fn dispatch(
                 let messages=reply_messages(&store,&session,None)?;let groups=reply_groups(&store,&session,&messages)?;
                 let mut edited_user=None;
                 let mut edited_context=None;
+                let mut edited_source=None;
                 if editing {
                     let user=messages.iter().find(|m|m["id"]==original && m["role"]=="user").ok_or("用户消息不存在或不属于该会话")?;
                     let user_group=groups.iter().find(|g|g["versionIds"].as_array().unwrap().contains(&user["id"])).ok_or("用户消息版本不存在")?;
                     if user_group["selectedId"]!=user["id"]{return Err("请先切换到要编辑的消息版本。".into());}
-                    if user["content"]==json!(edit_content){return Err("消息内容未修改。".into());}
+                    if user["content"]==json!(edit_content.as_ref().unwrap()){return Err("消息内容未修改。".into());}
+                    let attachment_ids=crate::agent_attachments::message_ids(&store,&session,user["id"].as_str().unwrap())?;
+                    if edit_content.as_ref().unwrap().trim().is_empty() && attachment_ids.as_array().unwrap().is_empty(){return Err("消息内容不能为空".into());}
                     let root_position=messages.iter().position(|m|m["id"]==user_group["rootId"]).unwrap();
                     let reply=messages[root_position+1..].iter().take_while(|m|m["role"]!="user").find(|m|m["role"]=="assistant").ok_or("该消息尚无可重新生成的回复")?;
                     let reply_group=groups.iter().find(|g|g["rootId"]==reply["id"]).ok_or("原回复不存在")?;
                     original=reply_group["selectedId"].as_str().ok_or("当前消息版本没有回复")?.to_owned();
                     let mut context=store.conn.query_row("SELECT messages FROM agent_model_contexts WHERE message_id=?1",[&original],|r|r.get::<_,String>(0)).ok().and_then(|v|serde_json::from_str::<Vec<Value>>(&v).ok()).unwrap_or(context_messages(&store,&session,reply["id"].as_str().unwrap())?);
-                    let last=context.iter().rposition(|m|m["role"]=="user").ok_or("原始问题上下文不存在")?;context.truncate(last+1);context[last]["content"]=json!(edit_content.as_ref().unwrap());
+                    let last=context.iter().rposition(|m|m["role"]=="user").ok_or("原始问题上下文不存在")?;context.truncate(last+1);
+                    let mut canonical=crate::agent_attachments::context_message(&store,&session,user)?;
+                    canonical["content"]=json!(edit_content.as_ref().unwrap());context[last]=canonical;
                     if context.first().is_none_or(|m|m["role"]!="system"){context.insert(0,json!({"role":"system","content":crate::model::SYSTEM_PROMPT}));}
                     let user_id=id();
-                    store.conn.execute("INSERT INTO agent_messages(id,session_id,role,content,created_at,model_metadata) VALUES (?1,?2,'user',?3,?4,?5)",params![user_id,session,edit_content.as_ref().unwrap(),now(),json!({"editOf":user["id"]}).to_string()]).map_err(|e|e.to_string())?;
-                    store.conn.execute("INSERT INTO agent_reply_versions(session_id,root_id,selected_id) VALUES (?1,?2,?3) ON CONFLICT(session_id,root_id) DO UPDATE SET selected_id=excluded.selected_id",params![session,user_group["rootId"].as_str().unwrap(),user_id]).map_err(|e|e.to_string())?;
+                    edited_source=Some((user["id"].as_str().unwrap().to_owned(),user_group["rootId"].as_str().unwrap().to_owned()));
                     edited_user=Some(user_id);edited_context=Some(context);
                 }
                 let raw:String=store.conn.query_row("SELECT model_metadata FROM agent_messages WHERE id=?1 AND session_id=?2 AND role='assistant'",params![original,session],|r|r.get(0)).map_err(|_|"原回复不存在或不属于该会话")?;
@@ -557,6 +574,18 @@ pub(crate) async fn dispatch(
                 let (url,model,_,provider)=crate::model::credentials_for(&store,Some(&server))?;
                 if provider=="cis-proxy" && (metadata["requestedModel"].as_str()!=Some(model.as_str()) || metadata["cisRevision"]!=current["revision"]){return Err("CIS 模型已变更，无法使用原模型重新生成。".into());}
                 if metadata.get("baseUrl").is_some_and(|v|v!=&json!(url)) || metadata.get("provider").is_some_and(|v|v!=&json!(provider)){return Err("原模型服务的地址或 API 类型已变更，请恢复原配置后重试。".into());}
+                let request_context=if let Some(context)=&edited_context {context.clone()} else {
+                    store.conn.query_row("SELECT messages FROM agent_model_contexts WHERE message_id=?1",[&original],|r|r.get::<_,String>(0)).ok().and_then(|v|serde_json::from_str::<Vec<Value>>(&v).ok()).unwrap_or(context_messages(&store,&session,&original)?)
+                };
+                if let Some(user)=request_context.iter().rev().find(|m|m["role"]=="user") {
+                    let attachments=json!(user["keeperAttachments"].as_array().map(|refs|refs.iter().map(|item|item["id"].clone()).collect::<Vec<_>>()).unwrap_or_default());
+                    crate::agent_attachments::ensure_supported(&store,&session,&attachments,current)?;
+                }
+                if let (Some(user_id),Some((source,root)))=(&edited_user,&edited_source) {
+                    store.conn.execute("INSERT INTO agent_messages(id,session_id,role,content,created_at,model_metadata) VALUES (?1,?2,'user',?3,?4,?5)",params![user_id,session,edit_content.as_ref().unwrap(),now(),json!({"editOf":source}).to_string()]).map_err(|e|e.to_string())?;
+                    crate::agent_attachments::clone_links(&store,&session,source,user_id)?;
+                    store.conn.execute("INSERT INTO agent_reply_versions(session_id,root_id,selected_id) VALUES (?1,?2,?3) ON CONFLICT(session_id,root_id) DO UPDATE SET selected_id=excluded.selected_id",params![session,root,user_id]).map_err(|e|e.to_string())?;
+                }
 
                 let root=groups.iter().find(|g|g["versionIds"].as_array().unwrap().iter().any(|id|id==&json!(original))).ok_or("原回复不存在")?["rootId"].as_str().unwrap().to_owned();
                 store.conn.execute("INSERT INTO agent_reply_versions(session_id,root_id,selected_id) VALUES (?1,?2,?3) ON CONFLICT(session_id,root_id) DO UPDATE SET selected_id=excluded.selected_id",params![session,root,response_id]).map_err(|e|e.to_string())?;
@@ -574,7 +603,9 @@ pub(crate) async fn dispatch(
         }
         "agent_send_message" => {
             let session = text(&args, "sessionId")?;
-            let content = text(&args, "content")?;
+            let content = args.get("content").and_then(Value::as_str).unwrap_or("").to_owned();
+            let attachment_ids=args.get("attachmentIds").cloned().unwrap_or(json!([]));
+            if content.trim().is_empty() && attachment_ids.as_array().is_none_or(Vec::is_empty) {return Err("消息内容或附件不能为空".into());}
             if content.len() > 32000 {
                 return Err("消息过长".into());
             }
@@ -588,9 +619,13 @@ pub(crate) async fn dispatch(
                 let selection=crate::model::session_config(&store,&session)?;
                 let enabled=selection["enabled"]==true && selection["hasApiKey"]==true;
                 if !enabled && !selection["activeServerId"].as_str().unwrap_or("").is_empty(){return Err("该会话选择的模型已停用或密钥不可用，请重新选择模型。".into());}
+                crate::agent_attachments::ensure_supported(&store,&session,&attachment_ids,&selection)?;
+                let user_id=id();
+                store.conn.execute("INSERT INTO agent_messages(id,session_id,role,content,created_at,model_metadata) VALUES (?1,?2,'user',?3,?4,'{}')",params![user_id,session,content,now()]).map_err(|e|e.to_string())?;
+                crate::agent_attachments::bind(&store,&session,&user_id,&attachment_ids)?;
                 if enabled{store.conn.execute("INSERT INTO agent_model_pending(session_id,message_id) VALUES (?1,?2)",params![session,response_id]).map_err(|e|e.to_string())?;}
-                message(&store,&session,"user",&content)?;
-                store.conn.execute("UPDATE agent_sessions SET title=?2 WHERE id=?1 AND title_custom=0 AND (SELECT count(*) FROM agent_messages WHERE session_id=?1 AND role='user')=1",params![session,content.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(128).collect::<String>()]).map_err(|e|e.to_string())?;
+                let title=if content.trim().is_empty(){crate::agent_attachments::context_message(&store,&session,&json!({"id":user_id,"role":"user","content":content}))?["keeperAttachments"][0]["name"].as_str().unwrap_or("附件消息").to_owned()}else{content.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(128).collect::<String>()};
+                store.conn.execute("UPDATE agent_sessions SET updated_at=?3,title=CASE WHEN title_custom=0 AND (SELECT count(*) FROM agent_messages WHERE session_id=?1 AND role='user')=1 THEN ?2 ELSE title END WHERE id=?1",params![session,title,now()]).map_err(|e|e.to_string())?;
                 if enabled{store.conn.execute("INSERT INTO agent_messages(id,session_id,role,content,created_at,model_metadata) VALUES (?1,?2,'assistant','',?3,?4)",params![response_id,session,now(),json!({"source":"llm","generationStatus":"streaming","serverId":selection["activeServerId"],"serverName":selection["name"],"requestedModel":selection["model"],"model":selection["model"]}).to_string()]).map_err(|e|e.to_string())?;}
                 if !enabled{message(&store,&session,"assistant","消息已保存。尚未启用模型，可到账户页配置 DeepSeek，或通过工具入口手动操作。")?;}
                 if enabled{core.model_cancellations.lock().map_err(|e|e.to_string())?.insert(response_id.clone(),cancel_tx);}

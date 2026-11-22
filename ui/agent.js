@@ -92,7 +92,13 @@
   async function ensureSession(){
     if(agent.detail.historyPreview)throw new Error('正在预览历史版本，请先返回当前版本。');
     if(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt)throw new Error('请先恢复会话，再发送消息或执行工具。');
-    if(!agent.selected){const session=await invoke('agent_new_session',{projectId:agent.project});agent.selected=session.id;localStorage.setItem(sessionStorageKey(),agent.selected);}
+    if(!agent.selected){
+      const identity=agent.identityEpoch || 0,generation=agent.generation,project=agent.project;
+      let creation=agent.creatingSession;
+      if(!creation || creation.identity!==identity || creation.generation!==generation || creation.project!==project){creation={identity,generation,project,promise:invoke('agent_new_session',{projectId:project})};agent.creatingSession=creation;}
+      try{const session=await creation.promise;if(identity!==(agent.identityEpoch || 0) || generation!==agent.generation || project!==agent.project || (agent.selected && agent.selected!==session.id))throw new Error('会话或账号已切换，请在当前会话重新添加附件或发送消息。');agent.selected=session.id;localStorage.setItem(sessionStorageKey(),agent.selected);}
+      finally{if(agent.creatingSession===creation)agent.creatingSession=null;}
+    }
     return agent.selected;
   }
   async function select(session) {
@@ -250,7 +256,7 @@
     $('#llm-server-id').value=server?.id || '';$('#llm-server-name').value=server?.name || '';
     $('#llm-provider').value=server?.provider || 'deepseek';$('#deepseek-enabled').checked=server?.enabled || false;
     $('#deepseek-url').value=server?.baseUrl || 'https://api.deepseek.com';$('#deepseek-model').value=server?.model || 'deepseek-flash';
-    $('#llm-context-limit').value=server?.contextLimit || 32768;
+    $('#llm-context-limit').value=server?.contextLimit || 32768;$('#llm-images-option').hidden=remote;$('#llm-supports-images').checked=server?.supportsImages===true;
     $('#deepseek-key').value='';$('#deepseek-key').placeholder=server?.hasApiKey?'已保存密钥，留空保留':'请输入 API Key';$('#llm-clear-key').checked=false;$('#deepseek-status').textContent='';
     $('#llm-server-modal').classList.remove('hidden');$('#llm-server-name').focus();
   }
@@ -260,7 +266,7 @@
     const clear=$('#llm-clear-key').checked;
     const payload={id:$('#llm-server-id').value,name:$('#llm-server-name').value.trim(),provider:$('#llm-provider').value,enabled:clear?false:$('#deepseek-enabled').checked,baseUrl:$('#deepseek-url').value.trim(),model:$('#deepseek-model').value.trim(),apiKey:$('#deepseek-key').value,contextLimit:Number($('#llm-context-limit').value)};
     if(llmRemote){if(llmIdentityEpoch!==(agent.identityEpoch || 0))throw new Error('登录账号已改变，请重新打开配置');const result=await invoke('agent_cis_model_save',payload);$('#deepseek-key').value='';if(llmIdentityEpoch!==(agent.identityEpoch || 0))throw new Error('模型已保存到原 CIS 账号，当前账号已切换');let refreshError=result.refreshError;try{await loadCisAdmin();await bootstrap();}catch(error){refreshError=refreshError || String(error);}if(refreshError)$('#llm-list-status').textContent='CIS 模型已保存，列表刷新失败：'+refreshError;return result.id;}
-    const result=await invoke('agent_model_save',{...payload,clearApiKey:clear});
+    const result=await invoke('agent_model_save',{...payload,clearApiKey:clear,supportsImages:$('#llm-supports-images').checked});
     const saved=result.servers.find(s=>s.id===result.savedServerId);$('#llm-server-id').value=result.savedServerId;$('#deepseek-key').value='';$('#deepseek-key').placeholder=saved.hasApiKey?'已保存密钥，留空保留':'请输入 API Key';$('#llm-clear-key').checked=false;$('#deepseek-enabled').checked=saved.enabled;renderModel(result);return result.savedServerId;
   }
   async function loadCisAdmin(){
@@ -301,7 +307,7 @@
   async function restoreHistoryRequest(args){const response=await fetch('/api/history/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args)});if(response.status===413)throw new Error('备份文件过大');const data=await response.json();if(!response.ok || !data.ok)throw new Error(data.error || '无法恢复备份');return data.result;}
   $('#history-backup-file').onchange=async event=>{const file=event.target.files?.[0];if(!file)return;historyBusy(true);const epoch=agent.identityEpoch || 0;$('#history-backup-status').textContent='正在检查备份…';try{
     if(file.size>24*1024*1024)throw new Error('备份文件不能超过 24 MiB');const backup=JSON.parse(await file.text());const preview=await restoreHistoryRequest({mode:'preview',backup});if(epoch!==(agent.identityEpoch || 0))throw new Error('账号已切换，请重新选择备份');
-    const message='备份包含 '+preview.projects+' 个关联项目、'+preview.sessions+' 个会话、'+preview.messages+' 条消息、'+preview.runs+' 条工具记录。'+(preview.differentAccount?' 此备份来自其他账户，将导入当前账户。':'')+'\n恢复将新增会话并保留现有数据。工具不会重新执行，项目文件不会恢复。是否继续？';
+    const message='备份包含 '+preview.projects+' 个关联项目、'+preview.sessions+' 个会话、'+preview.messages+' 条消息、'+preview.runs+' 条工具记录、'+(preview.attachments || 0)+' 个附件。'+(preview.differentAccount?' 此备份来自其他账户，将导入当前账户。':'')+'\n恢复将新增会话并保留现有数据。工具不会重新执行，项目文件不会恢复。是否继续？';
     if(!await uiConfirm(message,'恢复对话备份')){$('#history-backup-status').textContent='已取消恢复';return;}
     const result=await restoreHistoryRequest({mode:'restore',backup,confirmed:true,expectedAccount:preview.accountKey});if(epoch!==(agent.identityEpoch || 0))throw new Error('备份已恢复到确认时的账户，当前账号已切换');await bootstrap();$('#history-backup-status').textContent='已恢复 '+result.sessions+' 个会话，原有数据已保留。';
   }catch(error){$('#history-backup-status').textContent='恢复失败：'+String(error);}finally{historyBusy(false);}};
@@ -391,11 +397,11 @@
     let status=container.querySelector('.agent-stream-status');
     if(agent.detail.modelPending){if(!status){status=element('div','agent-message-label agent-stream-status');status.setAttribute('role','status');container.append(status);}const task=agent.detail.tasks?.find(t=>t.responseId===agent.detail.streamingMessageId);status.textContent=agent.detail.stopRequested?'正在停止生成…':agent.detail.messages.find(m=>m.id===agent.detail.streamingMessageId)?.modelMetadata?.context?.status==='compressing'?'正在整理上下文…':task?.status==='approval'?`等待你确认操作 · 第 ${task.step} 轮`:task?.status==='tool'?`正在执行工具 · 第 ${task.step} 轮`:`模型正在生成…${task?.step?' · 第 '+task.step+' 轮':''}`;}
     else status?.remove();
-    agent.history?.updateDetail();agent.guidance?.update();
+    agent.history?.updateDetail();agent.guidance?.update();agent.attachments?.render();
   }
   async function saveEditedMessage(entry){
     if(agent.savingEdit || agent.detail.modelPending || !agent.editing)return;
-    const content=agent.editing.content.trim();if(!content){notice('消息内容不能为空。');return;}if(content===entry.content){agent.editing=null;renderConversation();return;}
+    const content=agent.editing.content.trim();if(!content && !entry.attachments?.length){notice('消息内容不能为空。');return;}if(content===entry.content){agent.editing=null;renderConversation();return;}
     const session=agent.selected,anchor=replyAnchor(entry.replyGroup?.rootId || entry.id);agent.savingEdit=true;
     for(const button of $('#agent-messages').querySelectorAll('.agent-message-edit button'))button.disabled=true;
     try{await invoke('agent_edit_message',{sessionId:session,messageId:entry.id,content});agent.editing=null;await bootstrap();if(agent.selected===session){await select(session);restoreReplyAnchor(anchor);}notice();}
@@ -433,7 +439,7 @@
     const follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<90;
     const draft=container.querySelector('.agent-run-form');
     const toolOpen=new Map([...container.querySelectorAll('.agent-compact-run')].map(node=>[node.dataset.runId,node.open]));
-    const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata]),agent.detail.replyGroups,agent.detail.runs,agent.editing?.session===agent.selected?agent.editing.id:null]);
+    const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata,m.attachments]),agent.detail.replyGroups,agent.detail.runs,agent.editing?.session===agent.selected?agent.editing.id:null]);
     if(!draft && container.dataset.signature===signature){
       for(const entry of agent.detail.messages){const body=container.querySelector('[data-message-id="'+entry.id+'"] .agent-message-body');if(body)window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');}
       renderPending(container);if(follow)timeline.scrollTop=timeline.scrollHeight;window.keeperThreadNav?.update({messages:visibleMessages(),detail:agent.detail});return;
@@ -466,7 +472,7 @@
           const runs=agent.detail.runs.filter(run=>run.responseId===entry.id);
           if(runs.length){const steps=element('div','agent-tool-steps');steps.setAttribute('aria-label','工具执行过程');for(const run of runs)steps.append(runCard(run,toolOpen));message.append(steps);}
         }
-        const body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');message.append(body);
+        const body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');body.hidden=entry.role==='user' && !entry.content?.trim();message.append(body);agent.attachments?.decorate(message,entry);
         if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id){
           body.hidden=true;const form=element('form','agent-message-edit'),input=element('textarea');input.value=agent.editing.content;input.setAttribute('aria-label','编辑消息');input.rows=Math.max(3,Math.min(10,input.value.split('\n').length));input.oninput=()=>{agent.editing.content=input.value;};
           const actions=element('div','agent-edit-actions'),cancel=element('button','btn','取消'),save=element('button','btn primary','保存并重新生成');cancel.type='button';save.type='submit';
@@ -611,10 +617,10 @@
     $('#agent-welcome').hidden=true;$('#agent-messages').querySelector('.agent-run-form')?.remove();$('#agent-messages').append(form);command.focus();$('#agent-timeline').scrollTop=$('#agent-timeline').scrollHeight;
   }
   $('#agent-compose').onsubmit=async event=>{
-    event.preventDefault();if(agent.sending || agent.detail.modelPending)return;const content=$('#agent-input').value.trim();if(!content)return;
-    agent.sending=true;$('#agent-send').disabled=true;
-    try{const session=await ensureSession();await invoke('agent_send_message',{sessionId:session,content});$('#agent-input').value='';await bootstrap();await select(session);$('#agent-timeline').scrollTop=$('#agent-timeline').scrollHeight;notice();}
-    catch(error){notice(String(error));}finally{agent.sending=false;$('#agent-send').disabled=!!agent.detail.modelPending;$('#agent-input').focus();}
+    event.preventDefault();if(agent.sending || agent.detail.modelPending || agent.attachments?.busy())return;const content=$('#agent-input').value.trim(),attachmentIds=agent.attachments?.draftIds() || [];if(!content && !attachmentIds.length)return;
+    const identity=agent.identityEpoch || 0;agent.sending=true;renderPending($('#agent-messages'));
+    try{const session=await ensureSession();await invoke('agent_send_message',{sessionId:session,content,attachmentIds});if(identity!==(agent.identityEpoch || 0))return;if(agent.selected===session)$('#agent-input').value='';await bootstrap();if(agent.selected===session){await select(session);$('#agent-timeline').scrollTop=$('#agent-timeline').scrollHeight;}notice();}
+    catch(error){if(identity===(agent.identityEpoch || 0))notice(String(error));}finally{agent.sending=false;renderPending($('#agent-messages'));if(identity===(agent.identityEpoch || 0))$('#agent-input').focus();}
   };
   async function regenerateReply(messageId){
     if(!agent.selected || agent.detail.modelPending || agent.regenerating)return;
@@ -660,7 +666,7 @@
   async function refreshAccountSessions(){
     fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
-    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
+    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.attachments?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }
@@ -712,6 +718,7 @@
   }
   agent.history=window.createKeeperHistory?.({agent,invoke,element,notice,bootstrap,select,showConversation,renderProjects,renderSessions,renderConversation,clearSelected});
   agent.guidance=window.createKeeperGuidance?.({agent,invoke,element,notice});
+  agent.attachments=window.createKeeperAttachments?.({agent,invoke,element,notice,ensureSession,select,renderPending});
   bootstrap().then(async()=>{
     const saved=(localStorage.getItem(sessionStorageKey()) || localStorage.getItem('keeper-agent-session'));
     if(saved && await select(saved))return;

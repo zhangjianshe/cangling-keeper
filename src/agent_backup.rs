@@ -1,6 +1,7 @@
 //! Portable account-scoped conversation snapshots. Credentials and executable
 //! runtime state are deliberately outside this format; restore only adds rows.
 use crate::{AppState, store::Store};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -43,6 +44,8 @@ struct Session {
     archived_at: i64,
     #[serde(default, skip_serializing_if = "is_zero")]
     deleted_at: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachments: Vec<Attachment>,
     messages: Vec<Message>,
     versions: Vec<Version>,
     runs: Vec<Run>,
@@ -56,6 +59,97 @@ struct Message {
     created_at: i64,
     metadata: Value,
     context: Option<Vec<Value>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    attachment_ids: Vec<String>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Attachment {
+    id: String,
+    name: String,
+    mime_type: String,
+    kind: String,
+    size: u64,
+    sha256: String,
+    created_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    height: Option<u32>,
+    data: String,
+}
+fn attachment_bytes(attachment: &Attachment) -> Result<Vec<u8>, String> {
+    if attachment.data.len() > (4usize * 1024 * 1024).div_ceil(3) * 4 {
+        return Err("备份中的图片附件超过4 MiB".into());
+    }
+    STANDARD
+        .decode(&attachment.data)
+        .map_err(|_| "备份附件不是有效的 base64".into())
+}
+fn attachment_metadata(attachment: &Attachment) -> Result<Value, String> {
+    let bytes = attachment_bytes(attachment)?;
+    let mut meta =
+        crate::agent_attachments::validate(&attachment.name, &attachment.mime_type, &bytes)?;
+    if meta["kind"] != attachment.kind
+        || meta["mimeType"] != attachment.mime_type
+        || meta["size"] != attachment.size
+        || meta["sha256"] != attachment.sha256
+        || meta.get("width").and_then(Value::as_u64) != attachment.width.map(u64::from)
+        || meta.get("height").and_then(Value::as_u64) != attachment.height.map(u64::from)
+    {
+        return Err("备份附件的类型、大小、校验值或尺寸与内容不一致".into());
+    }
+    meta["id"] = json!(attachment.id);
+    if attachment.kind == "text" {
+        meta["text"] = json!(std::str::from_utf8(&bytes).map_err(|_| "文本附件编码无效")?);
+    }
+    Ok(meta)
+}
+// Stored contexts contain canonical references and strings, never provider image_url parts.
+fn validate_context(context: &[Value], attachments: &HashMap<&str, Value>) -> Result<(), String> {
+    for (index, item) in context.iter().enumerate() {
+        if !item.is_object()
+            || (!matches!(item["role"].as_str(), Some("user" | "assistant" | "tool"))
+                && !(index == 0 && item["role"] == "system"))
+            || !matches!(
+                item.get("content"),
+                Some(Value::String(_)) | Some(Value::Null)
+            )
+            || (item["role"] == "user" && !item["content"].is_string())
+            || item.as_object().is_some_and(|o| {
+                o.keys().any(|k| {
+                    !matches!(
+                        k.as_str(),
+                        "role"
+                            | "content"
+                            | "name"
+                            | "tool_calls"
+                            | "tool_call_id"
+                            | "keeperAttachments"
+                    )
+                })
+            })
+        {
+            return Err("历史上下文须为纯文本与本机会话附件引用".into());
+        }
+        if let Some(refs) = item.get("keeperAttachments") {
+            let refs = refs
+                .as_array()
+                .filter(|v| v.len() <= crate::agent_attachments::MAX_ATTACHMENTS)
+                .ok_or("历史上下文附件格式无效")?;
+            if item["role"] != "user" {
+                return Err("只有用户上下文消息可以关联附件".into());
+            }
+            let mut seen = HashSet::new();
+            for reference in refs {
+                let id = reference["id"].as_str().ok_or("历史上下文附件缺少ID")?;
+                if !seen.insert(id) || attachments.get(id) != Some(reference) {
+                    return Err("历史上下文附件不属于会话或元数据被修改".into());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -78,7 +172,9 @@ struct Run {
     step: i64,
     review: Option<Value>,
 }
-fn is_zero(value: &i64) -> bool { *value == 0 }
+fn is_zero(value: &i64) -> bool {
+    *value == 0
+}
 fn digest(snapshot: &Snapshot) -> Result<String, String> {
     Ok(crate::agent_actions::hash(
         serde_json::to_value(snapshot)
@@ -94,7 +190,7 @@ fn parse(value: &str) -> Result<Value, String> {
     serde_json::from_str(value).map_err(|_| "历史记录中的 JSON 无效，无法备份".into())
 }
 fn counts(s: &Snapshot) -> Value {
-    json!({"projects":s.projects.len(),"sessions":s.sessions.len(),"messages":s.sessions.iter().map(|s|s.messages.len()).sum::<usize>(),"runs":s.sessions.iter().map(|s|s.runs.len()).sum::<usize>(),"createdAt":s.created_at})
+    json!({"projects":s.projects.len(),"sessions":s.sessions.len(),"messages":s.sessions.iter().map(|s|s.messages.len()).sum::<usize>(),"runs":s.sessions.iter().map(|s|s.runs.len()).sum::<usize>(),"attachments":s.sessions.iter().map(|s|s.attachments.len()).sum::<usize>(),"createdAt":s.created_at})
 }
 pub(crate) fn export(store: &Store) -> Result<Value, String> {
     let tx = sql(store.conn.unchecked_transaction())?;
@@ -119,6 +215,7 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
             model_id: r.get(6)?,
             archived_at: r.get(7)?,
             deleted_at: r.get(8)?,
+            attachments: Vec::new(),
             messages: Vec::new(),
             versions: Vec::new(),
             runs: Vec::new(),
@@ -127,6 +224,40 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
     let mut bytes = 0;
     for row in rows {
         let mut session = sql(row)?;
+        let mut attachment_stmt=sql(store.conn.prepare("SELECT id,name,mime_type,kind,data,sha256,created_at FROM agent_attachments WHERE session_id=?1 AND owner_key=?2 ORDER BY created_at,rowid"))?;
+        let attachment_rows = sql(attachment_stmt.query_map(
+            params![session.id, snapshot.source_account],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Vec<u8>>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, i64>(6)?,
+                ))
+            },
+        ))?;
+        for raw in attachment_rows {
+            let (id, name, mime, kind, data, hash, created) = sql(raw)?;
+            let metadata = crate::agent_attachments::validate(&name, &mime, &data)?;
+            session.attachments.push(Attachment {
+                id,
+                name,
+                mime_type: mime,
+                kind,
+                size: data.len() as u64,
+                sha256: hash,
+                created_at: created,
+                width: metadata["width"].as_u64().map(|v| v as u32),
+                height: metadata["height"].as_u64().map(|v| v as u32),
+                data: STANDARD.encode(data),
+            });
+        }
+        if !session.attachments.is_empty() {
+            snapshot.version = 2;
+        }
         let mut messages=sql(store.conn.prepare("SELECT m.id,m.role,m.content,m.created_at,m.model_metadata,c.messages FROM agent_messages m LEFT JOIN agent_model_contexts c ON c.message_id=m.id WHERE m.session_id=?1 ORDER BY m.rowid"))?;
         let raw = sql(messages.query_map([&session.id], |r| {
             Ok((
@@ -140,6 +271,12 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
         }))?;
         for row in raw {
             let (id, role, content, created_at, metadata, context) = sql(row)?;
+            let linked = crate::agent_attachments::message_ids(store, &session.id, &id)?
+                .as_array()
+                .ok_or("附件关联记录无效")?
+                .iter()
+                .map(|v| v.as_str().map(str::to_owned).ok_or("附件关联记录无效"))
+                .collect::<Result<Vec<_>, _>>()?;
             session.messages.push(Message {
                 id,
                 role,
@@ -149,6 +286,7 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
                 context: context
                     .map(|s| serde_json::from_str(&s).map_err(|_| "历史上下文无效".to_string()))
                     .transpose()?,
+                attachment_ids: linked,
             });
         }
         let mut versions=sql(store.conn.prepare("SELECT root_id,selected_id FROM agent_reply_versions WHERE session_id=?1 ORDER BY rowid"))?;
@@ -206,7 +344,7 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
             .map_err(|_| "备份序列化失败")?
             .len();
         if bytes > MAX_BYTES {
-            return Err("当前账户历史超过 24 MiB 备份上限，请先归档或清理不需要的历史".into());
+            return Err("当前账户历史及附件超过 24 MiB 备份上限，请清理回收站或不需要的附件；归档不会减小备份".into());
         }
         snapshot.sessions.push(session);
     }
@@ -246,7 +384,7 @@ fn checked_time(time: i64) -> Result<(), String> {
 }
 fn validate(archive: &Archive) -> Result<(), String> {
     let s = &archive.snapshot;
-    if s.format != FORMAT || s.version != 1 {
+    if s.format != FORMAT || !matches!(s.version, 1 | 2) {
         return Err("不支持的 Keeper 备份格式或版本".into());
     }
     if archive.sha256 != digest(s)? {
@@ -260,7 +398,7 @@ fn validate(archive: &Archive) -> Result<(), String> {
         || s.projects.len() > 10000
         || s.sessions
             .iter()
-            .map(|s| s.messages.len() + s.runs.len())
+            .map(|s| s.messages.len() + s.runs.len() + s.attachments.len())
             .sum::<usize>()
             > 200000
     {
@@ -287,6 +425,25 @@ fn validate(archive: &Archive) -> Result<(), String> {
         {
             return Err("会话记录无效或重复".into());
         }
+        if s.version == 1
+            && (!session.attachments.is_empty()
+                || session
+                    .messages
+                    .iter()
+                    .any(|m| !m.attachment_ids.is_empty()))
+        {
+            return Err("附件需要第2版备份格式".into());
+        }
+        let mut attachments = HashMap::new();
+        for attachment in &session.attachments {
+            checked_id(&attachment.id)?;
+            checked_time(attachment.created_at)?;
+            if !ids.insert(&attachment.id) {
+                return Err("附件ID重复".into());
+            }
+            attachments.insert(attachment.id.as_str(), attachment_metadata(attachment)?);
+        }
+        let mut bound = HashSet::new();
         let mut messages = HashMap::<&str, (&str, &str)>::new();
         for m in &session.messages {
             checked_id(&m.id)?;
@@ -314,16 +471,31 @@ fn validate(archive: &Archive) -> Result<(), String> {
             } else {
                 m.id.as_str()
             };
-            if let Some(context) = &m.context {
-                for (index, item) in context.iter().enumerate() {
-                    if !matches!(item["role"].as_str(), Some("user" | "assistant" | "tool"))
-                        && !(index == 0 && item["role"] == "system")
-                    {
-                        return Err("历史上下文格式无效".into());
-                    }
+            if !m.attachment_ids.is_empty() && m.role != "user" {
+                return Err("只有用户消息可以关联附件".into());
+            }
+            if m.attachment_ids.len() > crate::agent_attachments::MAX_ATTACHMENTS {
+                return Err("每条消息最多4个附件".into());
+            }
+            let mut selected = HashSet::new();
+            for id in &m.attachment_ids {
+                if !selected.insert(id) || !attachments.contains_key(id.as_str()) {
+                    return Err("消息附件重复或不属于当前会话".into());
                 }
+                bound.insert(id.as_str());
+            }
+            if let Some(context) = &m.context {
+                validate_context(context, &attachments)?;
             }
             messages.insert(&m.id, (&m.role, root));
+        }
+        if attachments
+            .keys()
+            .filter(|id| !bound.contains(**id))
+            .count()
+            > crate::agent_attachments::MAX_ATTACHMENTS
+        {
+            return Err("每个会话最多4个待发送附件".into());
         }
         for m in &session.messages {
             for field in ["editOf", "regenerateOf", "promptMessageId"] {
@@ -472,6 +644,13 @@ pub(crate) fn restore(core: &AppState, args: &Value) -> Result<Value, String> {
                 default.as_str()
             };
             sql(store.conn.execute("INSERT INTO agent_sessions(id,title,created_at,updated_at,project_id,pinned,title_custom,server_id,security_mode,owner_key,archived_at,deleted_at) VALUES (?1,?2,?3,?4,?5,?6,1,?7,'ask',?8,?9,?10)",params![id,session.title,session.created_at,session.updated_at,project_ids[&session.project_id],session.pinned,model,owner,session.archived_at,session.deleted_at]))?;
+            let mut attachment_ids = HashMap::new();
+            for attachment in &session.attachments {
+                let attachment_id = uuid::Uuid::new_v4().to_string();
+                let bytes = attachment_bytes(attachment)?;
+                sql(store.conn.execute("INSERT INTO agent_attachments(id,owner_key,session_id,name,mime_type,kind,data,sha256,created_at,size,width,height) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",params![attachment_id,owner,id,attachment.name,attachment.mime_type,attachment.kind,bytes,attachment.sha256,attachment.created_at,attachment.size as i64,attachment.width,attachment.height]))?;
+                attachment_ids.insert(attachment.id.clone(), attachment_id);
+            }
             for m in &session.messages {
                 let mut metadata = m.metadata.clone();
                 for field in ["editOf", "regenerateOf", "promptMessageId"] {
@@ -484,7 +663,24 @@ pub(crate) fn restore(core: &AppState, args: &Value) -> Result<Value, String> {
                     metadata["context"] = json!({"status":"interrupted"});
                 }
                 sql(store.conn.execute("INSERT INTO agent_messages(id,session_id,role,content,created_at,model_metadata) VALUES (?1,?2,?3,?4,?5,?6)",params![ids[&m.id],id,m.role,m.content,m.created_at,metadata.to_string()]))?;
+                for (position, attachment) in m.attachment_ids.iter().enumerate() {
+                    sql(store.conn.execute("INSERT INTO agent_message_attachments(message_id,attachment_id,position) VALUES (?1,?2,?3)",params![ids[&m.id],attachment_ids[attachment],position as i64]))?;
+                }
                 if let Some(context) = &m.context {
+                    let mut context = context.clone();
+                    for item in &mut context {
+                        if let Some(refs) = item
+                            .get_mut("keeperAttachments")
+                            .and_then(Value::as_array_mut)
+                        {
+                            for reference in refs {
+                                let old = reference["id"].as_str().ok_or("上下文附件缺少ID")?;
+                                reference["id"] =
+                                    json!(attachment_ids.get(old).ok_or("上下文附件引用无效")?);
+                            }
+                        }
+                    }
+                    crate::model::validate_attachment_context(&store, &id, &context)?;
                     sql(store.conn.execute(
                         "INSERT INTO agent_model_contexts(message_id,messages) VALUES (?1,?2)",
                         params![ids[&m.id], json!(context).to_string()],

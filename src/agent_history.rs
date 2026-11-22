@@ -220,6 +220,7 @@ pub(crate) fn mutate(store: &Store, command: &str, args: &Value) -> Result<Value
             if before["deletedAt"].as_i64().unwrap() == 0 {
                 return Err("只能永久删除回收站中的会话。".into());
             }
+            crate::agent_attachments::purge(store,session)?;
             sql(store.conn.execute("DELETE FROM agent_reviews WHERE run_id IN (SELECT id FROM agent_runs WHERE session_id=?1)",[session]))?;
             sql(store.conn.execute("DELETE FROM agent_model_contexts WHERE message_id IN (SELECT id FROM agent_messages WHERE session_id=?1)",[session]))?;
             for table in [
@@ -269,6 +270,7 @@ mod tests {
         CREATE TABLE agent_reply_versions(session_id TEXT);").unwrap();
         initialize(&store).unwrap();
         initialize(&store).unwrap();
+        crate::agent_attachments::initialize(&store).unwrap();
         store
     }
     fn add(store: &Store, id: &str, owner: &str) {
@@ -368,6 +370,7 @@ mod tests {
         let store = store();
         add(&store, "a", "guest");
         store.conn.execute_batch("INSERT INTO agent_messages VALUES ('m','a','user','keep','{}');INSERT INTO agent_model_contexts VALUES ('m');INSERT INTO agent_runs VALUES ('r','a','succeeded');INSERT INTO agent_reviews VALUES ('r');").unwrap();
+        store.conn.execute_batch("INSERT INTO agent_attachments(id,owner_key,session_id,name,mime_type,kind,data,sha256,created_at,size) VALUES ('file','guest','a','notes.txt','text/plain','text',x'616263','ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',0,3);INSERT INTO agent_message_attachments VALUES ('m','file',0);").unwrap();
         assert!(
             mutate(
                 &store,
@@ -395,6 +398,8 @@ mod tests {
                 .unwrap(),
             1
         );
+        assert_eq!(store.conn.query_row("SELECT count(*) FROM agent_attachments",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+        assert_eq!(store.conn.query_row("SELECT count(*) FROM agent_message_attachments",[],|r|r.get::<_,i64>(0)).unwrap(),1);
         store
             .conn
             .execute_batch("DROP TRIGGER fail_delete")
@@ -411,6 +416,8 @@ mod tests {
             "agent_model_contexts",
             "agent_runs",
             "agent_reviews",
+            "agent_attachments",
+            "agent_message_attachments",
         ] {
             assert_eq!(
                 store

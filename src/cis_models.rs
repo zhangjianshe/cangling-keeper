@@ -63,7 +63,7 @@ pub(crate) fn catalog(store: &Store) -> Result<Vec<Value>, String> {
         return Ok(Vec::new());
     }
     let mut stmt=store.conn.prepare("SELECT id,name,provider,model,context_limit,revision FROM agent_cis_models WHERE owner_key=?1 AND revision<>'' ORDER BY name,id").map_err(|e|e.to_string())?;
-    let rows=stmt.query_map([&owner],|r|{let id:String=r.get(0)?;Ok(json!({"id":format!("cis-model:{}:{}",owner,id),"remoteId":id,"name":r.get::<_,String>(1)?,"provider":"cis-proxy","upstreamProvider":r.get::<_,String>(2)?,"model":r.get::<_,String>(3)?,"contextLimit":r.get::<_,i64>(4)?,"revision":r.get::<_,String>(5)?,"source":"cis","enabled":true,"hasApiKey":true}))}).map_err(|e|e.to_string())?;
+    let rows=stmt.query_map([&owner],|r|{let id:String=r.get(0)?;Ok(json!({"id":format!("cis-model:{}:{}",owner,id),"remoteId":id,"name":r.get::<_,String>(1)?,"provider":"cis-proxy","upstreamProvider":r.get::<_,String>(2)?,"model":r.get::<_,String>(3)?,"contextLimit":r.get::<_,i64>(4)?,"revision":r.get::<_,String>(5)?,"source":"cis","enabled":true,"hasApiKey":true,"supportsImages":false}))}).map_err(|e|e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
 }

@@ -148,6 +148,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
         .route("/api/health", get(|| async { Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id() })) }))
         .route("/api/events", get(events_socket))
         .route("/api/history/restore",post(restore_history).layer(DefaultBodyLimit::max(32*1024*1024)))
+        .route("/api/attachments/upload",post(upload_attachment).layer(DefaultBodyLimit::max(6*1024*1024)))
         .route("/api/invoke/{command}", post(invoke))
         .fallback(static_asset)
         .with_state(state.clone());
@@ -284,6 +285,11 @@ async fn invoke(
         Ok(value) => ok(value),
         Err(error) => fail(StatusCode::BAD_REQUEST, error),
     }
+}
+
+async fn upload_attachment(ConnectInfo(peer):ConnectInfo<SocketAddr>,headers:HeaderMap,State(state):State<WebState>,Json(args):Json<Value>)->InvokeResponse {
+    if authorize_root_install(peer,&headers).is_err(){return fail(StatusCode::FORBIDDEN,"附件上传仅允许从 Keeper 本机同源页面执行");}
+    match dispatch(&state,"agent_attachment_upload",args).await {Ok(value)=>ok(value),Err(error)=>fail(StatusCode::BAD_REQUEST,error)}
 }
 
 async fn restore_history(ConnectInfo(peer):ConnectInfo<SocketAddr>,headers:HeaderMap,State(state):State<WebState>,Json(args):Json<Value>)->InvokeResponse {

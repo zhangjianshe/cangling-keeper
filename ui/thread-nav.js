@@ -54,7 +54,7 @@
     }
     function update(data){
       const visible=data.messages || [];let current=null;items=[];
-      for(const entry of visible){if(entry.role==='user'){current={root:entry.replyGroup?.rootId || entry.id,question:entry.content,answer:'',time:entry.createdAt,status:'尚无回复',index:items.length};items.push(current);}else if(current && entry.role==='assistant'){
+      for(const entry of visible){if(entry.role==='user'){current={root:entry.replyGroup?.rootId || entry.id,question:entry.content?.trim() || (entry.attachments?.length?'附件：'+entry.attachments.map(a=>a.name).join('、'):'未命名问题'),answer:'',time:entry.createdAt,status:'尚无回复',index:items.length};items.push(current);}else if(current && entry.role==='assistant'){
         current.answer=entry.content;current.response=entry.id;const status=entry.modelMetadata?.generationStatus;current.status=({streaming:'生成中',stopped:'已停止',interrupted:'已中断',failed:'失败',complete:'已完成'})[status] || '已完成';
         if(data.detail?.runs?.some(run=>run.responseId===entry.id && run.status==='pending_approval'))current.status='等待确认';
       }else if(current && entry.role==='error')current.status='失败';}
