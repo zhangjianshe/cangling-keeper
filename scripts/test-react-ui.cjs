@@ -45,6 +45,11 @@ assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(doc
  const current=context.agent.detail.runs.find(r=>r.id==='new-run');current.status='pending_approval';current.review={kind:'file',hash:'immutable-review',path:'README.md',newFile:false,diff:'--- README.md\n+++ README.md\n-old\n+<script>new</script>\n'};
  context.agent.detail.modelPending=true;context.agent.detail.tasks[0].status='approval';context.renderConversation();
  assert.match(document.querySelector('.agent-stream-status').textContent,/等待你确认/);
+ assert.equal(document.querySelector('.agent-model-tool').open,true,'approval must reveal its controls even after a previously collapsed run');
+ assert.equal(context.runCard(current,new Map([[current.id,false]])).open,true,'pending approval overrides remembered collapsed state');
+ assert.equal(context.runCard(JSON.parse(JSON.stringify(current))).open,true,'approval snapshot restores expanded controls');
+ assert.equal(context.runCard({id:'ssh-review',tool:'ssh_execute',arguments:{},status:'pending_approval'}).open,true,'manual command approval also remains visible');
+
  assert.equal(document.querySelector('.agent-file-diff script'),null,'diff is text, never HTML');
  assert.match(document.querySelector('.agent-file-diff').textContent,/\+<script>new/);assert.equal(captured.length,0,'rendering never authorizes execution');
  await context.reviewAgentTool(current,true);assert.equal(captured[0].name,'agent_review_tool');assert.equal(captured[0].args.reviewHash,'immutable-review');assert.equal(captured[0].args.approved,true);assert.equal(captured[0].args.sessionId,'session');

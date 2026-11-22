@@ -562,7 +562,7 @@
   }
   setInterval(updateMessageTimes,30000);
   function runCard(run,openStates){
-    const card=element('details','agent-run agent-compact-run'+(run.responseId?' agent-model-tool':''));card.dataset.runId=run.id;card.open=openStates?.get(run.id) || false;
+    const card=element('details','agent-run agent-compact-run'+(run.responseId?' agent-model-tool':''));card.dataset.runId=run.id;card.open=run.status==='pending_approval' || openStates?.get(run.id) || false;
     const header=element('summary','agent-run-summary');
     const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('fill','none');icon.setAttribute('stroke','currentColor');icon.setAttribute('stroke-width','1.7');icon.setAttribute('stroke-linecap','round');icon.setAttribute('stroke-linejoin','round');icon.setAttribute('aria-hidden','true');icon.classList.add('agent-run-icon');
     const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',['run_command','ssh_execute'].includes(run.tool)?'m5 7 5 5-5 5m8 0h6':'M9 3h6l1 4 4 1v8l-4 1-1 4H9l-1-4-4-1V8l4-1Z');icon.append(path);
