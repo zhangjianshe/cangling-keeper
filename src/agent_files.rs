@@ -14,7 +14,7 @@ use std::{
 pub(crate) fn definitions() -> Vec<Value> {
     [
         ("list_directory", "列出当前项目内目录，返回名称、类型和大小。path 默认为 .，只允许项目相对路径。", json!({"path":{"type":"string"}}), json!([])),
-        ("read_file", "读取项目 UTF-8 文本文件，返回带行号内容；可指定 startLine 和最多 200 行的 lineCount。", json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
+        ("read_file", "读取项目 UTF-8 文本文件，返回带行号内容；每页最多200行，每行片段最多1000字节。结果有 nextRead 时使用其完整参数续读，避免遗漏长行；startColumn 为首行从1开始的Unicode字符列，expectedSha256 用于拒绝跨文件版本续读。", json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"startColumn":{"type":"integer","minimum":1},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
         ("search_files", "在项目文件名和 UTF-8 文本中搜索字面字符串，递归搜索指定 path（默认 .）；跳过链接、私密文件和构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"}}), json!(["query"])),
     ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect()
 }
@@ -232,30 +232,33 @@ pub(crate) fn execute(
             if count > 200 {
                 return Err("lineCount 最多 200".into());
             }
+            let column=number("startColumn",1)?;
             let text = scope.text(&path)?;
-            let mut lines = Vec::new();
-            let mut size = 0;
-            let mut total = 0;
-            let mut truncated = false;
-            for (i, line) in text.lines().enumerate() {
-                scope.check()?;
-                total = i + 1;
-                if (i as u64) + 1 < start {
-                    continue;
-                }
-                if lines.len() >= count as usize || size >= 12000 {
-                    truncated = true;
-                    continue;
-                }
-                let clipped = &line[..line.floor_char_boundary(1000)];
-                size += clipped.len();
-                truncated |= clipped.len() != line.len();
-                lines.push(json!({"line":i+1,"text":clipped}));
+            let hash=crate::agent_actions::hash(text.as_bytes());
+            if let Some(expected)=args.get("expectedSha256") {
+                let expected=expected.as_str().ok_or("expectedSha256 必须是字符串")?;
+                if expected!=hash {return Err("文件已变化，未返回续读内容；请从头重新读取，避免混合不同版本。".into());}
             }
-            Ok(
-                json!({"path":raw,"startLine":start,"lines":lines,"totalLines":total,"truncated":truncated}),
-            )
+            let all=text.lines().collect::<Vec<_>>();
+            let mut lines=Vec::new();let mut size=0usize;let mut next=Value::Null;
+            for (i,line) in all.iter().enumerate(){
+                scope.check()?;
+                if (i as u64)+1<start{continue;}
+                let current_column=if (i as u64)+1==start{column}else{1};
+                if lines.len()>=count as usize || size>=12000 {
+                    next=json!({"path":raw,"startLine":i+1,"startColumn":current_column,"lineCount":count,"expectedSha256":hash});break;
+                }
+                let offset=if current_column==1{0}else{line.char_indices().nth((current_column-1).try_into().map_err(|_|"列号超出范围")?).map(|(index,_)|index).or_else(||if current_column-1==line.chars().count() as u64{Some(line.len())}else{None}).ok_or("startColumn 超出当前行范围")?};
+                let rest=&line[offset..];let mut end=rest.floor_char_boundary(1000.min(12000-size));
+                while end>0 && json!({"line":i+1,"text":&rest[..end]}).to_string().len()>12000-size {end=rest.floor_char_boundary(end/2);}
+                let fragment=&rest[..end];
+                if end==0 && !rest.is_empty(){next=json!({"path":raw,"startLine":i+1,"startColumn":current_column,"lineCount":count,"expectedSha256":hash});break;}
+                let row=json!({"line":i+1,"text":fragment});size+=row.to_string().len();lines.push(row);
+                if end<rest.len(){next=json!({"path":raw,"startLine":i+1,"startColumn":current_column+fragment.chars().count() as u64,"lineCount":count,"expectedSha256":hash});break;}
+            }
+            Ok(json!({"path":raw,"startLine":start,"startColumn":column,"lines":lines,"totalLines":all.len(),"sha256":hash,"truncated":!next.is_null(),"nextRead":next}))
         }
+
         "search_files" => {
             let query = args["query"]
                 .as_str()
@@ -420,6 +423,30 @@ mod tests {
         assert_eq!(file["truncated"], true);
         drop(dir);
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn long_unicode_lines_resume_without_loss_and_reject_changes(){
+        let (root,dir)=fixture();let content=format!("{}\nsecond line\n", "中文🙂".repeat(500));std::fs::write(root.join("unicode"),&content).unwrap();
+        let mut args=json!({"path":"unicode","lineCount":1});let mut restored=String::new();let mut pages=0;
+        loop{let result=run(&dir,"read_file",args).unwrap();pages+=1;
+            for line in result["lines"].as_array().unwrap(){if line["line"]==1{restored.push_str(line["text"].as_str().unwrap());}}
+            if result["nextRead"].is_null(){break;}args=result["nextRead"].clone();assert!(pages<20);
+        }
+        assert_eq!(restored,"中文🙂".repeat(500));assert!(pages>1);
+        let first=run(&dir,"read_file",json!({"path":"unicode"})).unwrap();std::fs::write(root.join("unicode"),"changed").unwrap();
+        assert!(run(&dir,"read_file",first["nextRead"].clone()).unwrap_err().contains("文件已变化"));
+        assert!(run(&dir,"read_file",json!({"path":"unicode","startColumn":100})).is_err());
+        drop(dir);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn escaped_output_stays_bounded_without_skipping_text(){
+        let (root,dir)=fixture();let content=(0..100).map(|_|format!("{}\n","\u{1}".repeat(100))).collect::<String>();std::fs::write(root.join("escaped"),content).unwrap();
+        let mut args=json!({"path":"escaped"});let mut seen=0;let mut pages=0;
+        loop{let result=run(&dir,"read_file",args).unwrap();assert!(result.to_string().len()<16000);pages+=1;
+            seen+=result["lines"].as_array().unwrap().iter().map(|v|v["text"].as_str().unwrap().len()).sum::<usize>();
+            if result["nextRead"].is_null(){break;}args=result["nextRead"].clone();assert!(pages<20);
+        }
+        assert_eq!(seen,10000);drop(dir);std::fs::remove_dir_all(root).unwrap();
     }
     #[cfg(unix)]
     #[test]

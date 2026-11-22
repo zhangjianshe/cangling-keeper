@@ -28,6 +28,12 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if 'continued read fixture' in user:
+    if not results:tools([('read_file',{'path':'long.txt'})]);return
+    last=json.loads(results[-1]['content'])
+    if last.get('nextRead'):tools([('read_file',last['nextRead'])]);return
+    assert ''.join(line['text'] for result in results for line in json.loads(result['content'])['lines'])=='中文🙂'*250
+    event({'content':'Read all fragments'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'correct args fixture' in user:
     if not results:tools([('write_file',{'path':'must-not-exist.txt'}),('read_file',{'path':'README.md','lineCount':'10'})]);return
     if len(results)==2:
@@ -132,6 +138,10 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   (root/'long.txt').write_text('中文🙂'*250)
+   continued=session('continued read fixture');continued_detail=wait_for(continued,lambda d:not d['modelPending'])
+   assert continued_detail['tasks'][-1]['status']=='complete' and len(continued_detail['runs'])==3
+   assert all(r['status']=='succeeded' for r in continued_detail['runs'])
    corrected=session('correct args fixture');corrected_detail=wait_for(corrected,lambda d:not d['modelPending'])
    assert [r['status'] for r in corrected_detail['runs']]==['failed','failed','succeeded']
    assert not (root/'must-not-exist.txt').exists()
