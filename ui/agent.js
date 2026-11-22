@@ -3,6 +3,7 @@
   const $ = selector => document.querySelector(selector);
   const invoke = (name, args = {}) => window.__KEEPER__.core.invoke(name, args);
   const agent = {projects:[], project:localStorage.getItem('keeper-agent-project') || 'general', sessions:[], tools:[], hosts:[], selected:null, detail:{messages:[],runs:[]}, generation:0, timer:null, sending:false};
+  agent.projectBrowser=window.createKeeperProjectBrowser?.({invoke,agent,showConversation});
   window.keeperThreadNav=window.createKeeperThreadNav?.();
   const statusNames = {running:'正在执行',pending_approval:'等待确认',succeeded:'已完成',failed:'执行失败',rejected:'已取消',interrupted:'执行中断',stopped:'已停止',approved:'已确认'};
   function element(tag, cls, text) { const node=document.createElement(tag); if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node; }
@@ -66,7 +67,9 @@
       const create=element('button','agent-project-chat','＋');create.type='button';create.title='在'+project.name+'中开始会话';create.setAttribute('aria-label',create.title);
       create.onclick=event=>{event.preventDefault();event.stopPropagation();agent.project=project.id;newSession();};
       const manage=element('button','agent-project-manage','⋯');manage.type='button';manage.title='管理项目';manage.setAttribute('aria-label','管理项目 '+project.name);
-      manage.onclick=event=>{event.preventDefault();event.stopPropagation();window.keeperProjectDialog({project,invoke,notice,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id)await switchProject('general');}});};
+      manage.setAttribute('aria-haspopup','menu');manage.title='项目操作';
+      const projectMenu=event=>{event.preventDefault();event.stopPropagation();agent.projectBrowser?.menu(manage,project,()=>window.keeperProjectDialog({project,invoke,notice,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id)await switchProject('general');}}));};
+      manage.onclick=projectMenu;manage.oncontextmenu=projectMenu;
       summary.append(manage,create);group.append(summary);
       const sessions=agent.history?.projectSessions(project.id) || agent.sessions.filter(s=>s.projectId===project.id);
       for(const session of sessions)group.append(sessionRow(session));
@@ -653,9 +656,9 @@
     $('#agent-settings-menu').hidden=false;$('#agent-settings-toggle').setAttribute('aria-expanded','true');
     $('#agent-menu-account').focus();
   }
-  function showConversation(){$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
+  function showConversation(){agent.projectBrowser?.hide();$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
   function openSettings(page){
-    closeAccountMenu();$('#agent-main').classList.add('hidden');
+    agent.projectBrowser?.hide();closeAccountMenu();$('#agent-main').classList.add('hidden');
     $('#keeper-account').classList.toggle('hidden',page!=='profile');
     $('#keeper-settings').classList.toggle('hidden',page!=='security');
     $(page==='profile'?'#account-page-title':'#settings-page-title').focus();if(page==='profile')loadMcp();
@@ -668,7 +671,7 @@
     $('#agent-menu-logout').title=login.loggedIn?'退出当前账号':'当前未登录';
   }
   async function refreshAccountSessions(){
-    fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
+    agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
     ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}

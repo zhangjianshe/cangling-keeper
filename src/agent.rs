@@ -454,6 +454,18 @@ pub(crate) async fn dispatch(
             store.conn.execute("UPDATE agent_sessions SET pinned=?2 WHERE id=?1",params![session,pinned]).map_err(|e|e.to_string())?;
             Ok(json!({"pinned":pinned}))
         }
+        "agent_project_browse" => {
+            let project=text(&args,"projectId")?;
+            let directory={let store=core.store.lock().map_err(|e|e.to_string())?;store.conn.query_row("SELECT directory FROM agent_projects WHERE id=?1",[&project],|r|r.get::<_,String>(0)).map_err(|_|"项目不存在")?};
+            let action=args["action"].as_str().unwrap_or("list");
+            let tool=match action {"list"=>"list_directory","read"=>"read_file",_=>return Err("不支持的浏览操作".into())};
+            let mut request=json!({"path":args.get("path").cloned().unwrap_or(json!("."))});
+            if action=="read" {request["startLine"]=args.get("startLine").cloned().unwrap_or(json!(1));request["lineCount"]=json!(200);}
+            tokio::task::spawn_blocking(move || {
+                let root=cap_std::fs::Dir::open_ambient_dir(directory,cap_std::ambient_authority()).map_err(|_|"项目目录不可访问".to_string())?;
+                crate::agent_files::execute(&root,tool,&request,std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),|_|{})
+            }).await.map_err(|_|"读取项目目录失败".to_string())?
+        }
         "agent_project_update" | "agent_project_delete" | "agent_project_open" => {
             let project=text(&args,"projectId")?;
             let directory={
