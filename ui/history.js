@@ -126,6 +126,9 @@
       if(!inactive && preview)readonly.append(element('span','','正在预览历史版本，返回当前版本后可继续对话。'),button('返回当前版本','restore',()=>select(agent.selected)));
       $('#agent-session-title').disabled=inactive || preview || !agent.selected;$('#agent-input').disabled=inactive || preview;
     }
+    // Keep the recovery entry alongside account actions while reusing account-scoped history.
+    const accountMenu=document.querySelector('#agent-settings-menu');
+    if(accountMenu){const trashEntry=button('回收站','trash',()=>{accountMenu.hidden=true;document.querySelector('#agent-settings-toggle')?.setAttribute('aria-expanded','false');state='deleted';search.value='';projectFilter.value='';open();},'');trashEntry.id='agent-menu-trash';trashEntry.setAttribute('role','menuitem');trashEntry.querySelector('svg').classList.add('agent-menu-icon');accountMenu.insertBefore(trashEntry,document.querySelector('#agent-menu-logout'));}
     function open(){previousFocus=document.activeElement;modal.hidden=false;load();search.focus();}
     function close(){request++;clearTimeout(debounce);modal.hidden=true;queryBusy=false;if(previousFocus?.isConnected)previousFocus.focus();previousFocus=null;}
     search.oninput=()=>{clearTimeout(debounce);request++;clearResults();status.textContent='正在查找…';debounce=setTimeout(()=>load(),250);};projectFilter.onchange=()=>load();
