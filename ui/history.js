@@ -73,7 +73,7 @@
         if(item.match){const snippet=element('p','history-snippet',item.match.snippet || '');info.append(snippet);if(item.match.messageId)info.append(element('small','history-match-label','消息内容匹配 · 点击定位'));}
         const actions=element('div','history-result-actions');
         const choices=state==='deleted'?[['恢复','restore','restore'],['永久删除','trash','purge']]:state==='archived'?[['取消归档','restore','unarchive'],['删除','trash','delete']]:[['归档','archive','archive'],['删除','trash','delete']];
-        for(const [label,kind,action] of choices){const b=button(label,kind,()=>mutate(item,action));b.disabled=mutationBusy;if(action==='purge')b.classList.add('danger');actions.append(b);}row.append(info,actions);list.append(row);
+        for(const [label,kind,action] of [['导出 Markdown','archive','export'],...choices]){const b=button(label,kind,()=>mutate(item,action));b.disabled=mutationBusy;if(action==='purge')b.classList.add('danger');actions.append(b);}row.append(info,actions);list.append(row);
       }
       if(result.hasMore)list.append(button('加载更多',null,()=>load(true),'history-load-more'));
     }
