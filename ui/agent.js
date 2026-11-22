@@ -4,6 +4,7 @@
   const invoke = (name, args = {}) => window.__KEEPER__.core.invoke(name, args);
   const agent = {projects:[], project:localStorage.getItem('keeper-agent-project') || 'general', sessions:[], tools:[], hosts:[], selected:null, detail:{messages:[],runs:[]}, generation:0, timer:null, sending:false};
   agent.projectBrowser=window.createKeeperProjectBrowser?.({invoke,agent,showConversation});
+  const projectDirectoryButton=document.createElement('button');projectDirectoryButton.type='button';projectDirectoryButton.className='guidance-trigger';projectDirectoryButton.textContent='项目目录';projectDirectoryButton.onclick=()=>{const project=agent.projects.find(p=>p.id===(agent.detail.session?.projectId || agent.project));if(project)agent.projectBrowser?.open(project);};document.querySelector('.agent-header-tools').prepend(projectDirectoryButton);
   window.keeperThreadNav=window.createKeeperThreadNav?.();
   const statusNames = {running:'正在执行',pending_approval:'等待确认',succeeded:'已完成',failed:'执行失败',rejected:'已取消',interrupted:'执行中断',stopped:'已停止',approved:'已确认'};
   function element(tag, cls, text) { const node=document.createElement(tag); if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node; }

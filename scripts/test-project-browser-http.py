@@ -21,6 +21,13 @@ with tempfile.TemporaryDirectory(prefix='keeper-browser-') as tmp:
   p=start();args={'projectId':'general'}
   data=call('agent_project_browse',args);names=[e['name'] for e in data['entries']];assert 'sub' in names and '.env' not in names and 'link' not in names
   data=call('agent_project_browse',{**args,'action':'read','path':'sub/readme.txt','startLine':201});assert data['totalLines']==450 and data['lines'][0]['line']==201
+  (root/'.agents/skills/demo').mkdir(parents=True)
+  for doc in ['AGENTS.md','.agents/skills/demo/SKILL.md']:
+   (root/doc).write_text('original guide')
+   document=call('agent_project_browse',{**args,'action':'edit','path':doc})
+   assert document['editable'] and document['content']=='original guide'
+   call('agent_project_file_save',{**args,'path':doc,'content':'updated guide','sha256':document['sha256']})
+   assert (root/doc).read_text()=='updated guide'
   create={**args,'parent':'.','name':'新目录','kind':'directory'}
   assert call('agent_project_entry_create',create)['created'];assert (root/'新目录').is_dir()
   new={**args,'parent':'新目录','name':'hello.py','kind':'file'}

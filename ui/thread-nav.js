@@ -61,7 +61,7 @@
       const nodes=new Map(articles().map(node=>[node.dataset.rootMessageId,node]));positions=items.map(item=>({...item,node:nodes.get(item.root)})).filter(p=>p.node);
       const nextSignature=JSON.stringify(items.map(i=>[i.root,i.question,i.status]));
       if(nextSignature!==signature){signature=nextSignature;rail.replaceChildren();for(const item of items){const tick=make('button','thread-tick');tick.type='button';tick.dataset.threadRoot=item.root;tick.dataset.status=item.status;tick.setAttribute('aria-label','第 '+(item.index+1)+' 轮：'+clip(item.question,90)+'，'+item.status);tick.append(make('span',''));tick.onclick=()=>jump(item.root);previewBindings(tick,item);rail.append(tick);}renderDirectory();hidePreview();}
-      toggle.disabled=!items.length;toggle.textContent='目录'+(items.length?' '+items.length:'');rail.hidden=items.length<2;
+      toggle.disabled=!items.length;toggle.textContent='会话'+(items.length?' '+items.length:'');rail.hidden=items.length<2;
       if(restorePending && items.length){let saved=null;try{saved=JSON.parse(localStorage.getItem(key));}catch{}if(!restore(saved))timeline.scrollTop=timeline.scrollHeight;restorePending=false;}
       else if(previous && !following)restore(previous);
       previous=null;active=null;markCurrent();

@@ -15,6 +15,12 @@
     const footer=element('footer','history-footer guidance-footer'),refresh=element('button','btn','重新扫描');refresh.id='guidance-refresh';refresh.type='button';footer.append(element('span','','生成时会将项目规则及按需加载的技能提供给当前模型。'),refresh);
     panel.append(header,hint,tabs,status,warnings,content,footer);modal.append(panel);document.body.append(modal);
     function button(label,handler,cls='btn'){const b=element('button',cls,label);b.type='button';b.onclick=handler;return b;}
+    async function editDocument(path,missing=false){
+      const project=agent.projects.find(p=>p.id===(agent.detail.session?.projectId || agent.project)),epoch=agent.identityEpoch,selected=agent.selected;if(!project||busy)return;
+      busy=true;render();
+      try{if(missing)await invoke('agent_project_entry_create',{projectId:project.id,parent:'.',name:path,kind:'file'});if(epoch!==agent.identityEpoch||selected!==agent.selected||modal.hidden)return;close();await agent.projectBrowser?.openFile(project,path);}
+      catch(error){status.textContent='打开失败：'+String(error);}finally{busy=false;if(!modal.hidden)render();}
+    }
     function inactive(){return !!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);}
     function render(){
       for(const b of tabs.querySelectorAll('button'))b.setAttribute('aria-pressed',String(b.dataset.tab===tab));
@@ -23,7 +29,7 @@
       for(const message of snapshot.warnings || [])warnings.append(element('p','',message));
       if(snapshot.catalogTruncated)warnings.append(element('p','','技能数量或目录大小超出扫描上限，仅显示本次发现的技能。'));
       if(tab==='rules'){
-        const rules=snapshot.rules || {};content.append(element('h3','','AGENTS.md'),element('p','hint','适用于当前项目；本轮仅自动加载根目录规则。'));
+        const rules=snapshot.rules || {};const edit=button(rules.status==='missing'?'创建并编辑 AGENTS.md':'编辑 AGENTS.md',()=>editDocument('AGENTS.md',rules.status==='missing'));edit.disabled=busy;content.append(edit);content.append(element('h3','','AGENTS.md'),element('p','hint','适用于当前项目；本轮仅自动加载根目录规则。'));
         if(rules.status==='missing')content.append(element('p','guidance-empty','项目根目录尚未创建 AGENTS.md。可以在其中填写项目介绍、构建命令和代码约定。'));
         else if(typeof rules.content==='string')content.append(element('pre','guidance-source',rules.content || '（空文件）'));
         else content.append(element('p','guidance-empty',rules.status==='too_large'?'规则文件较长，未自动全文载入。智能体需要通过 read_file 分段读取。':'规则文件无法读取，请检查文件格式或路径。'));
@@ -33,7 +39,7 @@
         for(const skill of snapshot.skills || []){
           const row=element('section','guidance-skill');row.dataset.skillName=skill.name;
           const info=element('div','guidance-skill-info');info.append(element('strong','',skill.name),element('p','',skill.description));
-          const actions=element('div','guidance-skill-actions');const view=button(selectedSkill?.name===skill.name?'已展开':'查看',()=>loadSkill(skill));view.disabled=busy;const use=button('用于任务',()=>useSkill(skill));use.classList.add('guidance-use');use.disabled=inactive() || busy;actions.append(view,use);row.append(info,actions);
+          const actions=element('div','guidance-skill-actions');const view=button(selectedSkill?.name===skill.name?'已展开':'查看',()=>loadSkill(skill));view.disabled=busy;const use=button('用于任务',()=>useSkill(skill));use.classList.add('guidance-use');use.disabled=inactive() || busy;const edit=button('编辑',()=>editDocument(skill.path));edit.disabled=busy;actions.append(view,edit,use);row.append(info,actions);
           if(selectedSkill?.name===skill.name){const preview=element('div','guidance-skill-preview');preview.append(element('small','',skill.path),element('pre','guidance-source',text || (busy?'正在读取…':'（空技能）')));if(Number.isInteger(page?.nextOffset)){const more=button(busy?'正在读取…':'继续读取',()=>loadSkill(skill,true),'history-load-more');more.disabled=busy;preview.append(more);}row.append(preview);}skills.append(row);
         }
         if(!snapshot.skills?.length)skills.append(element('p','guidance-empty','暂无可用技能。在 .agents/skills 中创建技能目录，并在 SKILL.md 中填写 name、description 和操作说明。'));

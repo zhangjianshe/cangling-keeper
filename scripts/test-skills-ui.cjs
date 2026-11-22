@@ -3,7 +3,7 @@ const {JSDOM}=require('jsdom');
 const dom=new JSDOM('<!doctype html><body><div class="agent-header-tools"></div><textarea id="agent-input"></textarea></body>',{runScripts:'outside-only',url:'http://localhost:4301'}),context=dom.getInternalVMContext(),document=dom.window.document;
 const agent={selected:'session-a',identityEpoch:0,project:'project',projects:[{id:'project',name:'Selected project'},{id:'different',name:'Wrong project'}],detail:{session:{id:'session-a',projectId:'project',archivedAt:0,deletedAt:0}}};
 const element=(tag,cls,text)=>{const node=document.createElement(tag);if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node;};
-const calls=[],notices=[];
+const calls=[],notices=[];let opened;agent.projectBrowser={openFile:async(project,path)=>{opened={project,path}}};
 const snapshot={rules:{path:'AGENTS.md',status:'loaded',content:'<img src=x onerror=alert(1)> RULES_ONE'},skills:[{name:'write-notes',description:'<svg onload=alert(2)> Useful notes',path:'.agents/skills/write-notes/SKILL.md',sha256:'catalog-v1'}],warnings:['A malformed skill was skipped.'],catalogTruncated:false};
 let pendingScan=null,pendingSkill=null,scanDeferred=false,skillDeferred=false,hashChanged=false;
 async function invoke(name,args){
@@ -29,8 +29,9 @@ const open=async()=>{ui.update();document.querySelector('#agent-guidance-open').
 (async()=>{
  assert.equal(document.querySelector('#agent-guidance-open').disabled,true);await open();
  assert.equal(calls.length,1);assert.equal(calls[0].name,'agent_project_guidance');assert.equal(calls[0].args.sessionId,'session-a');
+ button(content(),'编辑 AGENTS.md').click();await tick();assert.equal(opened.path,'AGENTS.md');assert.equal(opened.project.id,'project');await open();document.querySelector('[data-tab=skills]').click();button(skill(),'编辑').click();await tick();assert.equal(opened.path,'.agents/skills/write-notes/SKILL.md');await open();document.querySelector('[data-tab=rules]').click();
  assert.match(content().textContent,/RULES_ONE/);assert.equal(content().querySelector('img'),null);assert.equal(document.querySelector('#guidance-warnings').textContent,'A malformed skill was skipped.');
- document.querySelector('[data-tab="skills"]').click();assert.equal(calls.length,1,'switching tabs must not eagerly load skill bodies');assert.equal(skill().querySelector('svg'),null);assert.doesNotMatch(content().textContent,/LAZY_BODY/);
+ document.querySelector('[data-tab="skills"]').click();assert.equal(calls.filter(c=>c.name==='agent_skill_content').length,0,'switching tabs must not eagerly load skill bodies');assert.equal(skill().querySelector('svg'),null);assert.doesNotMatch(content().textContent,/LAZY_BODY/);
  button(skill(),'查看').click();await tick();assert.equal(calls.at(-1).name,'agent_skill_content');assert.deepEqual(calls.at(-1).args,{sessionId:'session-a',name:'write-notes',offset:0,expectedSha256:'catalog-v1'});assert.match(content().textContent,/LAZY_BODY_PAGE_ONE/);
  button(skill(),'继续读取').click();await tick();assert.match(content().textContent,/<script>SECOND_PAGE<\/script>/);assert.equal(content().querySelector('script'),null,'skill content must stay plain text');assert.equal(button(skill(),'继续读取'),undefined);
  const input=document.querySelector('#agent-input'),draft='  Preserve draft indentation  \n';input.value=draft;button(skill(),'用于任务').click();assert.equal(input.value,draft+'$write-notes');assert.equal(document.querySelector('#project-guidance-modal').hidden,true);assert.ok(!calls.some(c=>c.name==='agent_send_message'),'using a skill only edits the draft, never auto-sends');
