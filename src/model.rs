@@ -251,7 +251,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
     if let Err(e)=context::prepare(core,session,response_id,&url,&key,&model,&provider,supports_images,&mut messages,&tools,&mut cancel,deadline,sink.as_ref()).await {if e=="上下文压缩已停止，原始消息已保留。"{return Ok(ReplyFinish::Stopped);}return Err(e);}
     // Keep the saved canonical snapshot intact; compaction is local to this generation.
     let root=project_root;
-    let mut visible=String::new();let mut total_calls=0;let mut loop_guard=loop_guard::LoopGuard::default();
+    let mut visible=String::new();let mut total_calls=0;let mut loop_guard=loop_guard::LoopGuard::default();let mut refusals=loop_guard::RefusalGuard::default();
     for round in 1..=8 {
         if crate::agent_actions::is_shutting_down(){return Err("Keeper 正在关闭，任务不会自动重放。".into());}
         if tokio::time::Instant::now()>=deadline{return Err("Agent 已达到 180 秒运行时限，执行记录已保存。".into());}
@@ -277,7 +277,9 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         crate::agent_runtime::phase(core,session,response_id,"tool",round,sink.as_ref())?;
         let mut round_results=Vec::new();
         for call in &turn.calls {
+            refusals.check(&call.name,&call.arguments)?;
             let Some(result)=crate::agent_runtime::execute(core.clone(),session,response_id,root.clone(),call,round,&mut cancel,&mut deadline,sink.clone()).await? else{return Ok(ReplyFinish::Stopped)};
+            refusals.observe(&call.name,&call.arguments,result["content"].as_str().unwrap_or(""));
             round_results.push(json!([call.name,loop_guard::canonical(&call.arguments),loop_guard::canonical(result["content"].as_str().unwrap_or(""))]));
             messages.push(result);
         }

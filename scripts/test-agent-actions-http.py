@@ -14,7 +14,9 @@ class API(http.server.BaseHTTPRequestHandler):
   def event(delta,reason=None):
    data=('data: '+json.dumps({'model':'review-fixture','choices':[{'delta':delta,'finish_reason':reason}]},ensure_ascii=False)+'\n\n').encode();self.wfile.write(data);self.wfile.flush()
   try:
-   if body['messages'][-1]['role']=='tool':
+   if 'repeat reject' in prompt and body['messages'][-1]['role']=='tool':
+    event({'tool_calls':[{'index':0,'id':'different-call-id','type':'function','function':{'name':'write_file','arguments':json.dumps({'content':'hello v1\n','path':'rejected.txt'})}}]},'tool_calls')
+   elif body['messages'][-1]['role']=='tool':
     result=json.loads(body['messages'][-1]['content']);assert result['keeperResult']['automaticRetry'] is False;assert result['keeperResult']['outcome']==('rejected' if result.get('rejected') else 'timeout' if result.get('timedOut') else 'failed' if result.get('error') else 'success');event({'content':'操作结果已保存。'+('用户拒绝，未执行。' if result.get('rejected') else '')},'stop')
    else:
     if 'patch' in prompt:name,args='apply_patch',{'path':'hello.txt','oldText':'hello v1','newText':'hello v2'}
@@ -82,6 +84,11 @@ with tempfile.TemporaryDirectory(prefix='keeper-action-http-') as folder:
    s,run,_=pending('apply patch');assert '-hello v1' in run['review']['diff'] and '+hello v2' in run['review']['diff'];approve(s,run);done(s);assert (root/'hello.txt').read_text()=='hello v2\n'
    (root/'hello.txt').write_text('hello v1\n');s,run,_=pending('conflict patch');(root/'hello.txt').write_text('user edit\n');approve(s,run);d=done(s);assert d['runs'][-1]['status']=='failed';assert (root/'hello.txt').read_text()=='user edit\n'
    s,run,_=pending('parent changed');(root/'sub').rename(root/'moved');(root/'sub').mkdir();approve(s,run);assert done(s)['runs'][-1]['status']=='failed';assert not (root/'sub/child.txt').exists() and not (root/'moved/child.txt').exists()
+   s,run,_=pending('repeat reject write');approve(s,run,False);blocked=done(s)
+   assert len(blocked['runs'])==1 and blocked['tasks'][-1]['status']=='failed'
+   assert '已被你拒绝' in json.dumps(blocked,ensure_ascii=False)
+   assert not (root/'rejected.txt').exists()
+   assert call('agent_session',{'sessionId':s})['tasks']==blocked['tasks']
    s,run,_=pending('reject write');approve(s,run,False);assert done(s)['runs'][-1]['status']=='rejected';assert not (root/'rejected.txt').exists()
    s,run,d=pending('cancel before approval');call('agent_stop_generation',{'sessionId':s,'messageId':d['streamingMessageId']});d=done(s);assert d['runs'][-1]['status']=='stopped';approve(s,run,expected=400);assert not (root/'cancelled.txt').exists()
    s,run,_=pending('command succeeds');assert 'printf' in run['review']['command'] and run['review']['directory']==str(root);assert not (root/'command-result.txt').exists();approve(s,run,command='printf tampered > replaced-command.txt');d=done(s);assert not (root/'replaced-command.txt').exists();result=json.loads(d['runs'][-1]['output']);assert result['exitCode']==0 and 'stream-out' in result['stdout'] and 'stream-err' in result['stderr'];assert (root/'command-result.txt').read_text()=='completed'
