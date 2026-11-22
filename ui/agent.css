@@ -310,3 +310,12 @@
 :is(.history-row-menu,.project-context-menu,.agent-settings-menu,.ctx-menu) button:disabled{background:transparent;color:#b5b5bd;cursor:default}
 :is(.history-row-menu,.project-context-menu,.agent-settings-menu,.ctx-menu) svg{width:16px;height:16px;flex:0 0 16px;opacity:1;color:inherit}
 .agent-menu-separator{height:1px;background:#ededf1;margin:5px 7px}
+
+/* Single-line directory toolbar; keep actions visible when the path is long. */
+.project-browser-bar{display:flex;align-items:center;flex:none;gap:8px;min-height:52px;padding:8px 12px;box-sizing:border-box;overflow:hidden}
+.project-browser-bar>.btn{flex:none;white-space:nowrap}
+.project-browser-bar .project-browser-location{flex:1;min-width:0;margin:0 4px;padding:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal}
+.project-browser-bar .project-browser-status{flex:0 1 auto;max-width:35%;margin:0;padding:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.project-browser-bar .project-browser-status:empty{display:none}
+.project-browser-bar .primary{margin-left:0}
+@media(max-width:560px){.project-browser-bar{gap:5px;padding:8px}.project-browser-bar>.btn{padding:6px 8px}.project-browser-bar .project-browser-status{max-width:25%}}

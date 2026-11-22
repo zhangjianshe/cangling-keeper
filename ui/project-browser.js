@@ -3,8 +3,8 @@
   const node=(tag,cls,text)=>{const el=document.createElement(tag);el.className=cls||'';if(text!==undefined)el.textContent=text;return el;};
   const panel=node('section','keeper-project-browser hidden');panel.setAttribute('aria-label','项目目录');
   const header=node('header','keeper-settings-header'),back=node('button','agent-nav-button','← 返回会话'),title=node('h1','','项目目录');back.type='button';back.onclick=showConversation;header.append(back,title);
-  const location=node('p','project-browser-location'),bar=node('div','project-browser-bar'),up=node('button','btn','上级目录'),refresh=node('button','btn','刷新'),status=node('p','project-browser-status');status.setAttribute('role','status');bar.append(up,refresh);
-  const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(code);layout.append(list,preview);panel.append(header,location,bar,status,layout);document.querySelector('#agent-main').after(panel);
+  const location=node('p','project-browser-location'),bar=node('div','project-browser-bar'),up=node('button','btn','上级目录'),refresh=node('button','btn','刷新'),status=node('p','project-browser-status');status.setAttribute('role','status');bar.append(up,location,status,refresh);
+  const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(code);layout.append(list,preview);panel.append(header,bar,layout);document.querySelector('#agent-main').after(panel);
   const save=node('button','btn primary','保存文件');bar.append(save);save.disabled=true;
   const editor=window.ace.edit(code);window.ace.config.set('basePath','/vendor/ace');editor.setTheme('ace/theme/github');editor.session.setUseWorker(false);editor.setOptions({fontSize:13,showPrintMargin:false});editor.setReadOnly(true);
   let project=null,path='.',file=null,seq=0,popup=null,trigger=null,original='',hash='',editable=false,saving=false;
@@ -22,7 +22,7 @@
   function clearPreview(){file=null;original='';hash='';editable=false;editor.setValue('',-1);editor.setReadOnly(true);updateSave();code.setAttribute('aria-label','文件编辑器');}
   async function loadDirectory(target){
    const before=seq,identity=agent.identityEpoch;if(saving||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
-   const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';location.textContent=selected.directory+(target==='.'?'':' / '+target);
+   const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';location.textContent=selected.directory+(target==='.'?'':' / '+target);location.title=location.textContent;
    try{const data=await invoke('agent_project_browse',{projectId:selected.id,path:target,action:'list'});if(version!==seq||epoch!==agent.identityEpoch)return;
     status.textContent=data.truncated?'目录条目较多，仅显示前 200 项。':`${data.entries.length} 项 · 隐藏敏感文件、链接及构建缓存`;
     for(const entry of data.entries){const row=node('button','project-browser-entry');row.type='button';row.append(node('span','',entry.type==='directory'?'▱':'▤'),node('span','project-browser-name',entry.name),node('small','',entry.type==='directory'?'目录':entry.size+' B'));const child=target==='.'?entry.name:target+'/'+entry.name;row.dataset.path=child;row.onclick=()=>{if(entry.type==='directory')loadDirectory(child);else loadFile(child);};list.append(row);}
