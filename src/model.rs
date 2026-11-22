@@ -290,6 +290,19 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
     Err(crate::agent_runtime::termination_error(core,response_id,"round_limit",format!("Agent 已达到 {} 轮执行上限，执行记录已保存。",crate::agent_runtime::MAX_ROUNDS)))
 }
 struct Turn { content:String,calls:Vec<crate::agent_runtime::ToolCall> }
+fn validate_tool_batch<'a>(calls: impl Iterator<Item=&'a crate::agent_runtime::ToolCall>) -> Result<(), String> {
+    let mut ids=std::collections::HashSet::new();
+    for call in calls {
+        if call.id.trim().is_empty() || call.name.trim().is_empty() || !ids.insert(&call.id) {
+            return Err("模型工具调用标识无效或重复，本轮整批工具均未执行。".into());
+        }
+        if !serde_json::from_str::<Value>(&call.arguments).is_ok_and(|value|value.is_object()) {
+            return Err("模型工具调用参数不是完整的 JSON 对象，本轮整批工具均未执行；请检查模型的工具调用支持。".into());
+        }
+    }
+    Ok(())
+}
+
 async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&str,key:&str,body:Value,provider:&str,cancel:&mut tokio::sync::oneshot::Receiver<()>,deadline:tokio::time::Instant,sink:&dyn crate::EventSink,mut progress:impl FnMut(&str)->Result<(),String>)->Result<Option<Turn>,String>{
     let request=request_builder(url,key,provider)?.json(&body);
     let response=tokio::select!{biased;_=&mut *cancel=>return Ok(None),_ = tokio::time::sleep_until(deadline)=>return Err(crate::agent_runtime::termination_error(core,response_id,"time_limit","Agent 运行超时".into())),response=request.send()=>response.map_err(|_|"LLM Server 连接失败或等待超时；消息已保存在本机，请稍后重试。")?};
@@ -354,7 +367,7 @@ async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&st
     }
     if !calls.is_empty(){
         if finish_reason.as_deref()!=Some("tool_calls"){return Err("模型工具调用未完整结束，未执行工具。".into());}
-        let mut ids=std::collections::HashSet::new();for call in calls.values(){if call.id.is_empty() || call.name.is_empty() || !ids.insert(&call.id){return Err("模型工具调用标识无效，未执行工具。".into());}}
+        validate_tool_batch(calls.values()).map_err(|error|crate::agent_runtime::termination_error(core,response_id,"invalid_tool_call",error))?;
     }else if finish_reason.as_deref()==Some("tool_calls"){return Err("模型未返回完整工具调用".into());}
     Ok(Some(Turn{content,calls:calls.into_values().collect()}))
 }
@@ -362,6 +375,18 @@ async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&st
 #[cfg(test)]
 mod tests{
  use super::*;
+ #[test] fn validates_entire_tool_batch_before_execution(){
+  let call=|id:&str,args:&str|crate::agent_runtime::ToolCall{id:id.into(),name:"write_file".into(),arguments:args.into()};
+  for invalid in ["{", "[]", "null", "1", "\"text\""] {
+   assert!(validate_tool_batch([call("first","{}"),call("second",invalid)].iter()).is_err());
+  }
+  assert!(validate_tool_batch([call("same","{}"),call("same","{}")].iter()).is_err());
+  assert!(validate_tool_batch([call(" ","{}")].iter()).is_err());
+  let mut blank=call("ok","{}");blank.name=" ".into();assert!(validate_tool_batch([blank].iter()).is_err());
+  // Object field semantics remain the tool validator's responsibility.
+  assert!(validate_tool_batch([call("first",r#"{"path":42}"#),call("second","{}")].iter()).is_ok());
+ }
+
  #[test] fn key_is_redacted_preserved_and_cleared_on_endpoint_change(){
   let path=std::env::temp_dir().join(format!("keeper-model-{}.sql",uuid::Uuid::new_v4()));let store=Store::load(path.clone()).unwrap();
   let c=save(&store,&json!({"enabled":true,"apiKey":"secret-test-key","baseUrl":DEFAULT_URL,"model":DEFAULT_MODEL})).unwrap();assert!(c["hasApiKey"]==true);assert!(!c.to_string().contains("secret-test-key"));

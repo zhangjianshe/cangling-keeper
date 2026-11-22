@@ -28,6 +28,11 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if user in ['malformed batch fixture','array batch fixture','duplicate batch fixture']:
+    event({'content':'Batch preview preserved'})
+    event({'tool_calls':[{'index':0,'id':'first','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'bad-batch.txt','content':'must not write'})}}]})
+    event({'tool_calls':[{'index':1,'id':'first' if user=='duplicate batch fixture' else 'second','type':'function','function':{'name':'read_file','arguments':'{' if user=='malformed batch fixture' else '[]' if user=='array batch fixture' else '{}'}}]},'tool_calls')
+    self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if user in ['output cutoff fixture','filtered output fixture','tool cutoff fixture']:
     event({'content':'Partial answer preserved'})
     if user=='tool cutoff fixture':event({'tool_calls':[{'index':0,'id':'cutoff','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'cutoff.txt','content':'must not write'})}}]})
@@ -212,6 +217,12 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    # A regenerated answer owns a separate tool history and selects the new version.
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
+   for prompt in ['malformed batch fixture','array batch fixture','duplicate batch fixture']:
+    bad=session(prompt);bad_detail=wait_for(bad,lambda d:not d['modelPending']);assert bad_detail['tasks'][-1]['status']=='failed'
+    assert not bad_detail['runs'] and not (root/'bad-batch.txt').exists()
+    answer=next(m for m in reversed(bad_detail['messages']) if m['role']=='assistant');assert 'Batch preview preserved' in answer['content'];assert answer['modelMetadata']['taskReasonCode']=='invalid_tool_call'
+    assert next(m for m in reversed(call('agent_session',{'sessionId':bad})['messages']) if m['role']=='assistant')['modelMetadata']['taskReasonCode']=='invalid_tool_call'
+    assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')==prompt for m in r['messages'])])==1
    for prompt,reason in [('output cutoff fixture','output_limit'),('filtered output fixture','model_filtered'),('tool cutoff fixture','output_limit')]:
     cutoff=session(prompt);cutoff_detail=wait_for(cutoff,lambda d:not d['modelPending']);assert cutoff_detail['tasks'][-1]['status']=='failed'
     assert not cutoff_detail['runs'] and not (root/'cutoff.txt').exists()
