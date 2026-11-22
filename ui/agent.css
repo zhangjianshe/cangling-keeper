@@ -331,3 +331,5 @@
 .agent-task-plan .plan-blocked span:first-child{color:#a56721}.agent-task-plan .plan-skipped span:first-child{color:#777780}.agent-task-plan .agent-plan-reason{margin-left:60px;color:#777780;overflow-wrap:anywhere}
 
 .project-browser-bar>.project-browser-icon-button{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:6px}.project-browser-icon-button svg{width:20px;height:20px;flex:none}
+
+.agent-message.user.is-editing{width:100%;max-width:100%;box-sizing:border-box}.agent-message.user.is-editing .agent-message-edit{width:100%;min-width:0}.agent-message-edit textarea{min-height:min(180px,55vh);max-height:55vh;line-height:1.65;overflow-y:auto}.agent-edit-actions{flex-wrap:wrap}

@@ -496,7 +496,7 @@
               if(!terminal && ((task.step || 0)>=budget.maxRounds-1 || runs.length>=budget.maxToolCalls-4)){const warning=element('p','agent-budget-warning','执行预算即将用尽；可检查已完成内容，必要时停止并拆分剩余任务。');warning.setAttribute('role','status');summary.append(warning);caption.append(element('span','agent-budget-warning',' · 接近上限'));}
             }
 
-            const reasonCode=metadata.taskReasonCode || (task.status==='interrupted'?'interrupted':''),nextSteps={complete:'任务已结束，可检查结果或继续提出需求。',user_stopped:'已保留生成内容；继续前请核实已执行操作。',rejected_repeat:'模型重复提出了已拒绝的操作。若你改变决定，请明确发送新消息。',no_progress:'检查工具结果并调整目标或参数后，再发送新消息。',round_limit:'任务达到轮次上限；检查已完成步骤，将剩余工作拆分后继续。',tool_limit:'任务达到工具调用上限；缩小范围后继续。',time_limit:'任务达到运行时限；检查实际执行状态后再继续。',interrupted:'服务中断后不会自动重放操作；请先核实实际状态。',error:'查看上述错误并核实操作是否部分完成，再决定是否重试。'};
+            const reasonCode=metadata.taskReasonCode || (task.status==='interrupted'?'interrupted':''),nextSteps={output_limit:'模型输出达到上限，回复可能不完整；检查已生成内容后缩小任务或明确要求继续。',model_filtered:'模型服务中止了回复；检查请求内容和服务提示，不会自动重试。',complete:'任务已结束，可检查结果或继续提出需求。',user_stopped:'已保留生成内容；继续前请核实已执行操作。',rejected_repeat:'模型重复提出了已拒绝的操作。若你改变决定，请明确发送新消息。',no_progress:'检查工具结果并调整目标或参数后，再发送新消息。',round_limit:'任务达到轮次上限；检查已完成步骤，将剩余工作拆分后继续。',tool_limit:'任务达到工具调用上限；缩小范围后继续。',time_limit:'任务达到运行时限；检查实际执行状态后再继续。',interrupted:'服务中断后不会自动重放操作；请先核实实际状态。',error:'查看上述错误并核实操作是否部分完成，再决定是否重试。'};
             if(terminal && nextSteps[reasonCode])summary.append(element('p','agent-task-next-step',nextSteps[reasonCode]));
 
             const counts={succeeded:0,failed:0,rejected:0,stopped:0,interrupted:0};for(const run of runs)if(run.status in counts)counts[run.status]++;
@@ -507,7 +507,7 @@
         }
         const body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');body.hidden=entry.role==='user' && !entry.content?.trim();message.append(body);agent.attachments?.decorate(message,entry);
         if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id){
-          body.hidden=true;const form=element('form','agent-message-edit'),input=element('textarea');input.value=agent.editing.content;input.setAttribute('aria-label','编辑消息');input.rows=Math.max(3,Math.min(10,input.value.split('\n').length));input.oninput=()=>{agent.editing.content=input.value;};
+          body.hidden=true;message.classList.add('is-editing');const form=element('form','agent-message-edit'),input=element('textarea');input.value=agent.editing.content;input.setAttribute('aria-label','编辑消息');input.rows=Math.max(3,Math.min(10,input.value.split('\n').length));const resizeEdit=()=>{input.style.height='auto';input.style.height=input.scrollHeight+'px';};input.oninput=()=>{agent.editing.content=input.value;resizeEdit();};Promise.resolve().then(()=>{if(input.isConnected)resizeEdit();});
           const actions=element('div','agent-edit-actions'),cancel=element('button','btn','取消'),save=element('button','btn primary','保存并重新生成');cancel.type='button';save.type='submit';
           cancel.onclick=()=>{agent.editing=null;renderConversation();};form.onsubmit=event=>{event.preventDefault();saveEditedMessage(entry);};actions.append(cancel,save);form.append(input,actions);message.append(form);
         }

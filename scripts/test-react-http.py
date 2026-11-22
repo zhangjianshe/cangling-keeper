@@ -28,6 +28,10 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if user in ['output cutoff fixture','filtered output fixture','tool cutoff fixture']:
+    event({'content':'Partial answer preserved'})
+    if user=='tool cutoff fixture':event({'tool_calls':[{'index':0,'id':'cutoff','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'cutoff.txt','content':'must not write'})}}]})
+    event({},'content_filter' if user=='filtered output fixture' else 'length');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'context search fixture' in user:
     if not results:tools([('search_files',{'query':'needle','path':'context.txt','mode':'content','contextLines':1})]);return
     if len(results)==1:
@@ -208,6 +212,12 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    # A regenerated answer owns a separate tool history and selects the new version.
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
+   for prompt,reason in [('output cutoff fixture','output_limit'),('filtered output fixture','model_filtered'),('tool cutoff fixture','output_limit')]:
+    cutoff=session(prompt);cutoff_detail=wait_for(cutoff,lambda d:not d['modelPending']);assert cutoff_detail['tasks'][-1]['status']=='failed'
+    assert not cutoff_detail['runs'] and not (root/'cutoff.txt').exists()
+    answer=next(m for m in reversed(cutoff_detail['messages']) if m['role']=='assistant');assert 'Partial answer preserved' in answer['content'];assert answer['modelMetadata']['taskReasonCode']==reason
+    assert next(m for m in reversed(call('agent_session',{'sessionId':cutoff})['messages']) if m['role']=='assistant')['modelMetadata']['taskReasonCode']==reason
+    assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')==prompt for m in r['messages'])])==1
    alternating=session('alternating cycle');alternated=wait_for(alternating,lambda d:not d['modelPending']);assert alternated['tasks'][-1]['status']=='failed' and len(alternated['runs'])==6
    assert all(r['status']=='succeeded' for r in alternated['runs'])
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='no_progress' for m in alternated['messages'])

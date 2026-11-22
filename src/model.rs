@@ -343,6 +343,15 @@ async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&st
     }
     progress(&content)?;
     if !done{return Err("模型流未正常结束，已生成内容已保存。".into());}
+    // A completed transport is not necessarily a completed model answer.
+    let incomplete = match finish_reason.as_deref() {
+        Some("length") => Some(("output_limit", "模型回复达到输出长度上限，已生成内容已保留；本轮工具调用未执行。请检查内容后缩小任务范围或明确要求继续。")),
+        Some("content_filter") => Some(("model_filtered", "模型服务中止了回复（内容过滤），已生成内容已保留；本轮工具调用未执行。请检查服务提示和请求内容。")),
+        _ => None,
+    };
+    if let Some((code, message)) = incomplete {
+        return Err(crate::agent_runtime::termination_error(core,response_id,code,message.into()));
+    }
     if !calls.is_empty(){
         if finish_reason.as_deref()!=Some("tool_calls"){return Err("模型工具调用未完整结束，未执行工具。".into());}
         let mut ids=std::collections::HashSet::new();for call in calls.values(){if call.id.is_empty() || call.name.is_empty() || !ids.insert(&call.id){return Err("模型工具调用标识无效，未执行工具。".into());}}
