@@ -28,6 +28,10 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if 'filtered search fixture' in user:
+    if not results:tools([('search_files',{'query':'needle','mode':'content','extensions':['rs']})]);return
+    matches=json.loads(results[-1]['content'])['matches'];assert len(matches)==1 and matches[0]['path'].endswith('main.rs')
+    event({'content':'Filtered search complete'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'paged directory fixture' in user:
     if not results:tools([('list_directory',{'path':'many'})]);return
     last=json.loads(results[-1]['content'])
@@ -144,6 +148,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   filtered=session('filtered search fixture');filtered_detail=wait_for(filtered,lambda d:not d['modelPending']);assert filtered_detail['tasks'][-1]['status']=='complete';assert len(filtered_detail['runs'])==1
    (root/'many').mkdir()
    for index in range(205):(root/'many'/f'{index:03}.txt').write_text('')
    paged=session('paged directory fixture');paged_detail=wait_for(paged,lambda d:not d['modelPending'])
