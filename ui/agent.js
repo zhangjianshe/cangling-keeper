@@ -113,7 +113,7 @@
       if(agent.detail.sessionId===session){
         for(const key of ['runs','tasks']){const id=key==='runs'?'id':'responseId';for(const current of agent.detail[key] || []){const index=(data[key] || []).findIndex(v=>v[id]===current[id]);if(index<0)(data[key] ||= []).push(current);else if((current.updatedAt || 0)>(data[key][index].updatedAt || 0))data[key][index]=current;}}
       }
-      agent.detail=data;agent.history?.remember(data.session);renderModel(data.model);localStorage.setItem(sessionStorageKey(),session);renderSessions();renderConversation();poll();notice();return true;
+      agent.detail=data;agent.history?.remember(data.session);renderModel(data.model);localStorage.setItem(sessionStorageKey(),session);renderProjects();renderSessions();renderConversation();poll();notice();return true;
     }catch(error){if(generation===agent.generation){if(String(error).includes('不属于当前账号'))clearSelected();notice(String(error));}return false;}
   }
   function poll(){
