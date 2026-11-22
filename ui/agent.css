@@ -273,3 +273,27 @@
 .agent-run-elapsed{font-size:11px;white-space:nowrap;color:#92929a}.agent-output-toolbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 0;color:#85858f;font-size:11px}.agent-output-toolbar>span{margin-right:auto}.agent-output-toolbar button{padding:3px 7px}.agent-retry-actions{display:flex;align-items:center;gap:10px;padding:8px 0}.agent-retry-actions small{color:#85858f;font-size:11px;line-height:1.6}.agent-output-pages pre{tab-size:4}@media(max-width:650px){.agent-run-elapsed{display:none}.agent-retry-actions{align-items:flex-start;flex-direction:column}}
 
 .agent-run-update-note{display:block;padding:6px 0;color:#92929a;font-size:11px;line-height:1.6}
+
+/* Shared dialog baseline: neutral surface, blue focus and a pale action bar. */
+:root{--keeper-dialog-footer:#f6f8fb;--keeper-dialog-border:#dbe2eb;--keeper-dialog-radius:12px}
+.modal-box,.dialog-box,.keeper-project-dialog{border-color:var(--keeper-dialog-border);border-radius:var(--keeper-dialog-radius);box-shadow:0 18px 60px #18253826}
+.modal-box h2,.dialog-title,.keeper-project-dialog h2{font-size:18px;font-weight:600;line-height:1.5}
+.dialog-head{padding:18px 24px;background:var(--card,#fff);border-color:var(--keeper-dialog-border)}
+.dialog-body{padding:20px 24px}
+.modal-actions,.dialog-actions,.keeper-project-actions{background:var(--keeper-dialog-footer);border-top:1px solid var(--keeper-dialog-border);padding:14px 20px;gap:8px;flex-wrap:wrap}
+.modal-actions{border-radius:8px;margin-top:12px}
+.dialog-actions{padding:14px 24px}
+#llm-server-modal .modal-actions,#mcp-modal .modal-actions{background:var(--keeper-dialog-footer);border-color:var(--keeper-dialog-border);border-radius:0}
+.keeper-project-dialog{padding:24px;max-height:calc(100dvh - 48px);overflow:auto;box-sizing:border-box}
+.keeper-project-dialog h2{margin:0 0 22px}
+.keeper-project-dialog label{font-size:14px;font-weight:500;line-height:1.5}
+.keeper-project-dialog input:not([type=checkbox]),.modal-box input:not([type=checkbox]):not([type=radio]):not([type=hidden]):not([type=file]),.dialog-input{font:inherit;min-height:40px;padding:9px 12px;border:1px solid var(--keeper-dialog-border);border-radius:7px;background:var(--card,#fff);color:var(--fg,#24292f);box-sizing:border-box;outline:none}
+.keeper-project-dialog input:not([type=checkbox]):focus,.modal-box input:not([type=checkbox]):not([type=radio]):focus,.dialog-input:focus{border-color:#528bfa;box-shadow:0 0 0 3px #3b82f626}
+.keeper-project-dialog .keeper-project-path{font-size:13px;padding:10px 12px;margin:12px 0 16px;background:#f6f8fb;border:1px solid #e6ebf2;border-radius:7px;line-height:1.6}
+.keeper-project-dialog .keeper-project-hint{margin:0 0 18px;font-size:13px;line-height:1.75}
+.keeper-project-dialog label:has(>input[type=checkbox]){display:flex;align-items:flex-start;gap:9px;font-size:13px;font-weight:400;color:#475569;line-height:1.6}
+.keeper-project-dialog input[type=checkbox]{width:16px;height:16px;flex:0 0 16px;margin:3px 0 0;accent-color:#2563eb}
+.keeper-dialog-status:empty{display:none}
+.keeper-project-dialog .keeper-dialog-status{margin:12px 0 0;font-size:13px}
+.keeper-project-actions{margin:24px -24px -24px;padding:16px 24px;border-radius:0 0 11px 11px}
+@media(max-width:560px){.keeper-project-dialog{width:calc(100vw - 24px);max-height:calc(100dvh - 24px);padding:20px}.keeper-project-actions{margin:20px -20px -20px;padding:14px 20px}.dialog-head,.dialog-body,.dialog-actions{padding:16px}.modal-actions{padding:12px}}
