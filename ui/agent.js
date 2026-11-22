@@ -65,7 +65,9 @@
       summary.append(icon,element('span','agent-project-name',project.name));
       const create=element('button','agent-project-chat','＋');create.type='button';create.title='在'+project.name+'中开始会话';create.setAttribute('aria-label',create.title);
       create.onclick=event=>{event.preventDefault();event.stopPropagation();agent.project=project.id;newSession();};
-      summary.append(create);group.append(summary);
+      const manage=element('button','agent-project-manage','⋯');manage.type='button';manage.title='管理项目';manage.setAttribute('aria-label','管理项目 '+project.name);
+      manage.onclick=event=>{event.preventDefault();event.stopPropagation();window.keeperProjectDialog({project,invoke,notice,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id)await switchProject('general');}});};
+      summary.append(manage,create);group.append(summary);
       const sessions=agent.history?.projectSessions(project.id) || agent.sessions.filter(s=>s.projectId===project.id);
       for(const session of sessions)group.append(sessionRow(session));
       if(agent.history)agent.history.attachProject(group,project.id);else if(!sessions.length)group.append(element('div','agent-nav-empty','暂无会话'));

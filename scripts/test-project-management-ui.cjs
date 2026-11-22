@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<body></body>');global.window=dom.window;global.document=dom.window.document;
+dom.window.HTMLDialogElement.prototype.showModal=function(){this.open=true};dom.window.HTMLDialogElement.prototype.close=function(){this.dispatchEvent(new dom.window.Event('close'))};
+require('../ui/project-management.js');
+(async()=>{const calls=[],changes=[];window.keeperProjectDialog({project:{id:'p',name:'Name',directory:'/tmp/<project>'},invoke:async(...args)=>calls.push(args),notice:()=>{},onChanged:async v=>changes.push(v)});
+const click=async text=>{[...document.querySelectorAll('button')].find(b=>b.textContent===text).click();await new Promise(r=>setImmediate(r));};
+assert(document.querySelector('.keeper-project-path').textContent.includes('<project>'));assert(!document.querySelector('.keeper-project-path project'));
+await click('打开目录');assert.equal(calls[0][0],'agent_project_open');await click('删除项目');assert.equal(calls.length,1);document.querySelector('input[type=checkbox]').checked=true;await click('删除项目');assert.equal(calls[1][0],'agent_project_delete');assert.deepEqual(changes,[true]);assert(!document.querySelector('dialog'));
+window.keeperProjectDialog({project:{id:'general',name:'通用项目',directory:'/tmp/general'},invoke:async(...args)=>calls.push(args),notice:()=>{},onChanged:async v=>changes.push(v)});
+assert([...document.querySelectorAll('button')].find(b=>b.textContent==='删除项目').disabled);document.querySelector('input').value='New name';await click('保存');assert.equal(calls.at(-1)[1].name,'New name');assert.equal(changes.at(-1),false);console.log('PASS: safe directory display, open, explicit deletion checkbox, default protection, rename refresh');
+})().catch(e=>{console.error(e);process.exitCode=1});

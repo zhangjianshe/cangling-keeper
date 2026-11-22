@@ -452,6 +452,34 @@ pub(crate) async fn dispatch(
             store.conn.execute("UPDATE agent_sessions SET pinned=?2 WHERE id=?1",params![session,pinned]).map_err(|e|e.to_string())?;
             Ok(json!({"pinned":pinned}))
         }
+        "agent_project_update" | "agent_project_delete" | "agent_project_open" => {
+            let project=text(&args,"projectId")?;
+            let directory={
+                let store=core.store.lock().map_err(|e|e.to_string())?;
+                let directory:String=store.conn.query_row("SELECT directory FROM agent_projects WHERE id=?1",[&project],|r|r.get(0)).map_err(|_|"项目不存在")?;
+                if command=="agent_project_update" {
+                    let name=text(&args,"name")?.trim().to_owned();
+                    if name.is_empty() || name.chars().count()>80 || name.chars().any(char::is_control){return Err("项目名称须为 1–80 个字符，不能包含控制字符".into());}
+                    store.conn.execute("UPDATE agent_projects SET name=?2 WHERE id=?1",params![project,name]).map_err(|e|e.to_string())?;
+                    return Ok(json!({"id":project,"name":name,"directory":directory}));
+                }
+                if command=="agent_project_delete" {
+                    if project=="general"{return Err("通用项目不能删除".into());}
+                    if args["confirmed"]!=true{return Err("请确认仅移除项目记录，保留磁盘文件".into());}
+                    // Projects are shared locally. Include every owner's archived and trashed sessions.
+                    let count:i64=store.conn.query_row("SELECT count(*) FROM agent_sessions WHERE project_id=?1",[&project],|r|r.get(0)).map_err(|e|e.to_string())?;
+                    if count>0{return Err("项目仍有会话（含归档、回收站或其他账户会话），不能删除。请先处理这些会话。".into());}
+                    store.conn.execute("DELETE FROM agent_projects WHERE id=?1",[&project]).map_err(|e|e.to_string())?;
+                    return Ok(json!({"deleted":true,"filesPreserved":true}));
+                }
+                directory
+            };
+            tokio::task::spawn_blocking(move ||{
+                let path=std::path::Path::new(&directory);
+                if !path.is_absolute() || !path.is_dir(){return Err("项目目录不存在或不可访问".to_string());}
+                crate::open_directory(path)?;Ok(json!({"opened":true}))
+            }).await.map_err(|e|e.to_string())?
+        }
         "agent_new_project" => {
             let name = text(&args, "name")?.trim().to_owned();
             if name.chars().count() > 80 {
