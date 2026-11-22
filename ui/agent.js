@@ -73,6 +73,7 @@
     }
   }
   async function switchProject(project){
+    if(agent.drafts && !await agent.drafts.load(null))return;
     clearTimeout(agent.timer);++agent.generation;agent.project=project;agent.selected=null;agent.detail={messages:[],runs:[]};
     renderProjects();renderSessions();renderConversation();showConversation();
     const session=agent.sessions.find(s=>s.projectId===project);if(session)await select(session.id);
@@ -100,6 +101,7 @@
     return agent.selected;
   }
   async function select(session) {
+    try{if(agent.drafts && !await agent.drafts.load(session))return false;}catch(error){notice(String(error));return false;}
     clearTimeout(agent.timer);agent.selected=session;const generation=++agent.generation;
     try{
       const data=await invoke('agent_session',{sessionId:session});
@@ -617,7 +619,7 @@
   $('#agent-compose').onsubmit=async event=>{
     event.preventDefault();if(agent.sending || agent.detail.modelPending || agent.attachments?.busy())return;const content=$('#agent-input').value.trim(),attachmentIds=agent.attachments?.draftIds() || [];if(!content && !attachmentIds.length)return;
     const identity=agent.identityEpoch || 0;agent.sending=true;renderPending($('#agent-messages'));
-    try{const session=await ensureSession();await invoke('agent_send_message',{sessionId:session,content,attachmentIds});if(identity!==(agent.identityEpoch || 0))return;if(agent.selected===session)$('#agent-input').value='';await bootstrap();if(agent.selected===session){await select(session);$('#agent-timeline').scrollTop=$('#agent-timeline').scrollHeight;}notice();}
+    try{const session=await ensureSession();const submit=draftRevision=>invoke('agent_send_message',{sessionId:session,content,attachmentIds,draftRevision});if(agent.drafts)await agent.drafts.send(submit);else{await submit();if(agent.selected===session)$('#agent-input').value='';}if(identity!==(agent.identityEpoch || 0))return;await bootstrap();if(agent.selected===session){await select(session);$('#agent-timeline').scrollTop=$('#agent-timeline').scrollHeight;}notice();}
     catch(error){if(identity===(agent.identityEpoch || 0))notice(String(error));}finally{agent.sending=false;renderPending($('#agent-messages'));if(identity===(agent.identityEpoch || 0))$('#agent-input').focus();}
   };
   async function regenerateReply(messageId){
@@ -664,7 +666,7 @@
   async function refreshAccountSessions(){
     fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
-    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.attachments?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
+    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }
@@ -712,8 +714,10 @@
   };
   for(const button of document.querySelectorAll('.topnav .navlink'))if(button!==rootNav)button.addEventListener('click',()=>{$('#maintenance-app').classList.remove('root-certificate-view');rootPanel.classList.add('hidden');rootNav.classList.remove('active');});
   function clearSelected(){
+    agent.drafts?.reset();$('#agent-input').value='';
     clearTimeout(agent.timer);++agent.generation;agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.detail={messages:[],runs:[],tasks:[],modelPending:false};localStorage.removeItem(sessionStorageKey());renderSessions();renderConversation();
   }
+  agent.drafts=window.createKeeperDrafts?.({agent,invoke,notice,ensureSession});
   agent.history=window.createKeeperHistory?.({agent,invoke,element,notice,bootstrap,select,showConversation,renderProjects,renderSessions,renderConversation,clearSelected});
   agent.guidance=window.createKeeperGuidance?.({agent,invoke,element,notice});
   agent.attachments=window.createKeeperAttachments?.({agent,invoke,element,notice,ensureSession,select,renderPending});

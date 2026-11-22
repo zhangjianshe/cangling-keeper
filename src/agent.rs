@@ -1,7 +1,7 @@
 //! Persistent conversations, model tools and host-enforced approval policies.
 //! Conversations and immutable approval requests survive browser refreshes in SQLite.
 use crate::{AppState, store::Store};
-use rusqlite::params;
+use rusqlite::{params, OptionalExtension};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
@@ -65,6 +65,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     crate::agent_history::initialize(store)?;
     crate::agent_attachments::initialize(store)?;
     crate::model::initialize(store)?;
+    store.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_drafts(session_id TEXT PRIMARY KEY,content TEXT NOT NULL,revision INTEGER NOT NULL);").map_err(|e|e.to_string())?;
     let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
     let columns=store.conn.prepare("PRAGMA table_info(agent_sessions)").map_err(|e|e.to_string())?.query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
     if !columns.iter().any(|c|c=="server_id"){
@@ -601,6 +602,19 @@ pub(crate) async fn dispatch(
             launch_model(core.clone(),session.clone(),response_id,cancel_rx,sink);
             let store=core.store.lock().map_err(|e|e.to_string())?;detail(&store,&session)
         }
+        "agent_draft_get" | "agent_draft_save" => {
+            let session=text(&args,"sessionId")?;
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            crate::agent_history::info(&store,&session)?;
+            let current=store.conn.query_row("SELECT content,revision FROM agent_drafts WHERE session_id=?1",[&session],|r|Ok((r.get::<_,String>(0)?,r.get::<_,i64>(1)?))).optional().map_err(|e|e.to_string())?.unwrap_or((String::new(),0));
+            if command=="agent_draft_get" {return Ok(json!({"content":current.0,"revision":current.1}));}
+            require_session(&store,&session)?;
+            let content=args["content"].as_str().ok_or("草稿内容必须是文字")?;
+            if content.len()>32000{return Err("草稿超过32000字节".into());}
+            if args["revision"].as_i64()!=Some(current.1){return Err("草稿已在其他页面更新，请保留当前文字并刷新后重试。".into());}
+            store.conn.execute("INSERT INTO agent_drafts(session_id,content,revision) VALUES (?1,?2,?3) ON CONFLICT(session_id) DO UPDATE SET content=excluded.content,revision=excluded.revision",params![session,content,current.1+1]).map_err(|e|e.to_string())?;
+            Ok(json!({"content":content,"revision":current.1+1}))
+        }
         "agent_send_message" => {
             let session = text(&args, "sessionId")?;
             let content = args.get("content").and_then(Value::as_str).unwrap_or("").to_owned();
@@ -628,6 +642,11 @@ pub(crate) async fn dispatch(
                 store.conn.execute("UPDATE agent_sessions SET updated_at=?3,title=CASE WHEN title_custom=0 AND (SELECT count(*) FROM agent_messages WHERE session_id=?1 AND role='user')=1 THEN ?2 ELSE title END WHERE id=?1",params![session,title,now()]).map_err(|e|e.to_string())?;
                 if enabled{store.conn.execute("INSERT INTO agent_messages(id,session_id,role,content,created_at,model_metadata) VALUES (?1,?2,'assistant','',?3,?4)",params![response_id,session,now(),json!({"source":"llm","generationStatus":"streaming","serverId":selection["activeServerId"],"serverName":selection["name"],"requestedModel":selection["model"],"model":selection["model"]}).to_string()]).map_err(|e|e.to_string())?;}
                 if !enabled{message(&store,&session,"assistant","消息已保存。尚未启用模型，可到账户页配置 DeepSeek，或通过工具入口手动操作。")?;}
+                if let Some(revision)=args.get("draftRevision").and_then(Value::as_i64){
+                    store.conn.execute("INSERT OR IGNORE INTO agent_drafts(session_id,content,revision) VALUES (?1,'',0)",[&session]).map_err(|e|e.to_string())?;
+                    let changed=store.conn.execute("UPDATE agent_drafts SET content='',revision=revision+1 WHERE session_id=?1 AND revision=?2",params![session,revision]).map_err(|e|e.to_string())?;
+                    if changed!=1{return Err("草稿已在其他页面更新，请保留当前文字并刷新后重试。".into());}
+                }
                 if enabled{core.model_cancellations.lock().map_err(|e|e.to_string())?.insert(response_id.clone(),cancel_tx);}
                 tx.commit().map_err(|e|e.to_string())?;enabled
             };

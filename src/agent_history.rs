@@ -224,6 +224,7 @@ pub(crate) fn mutate(store: &Store, command: &str, args: &Value) -> Result<Value
             sql(store.conn.execute("DELETE FROM agent_reviews WHERE run_id IN (SELECT id FROM agent_runs WHERE session_id=?1)",[session]))?;
             sql(store.conn.execute("DELETE FROM agent_model_contexts WHERE message_id IN (SELECT id FROM agent_messages WHERE session_id=?1)",[session]))?;
             for table in [
+                "agent_drafts",
                 "agent_reply_versions",
                 "agent_runs",
                 "agent_events",
