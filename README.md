@@ -790,3 +790,6 @@ Agent 的 `write_file` 支持可选 `createOnly: true`：同名文件已存在�
 
 ### 文件修改统计
 写文件和补丁审批详情显示新增/删除行数，基于同一份文本差异计算。成功结果附带 `changeSummary`（addedLines/removedLines）、`created`、`previousSha256` 与现有 `sha256`，用于核对实际提交版本；新建文件的旧哈希为null。统计随执行记录保存，旧记录没有统计时不猜测。行尾变化也属于文本差异；统计不代表编译或测试通过。
+
+### 搜索结果数量控制
+`search_files` 的 `maxResults` 可设为1–50，默认50，按文件名/内容命中条目计数。发现超过上限的额外命中时才设置数量截断；为判断是否仍有命中，可能继续扫描，其扫描/深度/输出大小限制不变。`truncationReasons` 返回 `result_limit`、`output_limit` 或 `depth_limit`；可缩小目录、扩展名或关键词范围继续查询，不提供游标分页。`truncated=false` 仍不代表搜索覆盖被过滤、跳过或不可读的文件，应结合 filteredFiles/skippedFiles。

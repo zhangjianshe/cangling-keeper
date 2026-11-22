@@ -60,6 +60,10 @@ class API(http.server.BaseHTTPRequestHandler):
      tools([('read_file',hit['readArgs'])]);return
     assert 'target-word' in json.loads(results[-1]['content'])['lines'][0]['text']
     event({'content':'Located and read match'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if 'limited search fixture' in user:
+    if not results:tools([('search_files',{'query':'needle','path':'limited.txt','mode':'content','maxResults':1})]);return
+    result=json.loads(results[-1]['content']);assert len(result['matches'])==1 and result['truncated'] is True;assert result['truncationReasons']==['result_limit']
+    event({'content':'Search limited explicitly'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'filtered search fixture' in user:
     if not results:tools([('search_files',{'query':'needle','mode':'content','extensions':['rs']})]);return
     matches=json.loads(results[-1]['content'])['matches'];assert len(matches)==1 and matches[0]['path'].endswith('main.rs')
@@ -195,6 +199,9 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    assert call('agent_session',{'sessionId':context})['runs']==context_detail['runs']
    (root/'late.txt').write_text('中'*1200+'target-word'+'后'*100)
    located=session('located search fixture');located_detail=wait_for(located,lambda d:not d['modelPending']);assert located_detail['tasks'][-1]['status']=='complete';assert len(located_detail['runs'])==2
+   (root/'limited.txt').write_text('needle\nneedle\n')
+   limited=session('limited search fixture');limited_detail=wait_for(limited,lambda d:not d['modelPending']);assert limited_detail['tasks'][-1]['status']=='complete';assert len(limited_detail['runs'])==1
+   assert call('agent_session',{'sessionId':limited})['runs']==limited_detail['runs']
    filtered=session('filtered search fixture');filtered_detail=wait_for(filtered,lambda d:not d['modelPending']);assert filtered_detail['tasks'][-1]['status']=='complete';assert len(filtered_detail['runs'])==1
    (root/'many').mkdir()
    for index in range(205):(root/'many'/f'{index:03}.txt').write_text('')
