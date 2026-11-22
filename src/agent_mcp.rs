@@ -30,6 +30,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     }
     let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
     for (name,statement) in [
+        ("plugin_manifest","ALTER TABLE agent_mcp_servers ADD COLUMN plugin_manifest TEXT NOT NULL DEFAULT '{}';"),
         ("environment","ALTER TABLE agent_mcp_servers ADD COLUMN environment TEXT NOT NULL DEFAULT '{}';"),
         ("environment_revision","ALTER TABLE agent_mcp_servers ADD COLUMN environment_revision TEXT NOT NULL DEFAULT '';"),
         ("project_ids","ALTER TABLE agent_mcp_servers ADD COLUMN project_ids TEXT NOT NULL DEFAULT 'null';"),
@@ -46,8 +47,8 @@ fn environment(store:&Store,id:&str,owner:&str)->Result<Value,String>{
 }
 pub(crate) fn list(store: &Store) -> Result<Value, String> {
     let owner = crate::agent_account::owner(store)?;
-    let mut stmt=store.conn.prepare("SELECT id,name,command,args,enabled,tools,transport,environment,environment_revision,project_ids FROM agent_mcp_servers WHERE owner_key=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
-    let rows=stmt.query_map([owner],|r|Ok((json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"command":r.get::<_,String>(2)?,"args":serde_json::from_str::<Value>(&r.get::<_,String>(3)?).unwrap_or(json!([])),"enabled":r.get::<_,bool>(4)?,"tools":serde_json::from_str::<Value>(&r.get::<_,String>(5)?).unwrap_or(json!([])),"transport":r.get::<_,String>(6)?,"environmentRevision":r.get::<_,String>(8)?}),r.get::<_,String>(7)?,r.get::<_,String>(9)?))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+    let mut stmt=store.conn.prepare("SELECT id,name,command,args,enabled,tools,transport,environment,environment_revision,project_ids,plugin_manifest FROM agent_mcp_servers WHERE owner_key=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
+    let rows=stmt.query_map([owner],|r|Ok((json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"command":r.get::<_,String>(2)?,"args":serde_json::from_str::<Value>(&r.get::<_,String>(3)?).unwrap_or(json!([])),"enabled":r.get::<_,bool>(4)?,"tools":serde_json::from_str::<Value>(&r.get::<_,String>(5)?).unwrap_or(json!([])),"transport":r.get::<_,String>(6)?,"plugin":serde_json::from_str::<Value>(&r.get::<_,String>(10)?).unwrap_or(json!({})),"environmentRevision":r.get::<_,String>(8)?}),r.get::<_,String>(7)?,r.get::<_,String>(9)?))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
     let mut result=Vec::new();
     for (mut item,raw_environment,raw_projects) in rows {
         let values:Value=serde_json::from_str(&raw_environment).map_err(|_|"MCP 环境配置无效")?;

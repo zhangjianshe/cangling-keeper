@@ -335,12 +335,13 @@
       info.append(element('strong','',server.name),element('div','llm-server-meta',(server.enabled?'已启用':'未启用')+' · 工具 '+chosen.filter(t=>!t.kind).length+'/'+ordinary.length+(native.length?' · 资料与模板 '+nativeSelected+'/'+native.length:'')+' · '+(server.connectedSessions?'连接会话 '+server.connectedSessions:'按需连接')),element('div','llm-server-url',server.command));
       const scope=Array.isArray(server.projectIds)?'指定项目：'+server.projectIds.map(id=>agent.projects.find(p=>p.id===id)?.name || id).join('、'):'所有项目';
       info.append(element('div','mcp-server-scope',scope+(server.environmentKeys?.length?' · 环境变量 '+server.environmentKeys.length+' 项':'')));
+      if(server.plugin?.manifest){const p=server.plugin.manifest;info.append(element('div','mcp-server-scope','插件 '+p.id+' · '+p.version+' · 来源声明（未验证）：'+p.source),element('div','mcp-server-scope','原始清单 SHA-256：'+server.plugin.sha256+'；以当前连接配置为准'));}
       const actions=element('div','llm-server-actions');
-      const operations=[['编辑',()=>{if(current())openMcp(server);}],['连接并发现',async()=>{
+      const operations=[['编辑',()=>{if(current())openMcp(server);}],[server.plugin?.manifest?'启用并发现':'连接并发现',async()=>{
         if(!await uiConfirm((server.transport==='stdio'?'将以当前用户权限运行 MCP Server：':'将连接 MCP 服务并发送配置的请求头：')+server.command+'。请确认你信任该服务。','连接 MCP Server') || !current())return;
         try{$('#mcp-status').textContent='正在连接…';const result=await invoke('agent_mcp_refresh',{id:server.id});if(!current())return;renderMcp(result);const native=result.find(s=>s.id===server.id)?.tools?.some(t=>t.kind);$('#mcp-status').textContent=native?'已发现服务能力；资料与提示模板需要勾选后保存，才可用于对话。':'已发现工具，可在选择能力中调整。';}catch(error){if(current())$('#mcp-status').textContent=String(error);}
-      }],...(server.enabled?[['停用',async()=>{try{const result=await invoke('agent_mcp_save',{...server,enabled:false});if(current())renderMcp(result.servers);}catch(error){if(current())$('#mcp-status').textContent=String(error);}}]]:[]),['删除',async()=>{
-        if(!await uiConfirm('删除 MCP 服务“'+server.name+'”？','删除 MCP Server') || !current())return;
+      }],...(server.enabled?[['停用',async()=>{try{const result=await invoke('agent_mcp_save',{...server,enabled:false});if(current())renderMcp(result.servers);}catch(error){if(current())$('#mcp-status').textContent=String(error);}}]]:[]),[server.plugin?.manifest?'卸载':'删除',async()=>{
+        if(!await uiConfirm('删除 MCP 服务配置“'+server.name+'”？项目文件和历史记录保留。','删除 MCP Server') || !current())return;
         try{const result=await invoke('agent_mcp_delete',{id:server.id});if(current())renderMcp(result);}catch(error){if(current())$('#mcp-status').textContent=String(error);}
       }]];
       for(const [label,handler] of operations){const b=element('button','btn',label);b.type='button';b.onclick=handler;actions.append(b);}row.append(info,actions);const group=element('div','mcp-server-group');group.dataset.serverId=server.id;group.append(row);
@@ -720,6 +721,7 @@
     agent.drafts?.reset();$('#agent-input').value='';
     clearTimeout(agent.timer);++agent.generation;agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.detail={messages:[],runs:[],tasks:[],modelPending:false};localStorage.removeItem(sessionStorageKey());renderSessions();renderConversation();
   }
+  agent.plugins=window.createKeeperPlugins?.({agent,invoke,renderMcp,status:message=>{$('#mcp-status').textContent=message;}});
   agent.runExperience=window.createKeeperRunExperience?.({agent,notice});
   agent.drafts=window.createKeeperDrafts?.({agent,invoke,notice,ensureSession});
   agent.history=window.createKeeperHistory?.({agent,invoke,element,notice,bootstrap,select,showConversation,renderProjects,renderSessions,renderConversation,clearSelected});

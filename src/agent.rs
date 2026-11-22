@@ -409,6 +409,7 @@ pub(crate) async fn dispatch(
         "agent_cis_model_delete" => {let id=text(&args,"id")?;if id.len()>64 || !id.chars().all(|c|c.is_ascii_alphanumeric()||c=='-'||c=='_'){return Err("模型 ID 无效".into());}crate::cis_models::call(&core,reqwest::Method::POST,&format!("/admin/{id}/delete"),Some(json!({}))).await?;let refreshed=crate::cis_models::refresh(&core).await;Ok(json!({"refreshError":refreshed.err()}))},
         "agent_cis_models_refresh" => crate::cis_models::refresh(&core).await,
         "agent_history_backup" => {let core=core.clone();tokio::task::spawn_blocking(move ||{let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_backup::export(&store)}).await.map_err(|_|"备份失败".to_string())?}
+        "agent_plugin_preview" | "agent_plugin_install" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_plugins::dispatch(&store,&args,command=="agent_plugin_install")},
         "agent_mcp_list" => {let store=core.store.lock().map_err(|e|e.to_string())?;core.mcp_pool.annotate(&crate::agent_account::owner(&store)?,crate::agent_mcp::list(&store)?)}
         "agent_mcp_disconnect" => {core.mcp_pool.clear()?;let store=core.store.lock().map_err(|e|e.to_string())?;core.mcp_pool.annotate(&crate::agent_account::owner(&store)?,crate::agent_mcp::list(&store)?)}
         "agent_mcp_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;let result=crate::agent_mcp::save(&store,&args)?;core.mcp_pool.clear()?;Ok(result)}

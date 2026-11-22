@@ -576,7 +576,7 @@ DeepSeek 回复使用 SSE 流，生成中的同一条助手消息会持续写入
 
 工具调用记录和执行参数显示在对话中，并可在刷新后恢复。请求批准和自动审批模式需要逐次确认 MCP 操作；完全访问模式自动批准。修改或停用服务会使等待审批的旧操作失效。停止时关闭 MCP 本机子进程（Unix 下同时终止进程组），或向远程服务发送取消通知；外部系统中已经发生的操作不会自动撤销，结果不明时需自行核实。
 
-当前支持文本及 PNG/JPEG 图片工具结果；stdio 进程默认仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR，并可配置显式传入子进程的环境变量。暂不支持插件安装。工具发现使用独立临时连接；正式工具调用按“当前账户 + Keeper 会话 + 服务配置”复用连接，跨轮次保留 MCP 服务端会话状态，不同 Keeper 会话相互隔离。连接池最多保留 32 个连接，闲置 5 分钟后回收，资源回收或 Keeper 重启后服务端会话状态不会恢复。连接失败或调用超时会丢弃连接，不自动重放该请求；下一次调用重新连接。修改服务配置、工具选择、重新发现工具、退出账号和关闭服务会清理 MCP 连接；账户页显示关联的连接会话数，并提供“断开 MCP 连接”操作。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
+当前支持文本及 PNG/JPEG 图片工具结果；stdio 进程默认仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR，并可配置显式传入子进程的环境变量。支持经确认安装 MCP 配置插件清单，暂不提供程序包下载或安装脚本。工具发现使用独立临时连接；正式工具调用按“当前账户 + Keeper 会话 + 服务配置”复用连接，跨轮次保留 MCP 服务端会话状态，不同 Keeper 会话相互隔离。连接池最多保留 32 个连接，闲置 5 分钟后回收，资源回收或 Keeper 重启后服务端会话状态不会恢复。连接失败或调用超时会丢弃连接，不自动重放该请求；下一次调用重新连接。修改服务配置、工具选择、重新发现工具、退出账号和关闭服务会清理 MCP 连接；账户页显示关联的连接会话数，并提供“断开 MCP 连接”操作。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
 
 验证：`cargo build --locked && python3 scripts/test-mcp-http.py && python3 scripts/test-mcp-remote-http.py && python3 scripts/test-mcp-sessions-http.py`；测试使用临时 MCP 和本机模拟模型，不访问外部模型服务。
 
@@ -701,3 +701,31 @@ Keeper 在 Agent 请求的系统上下文中附带操作系统、CPU 架构、`r
 ### 工具执行状态与重试
 
 工具行显示耗时（包含审批等待）；展开后显示最近更新时距。输出按 4096 字符分页，可查看旧段或跟随最新；显示范围以工具已经保存的输出为准，不会补回执行时截断的日志。失败、停止或中断记录提供“准备重试”，只把原参数追加到当前草稿，不执行工具。检查操作是否已部分完成后再发送，使用当前会话模型和审批策略；原记录保留，归档、回收站及历史预览不可准备重试。
+
+
+### MCP 配置插件（首版）
+
+在账户页的 MCP 服务区域点击“安装插件清单”，导入最多 32 KiB 的 JSON 文件。清单字段必须如下，不接受安装脚本或额外字段：
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "example.local-tools",
+  "name": "本机工具",
+  "version": "1.0.0",
+  "source": "https://example.com/my-mcp-project",
+  "permissions": ["executeLocal"],
+  "mcp": {
+    "transport": "stdio",
+    "command": "python3",
+    "args": ["/absolute/path/to/already-installed/mcp_server.py"]
+  }
+}
+```
+
+- 插件 ID 为 1–80 个 ASCII 字母、数字、点、下划线或连字符；版本为三段数字。`source` 必须为 HTTPS 来源声明，**不是已认证发布者**；页面展示规范化清单 SHA-256 供核对，没有数字签名验证或可信插件仓库。
+- `stdio` 必须声明且仅声明 `executeLocal`；`http`/`sse` 必须声明且仅声明 `connectRemote`。权限是风险说明，不是操作系统隔离或细粒度访问控制。远程地址放在 `command`，远程 `args` 必须为空；密钥和环境变量安装后在 MCP 设置中单独配置。
+- 安装前展示完整命令/地址、参数、来源、版本、指纹及当前项目，勾选确认后仅写入当前账户配置。安装不联网、不下载程序、不启动进程；本机命令必须事先可用。
+- 安装后的服务默认停用且仅限当前项目，点击“启用并发现”并确认才会连接；随后沿用工具选择、审批、停止和项目范围控制。“停用”断开连接；“卸载”删除配置及其中凭证，项目文件和会话历史保留。
+- 同账户同插件 ID 不允许静默覆盖或升级，须先卸载再审阅新清单。编辑安装后的 MCP 配置不会改变原始安装收据；实际启动以当前连接配置为准。
+- 会话备份不包含插件配置、密钥或可执行程序；重新安装需要原始清单及外部程序。
