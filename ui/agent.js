@@ -399,7 +399,7 @@
     let status=container.querySelector('.agent-stream-status');
     if(agent.detail.modelPending){if(!status){status=element('div','agent-message-label agent-stream-status');status.setAttribute('role','status');container.append(status);}const task=agent.detail.tasks?.find(t=>t.responseId===agent.detail.streamingMessageId);status.textContent=agent.detail.stopRequested?'正在停止生成…':agent.detail.messages.find(m=>m.id===agent.detail.streamingMessageId)?.modelMetadata?.context?.status==='compressing'?'正在整理上下文…':task?.status==='approval'?`等待你确认操作 · 第 ${task.step} 轮`:task?.status==='tool'?`正在执行工具 · 第 ${task.step} 轮`:`模型正在生成…${task?.step?' · 第 '+task.step+' 轮':''}`;}
     else status?.remove();
-    agent.history?.updateDetail();agent.guidance?.update();agent.attachments?.render();
+    agent.history?.updateDetail();agent.guidance?.update();agent.attachments?.render();agent.runExperience?.tick();
   }
   async function saveEditedMessage(entry){
     if(agent.savingEdit || agent.detail.modelPending || !agent.editing)return;
@@ -576,7 +576,7 @@
         }
         card.append(actions);
       }
-      if(run.output)card.append(element('pre','agent-tool-output',run.output));
+      if(agent.runExperience)agent.runExperience.decorate(card,run);else if(run.output)card.append(element('pre','agent-tool-output',run.output));
       window.keeperMcpImagePreview?.(card,run,agent.selected,invoke);
       return card;
     }
@@ -584,7 +584,7 @@
       const target=run.arguments.target || {};
       card.append(element('pre','',`${target.username || ''}@${target.hostname || ''}:${target.port || 22}\n\n${run.arguments.command || ''}`));
     }
-    if(run.output)card.append(element('pre','',run.output));
+    if(agent.runExperience)agent.runExperience.decorate(card,run);else if(run.output)card.append(element('pre','',run.output));
     if(run.status==='pending_approval'){
       const actions=element('div','agent-run-actions');
       for(const [approved,label] of [[false,'取消'],[true,'确认执行此命令']]){
@@ -669,7 +669,7 @@
   async function refreshAccountSessions(){
     fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
-    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
+    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }
@@ -720,6 +720,7 @@
     agent.drafts?.reset();$('#agent-input').value='';
     clearTimeout(agent.timer);++agent.generation;agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.detail={messages:[],runs:[],tasks:[],modelPending:false};localStorage.removeItem(sessionStorageKey());renderSessions();renderConversation();
   }
+  agent.runExperience=window.createKeeperRunExperience?.({agent,notice});
   agent.drafts=window.createKeeperDrafts?.({agent,invoke,notice,ensureSession});
   agent.history=window.createKeeperHistory?.({agent,invoke,element,notice,bootstrap,select,showConversation,renderProjects,renderSessions,renderConversation,clearSelected});
   agent.guidance=window.createKeeperGuidance?.({agent,invoke,element,notice});
