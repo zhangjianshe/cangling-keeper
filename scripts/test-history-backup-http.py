@@ -23,7 +23,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-history-test-') as folder:
  def apply(archive):
   preview=restore({'mode':'preview','backup':archive});return restore({'mode':'restore','backup':archive,'confirmed':True,'expectedAccount':preview['accountKey']})
  try:
-  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'HOME':folder,'TMPDIR':folder},stdout=log,stderr=log)
+  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder},stdout=log,stderr=log)
   for _ in range(100):
    try:call('agent_bootstrap');break
    except Exception:time.sleep(.05)
@@ -63,7 +63,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-history-test-') as folder:
   # A storage failure after a new project/session is inserted must roll back all rows and empty directories.
   bad=copy.deepcopy(backup);bad['snapshot']['projects'][0]['id']='different-project';bad['snapshot']['sessions'][0]['projectId']='different-project';bad['snapshot']['sessions'][0]['messages'][0]['content']='trigger rollback';bad=signed(bad)
   with sqlite3.connect(root/'data.sql') as db:db.execute("CREATE TRIGGER fixture_failure BEFORE INSERT ON agent_messages WHEN NEW.content='trigger rollback' BEGIN SELECT RAISE(ABORT,'fixture rollback'); END")
-  dirs=set((root/'cangling/projects').iterdir());preview_bad=restore({'mode':'preview','backup':bad});restore({'mode':'restore','backup':bad,'confirmed':True,'expectedAccount':preview_bad['accountKey']},400);assert totals()==before and set((root/'cangling/projects').iterdir())==dirs
+  dirs=set((Path(call('agent_bootstrap')['projects'][0]['directory']).parent).iterdir());preview_bad=restore({'mode':'preview','backup':bad});restore({'mode':'restore','backup':bad,'confirmed':True,'expectedAccount':preview_bad['accountKey']},400);assert totals()==before and set((Path(call('agent_bootstrap')['projects'][0]['directory']).parent).iterdir())==dirs
   with sqlite3.connect(root/'data.sql') as db:db.execute('DROP TRIGGER fixture_failure')
   # Backups larger than the ordinary invoke JSON limit still restore through the dedicated bounded route.
   large=copy.deepcopy(backup);large['snapshot']['sessions'][0]['messages'][0]['content']='x'*(2100*1024);large=signed(large);assert apply(large)['sessions']==1

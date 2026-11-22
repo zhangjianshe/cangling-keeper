@@ -48,6 +48,8 @@ struct Session {
     attachments: Vec<Attachment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     mcp_images: Vec<Value>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    draft: String,
     messages: Vec<Message>,
     versions: Vec<Version>,
     runs: Vec<Run>,
@@ -219,6 +221,7 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
             deleted_at: r.get(8)?,
             attachments: Vec::new(),
             mcp_images: Vec::new(),
+            draft: String::new(),
             messages: Vec::new(),
             versions: Vec::new(),
             runs: Vec::new(),
@@ -228,7 +231,9 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
     for row in rows {
         let mut session = sql(row)?;
         session.mcp_images=crate::agent_mcp_images::export(store,&session.id)?;
-        if !session.mcp_images.is_empty(){snapshot.version=3;}
+        if !session.mcp_images.is_empty(){snapshot.version=snapshot.version.max(3);}
+        session.draft=sql(store.conn.query_row("SELECT content FROM agent_drafts WHERE session_id=?1",[&session.id],|r|r.get(0)).optional())?.unwrap_or_default();
+        if !session.draft.is_empty(){snapshot.version=4;}
         let mut attachment_stmt=sql(store.conn.prepare("SELECT id,name,mime_type,kind,data,sha256,created_at FROM agent_attachments WHERE session_id=?1 AND owner_key=?2 ORDER BY created_at,rowid"))?;
         let attachment_rows = sql(attachment_stmt.query_map(
             params![session.id, snapshot.source_account],
@@ -389,7 +394,7 @@ fn checked_time(time: i64) -> Result<(), String> {
 }
 fn validate(archive: &Archive) -> Result<(), String> {
     let s = &archive.snapshot;
-    if s.format != FORMAT || !matches!(s.version, 1 | 2 | 3) {
+    if s.format != FORMAT || !matches!(s.version, 1 | 2 | 3 | 4) {
         return Err("不支持的 Keeper 备份格式或版本".into());
     }
     if archive.sha256 != digest(s)? {
@@ -439,6 +444,7 @@ fn validate(archive: &Archive) -> Result<(), String> {
         {
             return Err("附件需要第2版备份格式".into());
         }
+        if session.draft.len()>32000 || (s.version<4 && !session.draft.is_empty()){return Err("草稿超出长度限制或备份版本不支持草稿".into());}
         if s.version<3 && !session.mcp_images.is_empty(){return Err("MCP 图片需要版本3备份".into());}
         let mut image_refs=HashMap::new();
         for image in &session.mcp_images {
@@ -659,6 +665,7 @@ pub(crate) fn restore(core: &AppState, args: &Value) -> Result<Value, String> {
             };
             sql(store.conn.execute("INSERT INTO agent_sessions(id,title,created_at,updated_at,project_id,pinned,title_custom,server_id,security_mode,owner_key,archived_at,deleted_at) VALUES (?1,?2,?3,?4,?5,?6,1,?7,'ask',?8,?9,?10)",params![id,session.title,session.created_at,session.updated_at,project_ids[&session.project_id],session.pinned,model,owner,session.archived_at,session.deleted_at]))?;
             crate::agent_mcp_images::save(&store,&id,&session.mcp_images)?;
+            if !session.draft.is_empty(){sql(store.conn.execute("INSERT INTO agent_drafts(session_id,content,revision) VALUES (?1,?2,1)",params![id,session.draft]))?;}
             let mut attachment_ids = HashMap::new();
             for attachment in &session.attachments {
                 let attachment_id = uuid::Uuid::new_v4().to_string();

@@ -6,12 +6,21 @@
   let socket;
   let retry;
   let stopped = false;
+  let connectedBefore = false;
 
   function connectEvents() {
     if (stopped) return;
     clearTimeout(retry);
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     socket = new WebSocket(`${scheme}//${location.host}/api/events`);
+    socket.onopen = () => {
+      if (connectedBefore) {
+        for (const callback of listeners.get('keeper-transport-restored') || []) {
+          try { callback({event:'keeper-transport-restored',payload:null}); } catch (_) {}
+        }
+      }
+      connectedBefore = true;
+    };
     socket.onmessage = (message) => {
       try {
         const event = JSON.parse(message.data);

@@ -674,6 +674,18 @@
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }
+  // Re-read persisted state after missed events; never replay a model/tool request.
+  window.__KEEPER__.event.listen('keeper-transport-restored',async()=>{
+    const epoch=agent.identityEpoch || 0,owner=agent.ownerKey,selected=agent.selected;
+    try{
+      const data=await invoke('agent_bootstrap');
+      if(epoch!==(agent.identityEpoch || 0))return;
+      if((data.accountKey || 'guest')!==owner){await refreshAccountSessions();}
+      else{await bootstrap();if(epoch===(agent.identityEpoch || 0) && selected===agent.selected && selected)await select(selected);}
+      const login=await invoke('get_login_status');
+      window.dispatchEvent(new CustomEvent('keeper-login-state',{detail:login}));
+    }catch(error){notice('连接已恢复，读取会话失败：'+String(error));}
+  });
   let loginIdentity=null;
   window.addEventListener('keeper-login-state',event=>{updateAccount(event.detail);const login=event.detail || {},identity=JSON.stringify([login.loggedIn,login.serverUrl,login.userId,login.username]);if(loginIdentity!==null && loginIdentity!==identity)refreshAccountSessions();loginIdentity=identity;});
   window.__KEEPER__.event.listen('keeper-account-changed',()=>refreshAccountSessions());
