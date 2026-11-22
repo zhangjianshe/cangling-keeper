@@ -88,6 +88,7 @@ class API(http.server.BaseHTTPRequestHandler):
    if 'escape' in user and not results:
     tools([('read_file',{'path':'../secret.txt'}),('not_registered',{'command':'touch unsafe'}),('search_files',{'query':''})]);return
    if 'budget' in user:tools([('list_directory',{'path':'./'*len(results)+'.'})]);return
+   if 'alternating cycle' in user:tools([('read_file',{'path':'README.md' if len(results)%2==0 else 'src/main.rs'})]);return
    if 'loop' in user:tools([('list_directory',{})]);return
    if not results:tools([('list_directory',{'path':'.'})]);return
    if 'escape' not in user and len(results)==1:
@@ -207,6 +208,11 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    # A regenerated answer owns a separate tool history and selects the new version.
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
+   alternating=session('alternating cycle');alternated=wait_for(alternating,lambda d:not d['modelPending']);assert alternated['tasks'][-1]['status']=='failed' and len(alternated['runs'])==6
+   assert all(r['status']=='succeeded' for r in alternated['runs'])
+   assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='no_progress' for m in alternated['messages'])
+   assert '双步骤' in json.dumps(alternated,ensure_ascii=False)
+   assert call('agent_session',{'sessionId':alternating})['runs']==alternated['runs']
    looping=session('loop');looped=wait_for(looping,lambda d:not d['modelPending']);assert looped['tasks'][-1]['status']=='failed' and len(looped['runs'])==3
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='no_progress' for m in looped['messages'] if m['role']=='assistant')
    assert '无进展' in json.dumps(looped,ensure_ascii=False)

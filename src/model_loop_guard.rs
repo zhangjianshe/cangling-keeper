@@ -4,18 +4,24 @@ use sha2::{Digest, Sha256};
 
 #[derive(Default)]
 pub(super) struct LoopGuard {
-    previous: Option<[u8; 32]>,
-    repeats: usize,
+    recent: std::collections::VecDeque<[u8; 32]>,
 }
 impl LoopGuard {
-    /// Compare whole, ordered tool batches. Changed results or arguments reset
-    /// the streak; only hashes are retained, never another copy of tool output.
+    /// Compare ordered batches, retaining only the last six result hashes.
+    /// Three equal batches or three equal two-batch cycles indicate no progress.
     pub(super) fn observe(&mut self, batch: &Value) -> Result<(), String> {
         let fingerprint: [u8; 32] = Sha256::digest(batch.to_string().as_bytes()).into();
-        self.repeats = if self.previous == Some(fingerprint) { self.repeats + 1 } else { 1 };
-        self.previous = Some(fingerprint);
-        if self.repeats >= 3 {
-            return Err("Agent 连续 3 轮调用相同工具且结果未变化，已停止无进展循环；已生成内容和执行记录已保留。请调整任务或检查工具结果后重试。".into());
+        if self.recent.len() == 6 { self.recent.pop_front(); }
+        self.recent.push_back(fingerprint);
+        for period in [1, 2] {
+            let count = period * 3;
+            if self.recent.len() < count { continue; }
+            let start = self.recent.len() - count;
+            if (period..count).all(|i| self.recent[start+i] == self.recent[start+i%period]) {
+                let detail = if period == 1 { "连续 3 轮调用相同工具且结果未变化" }
+                    else { "连续 6 轮重复相同的双步骤工具循环且结果未变化" };
+                return Err(format!("Agent {detail}，已停止无进展循环；已生成内容和执行记录已保留。请调整任务或检查工具结果后重试。"));
+            }
         }
         Ok(())
     }
@@ -38,6 +44,21 @@ mod tests {
     fn changed_result_or_arguments_reset_streak() {
         let mut guard=LoopGuard::default();
         for batch in [json!([1]),json!([1]),json!([2]),json!([2]),json!([3]),json!([3])] {assert!(guard.observe(&batch).is_ok());}
+    }
+    #[test]
+    fn alternating_cycle_stops_after_three_complete_repetitions() {
+        let mut guard=LoopGuard::default();
+        for value in [1,2,1,2,1] {assert!(guard.observe(&json!([value])).is_ok());}
+        assert!(guard.observe(&json!([2])).unwrap_err().contains("双步骤"));
+        assert_eq!(guard.recent.len(),6);
+    }
+    #[test]
+    fn changed_cycle_and_batch_order_do_not_count_as_repetition() {
+        let mut guard=LoopGuard::default();
+        for value in [1,2,1,2,3,2,1,2,1] {assert!(guard.observe(&json!([value])).is_ok());}
+        for i in 0..30 {assert!(guard.observe(&json!([i,i+1])).is_ok());assert!(guard.recent.len()<=6);}
+        let mut guard=LoopGuard::default();
+        for value in [json!([1,2]),json!([1,2]),json!([2,1]),json!([1,2]),json!([2,1])] {assert!(guard.observe(&value).is_ok());}
     }
     #[test]
     fn json_spacing_and_key_order_do_not_bypass_guard() {
