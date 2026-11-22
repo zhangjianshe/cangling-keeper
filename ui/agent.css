@@ -319,3 +319,5 @@
 .project-browser-bar .project-browser-status:empty{display:none}
 .project-browser-bar .primary{margin-left:0}
 @media(max-width:560px){.project-browser-bar{gap:5px;padding:8px}.project-browser-bar>.btn{padding:6px 8px}.project-browser-bar .project-browser-status{max-width:25%}}
+
+.project-code-editor.ace_editor{font-size:15px;line-height:1.6}
