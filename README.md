@@ -768,7 +768,7 @@ ReAct 综合验收：先执行 `cargo build`，再执行 `NODE_PATH=<jsdom 所�
 
 `list_directory` 支持分页：返回 `nextList` 时使用其完整参数续读，`offset` 从0开始，目录可见条目的名称、类型或大小变化会使 `expectedSha256` 校验失败，需从首页重新读取。每页最多200项且受输出大小限制，原扫描上限保留。上下文压缩保留有界的续页参数，但可能省略本页条目；完整列表页仍保存在执行记录中。此列表校验不是文件内容校验。
 
-`search_files` 可指定 `mode`：`all`（默认，相对文件路径及内容）、`filename`（仅相对文件路径）或 `content`（仅正文）。`extensions` 如 `["rs","py"]` 仅搜索指定后缀，不带点、不区分大小写，最多10种；不改变目录扫描上限。结果包含过滤文件数量，默认用法保持兼容。搜索关键词最多200个Unicode字符。
+`search_files` 可指定 `mode`：`all`（默认，相对文件路径及内容）、`filename`（仅相对文件路径）或 `content`（仅正文）。`extensions` 如 `["rs","py"]` 仅搜索指定后缀，不带点、不区分大小写，最多10种；不改变目录扫描上限。结果包含过滤文件数量，默认用法保持兼容。搜索关键词最多200个Unicode字符。 `contextLines` 可选0–5，默认0；大于0时内容命中附带前后相邻行（每侧最多5行）、原始行号、命中标记与片段起始字符列。相邻行最多预览160字节，命中行沿用关键词附近片段；`contextTruncated` 和各行 `truncated` 明确提示不完整内容。`contextReadArgs` 可交给 `read_file` 读取同一SHA-256版本的上下文，长行仍按 `nextRead` 续读。文件名命中不附带正文，上下文计入原有16KB搜索结果预算。
 
 内容搜索结果的 `column` 为该行首个命中的原文Unicode字符列号（从1开始），`snippetStartColumn` 为片段起点；`lineTruncated` 表示仅返回行的一部分。`text` 围绕命中位置展示，`readArgs` 可直接用于 `read_file`，并通过文件SHA-256避免读取已变更版本。搜索依旧为字面匹配，每个匹配行返回一条结果。
 

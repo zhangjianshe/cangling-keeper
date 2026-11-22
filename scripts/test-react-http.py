@@ -28,6 +28,13 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if 'context search fixture' in user:
+    if not results:tools([('search_files',{'query':'needle','path':'context.txt','mode':'content','contextLines':1})]);return
+    if len(results)==1:
+     hit=json.loads(results[-1]['content'])['matches'][0];assert [r['line'] for r in hit['context']]==[1,2,3];assert hit['context'][0]['text']=='中文前文';assert hit['context'][1]['isMatch'] is True
+     tools([('read_file',hit['contextReadArgs'])]);return
+    assert [r['text'] for r in json.loads(results[-1]['content'])['lines']]==['中文前文','needle here','after']
+    event({'content':'Search context verified'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'located search fixture' in user:
     if not results:tools([('search_files',{'query':'target-word','path':'late.txt','mode':'content'})]);return
     if len(results)==1:
@@ -155,6 +162,9 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   (root/'context.txt').write_text('中文前文\nneedle here\nafter')
+   context=session('context search fixture');context_detail=wait_for(context,lambda d:not d['modelPending']);assert context_detail['tasks'][-1]['status']=='complete' and len(context_detail['runs'])==2
+   assert call('agent_session',{'sessionId':context})['runs']==context_detail['runs']
    (root/'late.txt').write_text('中'*1200+'target-word'+'后'*100)
    located=session('located search fixture');located_detail=wait_for(located,lambda d:not d['modelPending']);assert located_detail['tasks'][-1]['status']=='complete';assert len(located_detail['runs'])==2
    filtered=session('filtered search fixture');filtered_detail=wait_for(filtered,lambda d:not d['modelPending']);assert filtered_detail['tasks'][-1]['status']=='complete';assert len(filtered_detail['runs'])==1
