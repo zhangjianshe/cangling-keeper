@@ -221,8 +221,8 @@
 .agent-compact-run>summary:focus-visible{outline:2px solid #86a8d6;outline-offset:-2px;border-radius:8px}
 
 /* Tool activity is a plain line; details retain their readable content layout. */
-.agent-compact-run,.agent-tool-steps .agent-compact-run{border:0;border-radius:0;background:transparent;box-shadow:none;margin:8px 0;padding:0}
-.agent-compact-run>summary{display:flex;align-items:center;gap:9px;padding:5px 0;border:0;border-radius:0;background:transparent;color:#777780;cursor:pointer;list-style:none}
+.agent-compact-run,.agent-tool-steps .agent-compact-run{border:0;border-radius:0;background:transparent;box-shadow:none;margin:2px 0;padding:0}
+.agent-compact-run>summary{display:flex;align-items:center;gap:9px;padding:3px 0;border:0;border-radius:0;background:transparent;color:#777780;cursor:pointer;list-style:none}
 .agent-compact-run>summary:before{display:none}.agent-compact-run>summary::-webkit-details-marker{display:none}
 .agent-compact-run>summary .agent-run-title{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:400;color:inherit}
 .agent-compact-run>summary .agent-run-icon,.agent-compact-run>summary .run-state,.agent-compact-run>summary .agent-run-details-toggle{color:inherit}
@@ -230,7 +230,7 @@
 .agent-compact-run>summary:hover,.agent-compact-run>summary:focus-visible{color:#34844b}
 .agent-compact-run>summary:hover .agent-run-details-toggle{color:inherit}
 .agent-compact-run[open]>summary{border:0}
-.agent-tool-steps{gap:2px}
+.agent-tool-steps{gap:2px;margin-bottom:10px}.agent-tool-steps .agent-compact-run{margin:0}
 
 /* Search and conversation lifecycle, alongside the existing compact sidebar. */
 .history-launch{display:flex;align-items:center;gap:9px;width:100%;border:0;border-radius:8px;background:transparent;color:#6d6d77;padding:8px 12px;text-align:left;font:inherit;font-size:12px;cursor:pointer}.history-launch:hover{background:#ebebed;color:#34844b}.history-launch svg{width:17px;height:17px;flex:none}
