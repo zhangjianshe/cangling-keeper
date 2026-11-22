@@ -16,6 +16,28 @@ fn shortened_tool_output(content: &str, max_bytes: usize) -> Value {
     let preview=&content[..content.floor_char_boundary(max_bytes.min(content.len()))];
     let mut output=json!({"contextTruncated":true,"preview":preview,"note":"完整工具输出保存在本机执行记录。预览不含全部条目；续页参数仅用于后续页，不能补回被省略的本页内容。需要本页细节时缩小读取范围。"});
     if let Ok(original)=serde_json::from_str::<Value>(content) {
+        if original.get("exitCode").is_some() && original["stdout"].is_string() && original["stderr"].is_string() {
+            output.as_object_mut().unwrap().remove("preview");
+            output["note"]=json!("命令输出按上下文预算保留两路首尾；完整执行记录保存在本机，不要为补齐输出自动重复执行命令。");
+            for key in ["exitCode","stopped","timedOut","outputTruncated","stdoutOmittedBytes","stderrOmittedBytes"] {
+                if let Some(value)=original.get(key) { output[key]=value.clone(); }
+            }
+            for key in ["stdout","stderr"] {
+                let text=original[key].as_str().unwrap();
+                let budget=max_bytes/4;
+                let mut used=0; let mut head=0;
+                for c in text.chars() {
+                    used+=serde_json::to_string(&c.to_string()).unwrap().len()-2;
+                    if used>budget {break;} head+=c.len_utf8();
+                }
+                let mut used=0; let mut tail=text.len();
+                for c in text[head..].chars().rev() {
+                    used+=serde_json::to_string(&c.to_string()).unwrap().len()-2;
+                    if used>budget {break;} tail-=c.len_utf8();
+                }
+                output[key]=json!(if head==tail {text.to_string()} else {format!("{}\n[上下文省略 {} 字节]\n{}",&text[..head],tail-head,&text[tail..])});
+            }
+        }
         for key in ["keeperResult","nextList","nextRead"] {
             if let Some(value)=original.get(key).filter(|v|v.to_string().len()<=2048){output[key]=value.clone();}
         }
@@ -330,6 +352,17 @@ pub(super) async fn prepare(
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn shortened_command_preserves_tail_and_failure_status() {
+        let input=json!({"exitCode":7,"stdout":format!("BEGIN{}END", "中\u{0000}".repeat(10000)),"stderr":format!("ERROR{}FINAL ERROR", "x".repeat(20000)),"keeperResult":{"status":"failed","outcome":"failed"}});
+        let result=shortened_tool_output(&input.to_string(),1024);
+        assert_eq!(result["exitCode"],7);
+        assert_eq!(result["keeperResult"]["outcome"],"failed");
+        assert!(result["stdout"].as_str().unwrap().starts_with("BEGIN"));
+        assert!(result["stdout"].as_str().unwrap().ends_with("END"));
+        assert!(result["stderr"].as_str().unwrap().ends_with("FINAL ERROR"));
+        assert!(result.to_string().len()<2048);
+    }
     use super::*;
     #[test]
     fn shortened_results_keep_bounded_continuations_and_status(){

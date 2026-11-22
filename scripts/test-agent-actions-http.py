@@ -17,12 +17,15 @@ class API(http.server.BaseHTTPRequestHandler):
    if 'repeat reject' in prompt and body['messages'][-1]['role']=='tool':
     event({'tool_calls':[{'index':0,'id':'different-call-id','type':'function','function':{'name':'write_file','arguments':json.dumps({'content':'hello v1\n','path':'rejected.txt'})}}]},'tool_calls')
    elif body['messages'][-1]['role']=='tool':
-    result=json.loads(body['messages'][-1]['content']);assert result['keeperResult']['automaticRetry'] is False;assert result['keeperResult']['outcome']==('rejected' if result.get('rejected') else 'timeout' if result.get('timedOut') else 'failed' if result.get('error') else 'success');event({'content':'操作结果已保存。'+('用户拒绝，未执行。' if result.get('rejected') else '')},'stop')
+    result=json.loads(body['messages'][-1]['content']);
+    if 'large output' in prompt:assert result['exitCode']==7 and result['stderr'].endswith('FINAL ERROR') and result['stdout'].endswith('END\n')
+    assert result['keeperResult']['automaticRetry'] is False;assert result['keeperResult']['outcome']==('rejected' if result.get('rejected') else 'timeout' if result.get('timedOut') else 'failed' if result.get('error') or result.get('exitCode') not in (None,0) else 'truncated' if result.get('outputTruncated') or result.get('contextTruncated') else 'success');event({'content':'操作结果已保存。'+('用户拒绝，未执行。' if result.get('rejected') else '')},'stop')
    else:
     if 'multi patch' in prompt:name,args='apply_patch',{'path':'multi.txt','edits':[{'oldText':'first','newText':'ONE'},{'oldText':'absent' if 'invalid' in prompt else 'second','newText':'TWO'}]}
     elif 'stale revision' in prompt:name,args='write_file',{'path':'version.txt','content':'overwrite','expectedSha256':hashlib.sha256(b'old').hexdigest()}
     elif 'valid revision' in prompt:name,args='write_file',{'path':'version.txt','content':'updated','expectedSha256':hashlib.sha256(b'current').hexdigest()}
     elif 'patch' in prompt:name,args='apply_patch',{'path':'hello.txt','oldText':'hello v1','newText':'hello v2'}
+    elif 'large output' in prompt:name,args='run_command',{'command':"python3 -c \"import sys; print('BEGIN'+'x'*100000+'END'); sys.stderr.write('ERROR-BEGIN'+'e'*100000+'FINAL ERROR'); sys.exit(7)\"",'timeoutSeconds':10}
     elif 'long' in prompt:name,args='run_command',{'command':"printf 'starting\\n'; sleep 120 & child=$!; echo $child > child.pid; wait $child; printf bad > after-stop.txt",'timeoutSeconds':120}
     elif 'timeout' in prompt:name,args='run_command',{'command':'sleep 10; printf bad > timeout-result.txt','timeoutSeconds':1}
     elif 'command' in prompt:name,args='run_command',{'command':"printf 'stream-out\\n'; printf 'stream-err\\n' >&2; printf completed > command-result.txt",'timeoutSeconds':10}
@@ -103,6 +106,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-action-http-') as folder:
    s,run,_=pending('reject write');approve(s,run,False);assert done(s)['runs'][-1]['status']=='rejected';assert not (root/'rejected.txt').exists()
    s,run,d=pending('cancel before approval');call('agent_stop_generation',{'sessionId':s,'messageId':d['streamingMessageId']});d=done(s);assert d['runs'][-1]['status']=='stopped';approve(s,run,expected=400);assert not (root/'cancelled.txt').exists()
    s,run,_=pending('command succeeds');assert 'printf' in run['review']['command'] and run['review']['directory']==str(root);assert not (root/'command-result.txt').exists();approve(s,run,command='printf tampered > replaced-command.txt');d=done(s);assert not (root/'replaced-command.txt').exists();result=json.loads(d['runs'][-1]['output']);assert result['exitCode']==0 and 'stream-out' in result['stdout'] and 'stream-err' in result['stderr'];assert (root/'command-result.txt').read_text()=='completed'
+   s,run,_=pending('large output');approve(s,run);d=done(s);result=json.loads(d['runs'][-1]['output']);assert result['exitCode']==7 and result['outputTruncated'];assert result['stdout'].startswith('BEGIN') and result['stdout'].endswith('END\n');assert result['stderr'].startswith('ERROR-BEGIN') and result['stderr'].endswith('FINAL ERROR');assert result['stdoutOmittedBytes']>0 and result['stderrOmittedBytes']>0;assert len(json.dumps(result))<46000
    s,run,d=pending('long command stop');approve(s,run);wait(s,lambda d:'starting' in d['runs'][-1]['output'] and (root/'child.pid').exists());pid=int((root/'child.pid').read_text());assert alive(pid)
    call('agent_stop_generation',{'sessionId':s,'messageId':d['streamingMessageId']});d=done(s);assert d['runs'][-1]['status']=='stopped' and 'starting' in d['runs'][-1]['output'];assert not alive(pid) and not (root/'after-stop.txt').exists()
    s,run,_=pending('timeout command');approve(s,run);d=done(s);assert d['runs'][-1]['status']=='failed' and json.loads(d['runs'][-1]['output'])['timedOut'];assert not (root/'timeout-result.txt').exists()

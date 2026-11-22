@@ -473,6 +473,48 @@ impl Drop for OwnedChild {
         self.terminate();
     }
 }
+// Keep both ends of each stream independently; noisy stdout cannot hide stderr.
+#[derive(Default)]
+struct CommandOutput {
+    head: Vec<u8>,
+    tail: std::collections::VecDeque<u8>,
+    total: usize,
+}
+impl CommandOutput {
+    fn push(&mut self, bytes: &[u8]) {
+        self.total = self.total.saturating_add(bytes.len());
+        let n = bytes.len().min(4096 - self.head.len());
+        self.head.extend_from_slice(&bytes[..n]);
+        for &byte in &bytes[n..] {
+            if self.tail.len() == 4096 { self.tail.pop_front(); }
+            self.tail.push_back(byte);
+        }
+    }
+    fn render(&self) -> (String, usize) {
+        let tail: Vec<u8> = self.tail.iter().copied().collect();
+        let mut head = self.head.as_slice();
+        let mut tail = tail.as_slice();
+        // Bound escaped JSON too, so downstream result limits preserve the tail.
+        while serde_json::to_string(&String::from_utf8_lossy(head)).unwrap().len() > 8192 {
+            head = &head[..head.len().saturating_sub(256)];
+        }
+        while serde_json::to_string(&String::from_utf8_lossy(tail)).unwrap().len() > 8192 {
+            tail = &tail[256.min(tail.len())..];
+        }
+        if self.total == head.len() + tail.len() {
+            return (String::from_utf8_lossy(&[head, tail].concat()).into_owned(), 0);
+        }
+        // Avoid splitting a valid multi-byte character at the omitted region.
+        if let Err(error) = std::str::from_utf8(head) {
+            if error.error_len().is_none() { head = &head[..error.valid_up_to()]; }
+        }
+        while tail.first().is_some_and(|b| b & 0xc0 == 0x80) { tail = &tail[1..]; }
+        let omitted = self.total.saturating_sub(head.len() + tail.len());
+        let marker = if omitted > 0 { format!("\n[省略 {omitted} 字节输出]\n") } else { String::new() };
+        (format!("{}{}{}", String::from_utf8_lossy(head), marker, String::from_utf8_lossy(tail)), omitted)
+    }
+}
+
 fn command_run(
     cwd: Dir,
     review: &Value,
@@ -558,10 +600,9 @@ fn command_run(
     let err_thread = reader(stderr, tx, true);
     let start = Instant::now();
     let mut last = Instant::now();
-    let mut last_progress = (0, 0, false);
-    let mut out = Vec::new();
-    let mut err = Vec::new();
-    let mut truncated = false;
+    let mut last_progress = (0, 0);
+    let mut out = CommandOutput::default();
+    let mut err = CommandOutput::default();
     let mut stopped = false;
     let mut timed_out = false;
     let mut exit = None;
@@ -570,20 +611,17 @@ fn command_run(
             let Ok((is_err, chunk)) = rx.try_recv() else {
                 break;
             };
-            let remaining = 32768usize.saturating_sub(out.len() + err.len());
-            truncated |= chunk.len() > remaining;
             let dest = if is_err { &mut err } else { &mut out };
-            dest.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+            dest.push(&chunk);
         }
         if last.elapsed() >= Duration::from_millis(100)
-            && last_progress != (out.len(), err.len(), truncated)
+            && last_progress != (out.total, err.total)
         {
-            last_progress = (out.len(), err.len(), truncated);
+            last_progress = (out.total, err.total);
             progress(format!(
-                "[stdout]\n{}\n[stderr]\n{}{}",
-                String::from_utf8_lossy(&out),
-                String::from_utf8_lossy(&err),
-                if truncated { "\n[输出已截断]" } else { "" }
+                "[stdout]\n{}\n[stderr]\n{}",
+                out.render().0,
+                err.render().0
             ));
             last = Instant::now();
         }
@@ -613,14 +651,14 @@ fn command_run(
     }
     // Killing the owned tree also closes inherited pipes. Drain before joining readers.
     while let Ok((is_err, chunk)) = rx.recv_timeout(Duration::from_millis(100)) {
-        let remaining = 32768usize.saturating_sub(out.len() + err.len());
-        truncated |= chunk.len() > remaining;
         let dest = if is_err { &mut err } else { &mut out };
-        dest.extend_from_slice(&chunk[..chunk.len().min(remaining)]);
+        dest.push(&chunk);
     }
     let _ = out_thread.join();
     let _ = err_thread.join();
-    let result = json!({"exitCode":exit,"stdout":String::from_utf8_lossy(&out),"stderr":String::from_utf8_lossy(&err),"stopped":stopped,"timedOut":timed_out,"outputTruncated":truncated});
+    let (stdout, stdout_omitted) = out.render();
+    let (stderr, stderr_omitted) = err.render();
+    let result = json!({"exitCode":exit,"stdout":stdout,"stderr":stderr,"stopped":stopped,"timedOut":timed_out,"outputTruncated":stdout_omitted + stderr_omitted > 0,"stdoutOmittedBytes":stdout_omitted,"stderrOmittedBytes":stderr_omitted});
     progress(serde_json::to_string_pretty(&result).unwrap_or_default());
     Ok(result)
 }
@@ -821,6 +859,35 @@ mod tests {
         drop(root);
         std::fs::remove_dir_all(path).unwrap();
     }
+    #[test]
+    fn command_output_keeps_both_ends_and_bounds_escaped_json() {
+        let mut output = CommandOutput::default();
+        output.push(b"BEGIN"); output.push(&vec![b'x'; 40000]); output.push(b"END");
+        let (text, omitted) = output.render();
+        assert!(text.starts_with("BEGIN") && text.ends_with("END"));
+        assert_eq!(omitted, 40008 - 8192);
+        let mut escaped = CommandOutput::default();
+        escaped.push(&vec![0; 20000]); escaped.push(b"FINAL ERROR");
+        let (text, omitted) = escaped.render();
+        assert!(text.ends_with("FINAL ERROR") && omitted > 0);
+        let mut value = json!({"stdout":text,"stderr":text,"outputTruncated":true});
+        let before = value["stderr"].clone();
+        crate::agent_tool_result::annotate("run_command", &mut value, "succeeded");
+        assert_eq!(value["stderr"], before);
+        assert!(value.to_string().len() < 46000);
+        for n in [2000, 10000] {
+            let input = "中文".repeat(n);
+            let mut output = CommandOutput::default();
+            for bytes in input.as_bytes().chunks(17) { output.push(bytes); }
+            let (text, omitted) = output.render();
+            assert!(!text.contains('�'));
+            assert_eq!(omitted, input.len() - 8190);
+        }
+        let input = "中".repeat(2000);
+        let mut output = CommandOutput::default(); output.push(input.as_bytes());
+        assert_eq!(output.render(), (input, 0));
+    }
+
     #[cfg(unix)]
     #[test]
     fn command_captures_both_streams_and_times_out_tree() {

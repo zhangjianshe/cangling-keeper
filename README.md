@@ -544,7 +544,7 @@ DeepSeek 回复使用 SSE 流，生成中的同一条助手消息会持续写入
 
 `src/agent_actions.rs` 在执行前准备不可变的操作预览。`write_file(path, content)` 创建或覆盖 UTF-8 文件；`apply_patch(path, oldText, newText)` 要求 oldText 非空且唯一匹配，并生成统一格式差异供审阅。文件工具仅接受项目相对路径，父目录必须已存在；拒绝符号链接、特殊文件、常见私密文件和缓存路径。写入内容最多 32 KiB，补丁目标/结果最多 128 KiB。用户确认后再次检查父目录标识及原内容 SHA-256，冲突时拒绝覆盖。写入采用同目录临时文件和原子替换，新文件采用不覆盖已有目标的创建；Keeper 内并发文件写入串行校验。
 
-`run_command(command, cwd?, timeoutSeconds?)` 显示完整命令、shell、实际执行目录及超时后才执行。cwd 为项目内相对目录，超时默认 60 秒、最多 120 秒；stdin 关闭，stdout/stderr 实时保存，合计最多捕获 32 KiB。命令以 Keeper 用户权限运行，执行目录不是文件沙箱；使用最小环境变量集，不自动继承模型 Token 等环境变量。Unix 使用进程组，Windows 使用 Job Object 管理子进程。停止、超时及正常服务关闭会清理所属进程，并保留已捕获输出。
+`run_command(command, cwd?, timeoutSeconds?)` 显示完整命令、shell、实际执行目录及超时后才执行。cwd 为项目内相对目录，超时默认 60 秒、最多 120 秒；stdin 关闭，stdout/stderr 分别实时保留开头和结尾各 4 KiB（两路合计最多 16 KiB），防止大量标准输出挤掉末尾错误；JSON 转义超限时进一步缩短片段。省略区域显示字节数，并通过 stdoutOmittedBytes/stderrOmittedBytes 与 outputTruncated 标记不完整结果。上下文预算进一步缩短结果时仍保留两路首尾、退出码和失败状态，并单独标记上下文省略。命令以 Keeper 用户权限运行，执行目录不是文件沙箱；使用最小环境变量集，不自动继承模型 Token 等环境变量。Unix 使用进程组，Windows 使用 Job Object 管理子进程。停止、超时及正常服务关闭会清理所属进程，并保留已捕获输出。
 
 `agent_reviews` 将完整差异/命令及其摘要关联到唯一的 run_id。`agent_review_tool` 确认请求仅提交会话、run_id、预览摘要和同意/拒绝决定；不接受替换已审阅的操作内容。会话不匹配、摘要不符、停止后的请求、重复确认及旧手动工具接口均不能启动原生操作。确认状态使用数据库条件更新，只执行一次。拒绝结果回传模型；等待确认和执行中的状态均可在浏览器刷新后恢复。
 
