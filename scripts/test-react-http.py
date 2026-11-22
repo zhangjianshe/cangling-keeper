@@ -8,7 +8,7 @@ class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
-  assert {t['function']['name'] for t in body['tools']}=={'list_directory','read_file','search_files','write_file','apply_patch','run_command'}
+  assert {t['function']['name'] for t in body['tools']}=={'list_directory','read_file','search_files','write_file','apply_patch','run_command','load_skill'}
   assert self.headers['Authorization']=='Bearer fixture-only-key'
   user=next(m['content'] for m in reversed(body['messages']) if m['role']=='user')
   results=[m for m in body['messages'] if m['role']=='tool']
@@ -28,6 +28,7 @@ class API(http.server.BaseHTTPRequestHandler):
    if 'broken' in user:tools([('read_file',{'path':'README.md'})],True);return
    if 'escape' in user and not results:
     tools([('read_file',{'path':'../secret.txt'}),('not_registered',{'command':'touch unsafe'}),('search_files',{'query':''})]);return
+   if 'budget' in user:tools([('list_directory',{'path':'./'*len(results)+'.'})]);return
    if 'loop' in user:tools([('list_directory',{})]);return
    if not results:tools([('list_directory',{'path':'.'})]);return
    if 'escape' not in user and len(results)==1:
@@ -56,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
   return data.get('result') if status==200 else data
  def start():
   global process
-  process=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'HOME':folder,'TMPDIR':folder},stdout=log,stderr=log)
+  process=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder},stdout=log,stderr=log)
   for _ in range(100):
    try:call('agent_bootstrap');return
    except Exception:time.sleep(.05)
@@ -77,7 +78,9 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
     async for raw in ws:(events if trusted else untrusted_events).append(json.loads(raw))
    except websockets.ConnectionClosed:pass
  try:
-  start();root=Path(call('agent_bootstrap')['projects'][0]['directory']);(root/'src').mkdir();(root/'README.md').write_text('# Fixture project\nproject needle\n');(root/'src/main.rs').write_text('fn main() { /* needle */ }\n');(root.parent/'secret.txt').write_text('never-expose-outside-project')
+  start();process.terminate();process.wait(timeout=10);root=Path(folder)/'project';root.mkdir();
+  with sqlite3.connect(Path(folder)/'data.sql') as db:db.execute("UPDATE agent_projects SET directory=? WHERE id='general'",(str(root),))
+  start();(root/'src').mkdir();(root/'README.md').write_text('# Fixture project\nproject needle\n');(root/'src/main.rs').write_text('fn main() { /* needle */ }\n');(root.parent/'secret.txt').write_text('never-expose-outside-project')
   call('agent_model_save',{'enabled':True,'baseUrl':f'http://127.0.0.1:{api.server_port}','model':'fixture','apiKey':'fixture-only-key'})
   threading.Thread(target=lambda:asyncio.run(collect()),daemon=True).start();assert ready.wait(5)
   threading.Thread(target=lambda:asyncio.run(collect(False)),daemon=True).start();assert untrusted_ready.wait(5)
@@ -99,7 +102,10 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    # A regenerated answer owns a separate tool history and selects the new version.
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert all(r['status']=='failed' for r in escaped['runs']);assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
-   looping=session('loop');looped=wait_for(looping,lambda d:not d['modelPending']);assert looped['tasks'][-1]['status']=='failed' and len(looped['runs'])==8
+   looping=session('loop');looped=wait_for(looping,lambda d:not d['modelPending']);assert looped['tasks'][-1]['status']=='failed' and len(looped['runs'])==3
+   assert '无进展' in json.dumps(looped,ensure_ascii=False)
+   assert '无进展' in json.dumps(call('agent_session',{'sessionId':looping}),ensure_ascii=False)
+   bounded=session('budget');bounded=wait_for(bounded,lambda d:not d['modelPending']);assert len(bounded['runs'])==8 and '8 轮' in json.dumps(bounded,ensure_ascii=False)
    release.clear();broken=session('broken');partial=wait_for(broken,lambda d:bool(d['messages'][-1]['content']));call('agent_stop_generation',{'sessionId':broken,'messageId':partial['streamingMessageId']});assert wait_for(broken,lambda d:not d['modelPending'])['runs']==[]
    interrupted=session('阅读项目并总结 restart');persisted=wait_for(interrupted,lambda d:len(d['runs'])==3 and '正在整理' in d['messages'][-1]['content']);count=len(requests)
    process.terminate();process.wait(timeout=10);start();restored=call('agent_session',{'sessionId':interrupted});assert not restored['modelPending'] and restored['tasks'][-1]['status']=='interrupted';assert len(restored['runs'])==3
