@@ -296,15 +296,25 @@ fn prepare_with_limit(
     if old.is_some() && before == after {
         return Err("文件内容未变化，无需执行写入".into());
     }
-    let diff = similar::TextDiff::configure()
+    let text_diff = similar::TextDiff::configure()
         .timeout(Duration::from_millis(200))
-        .diff_lines(before, after.as_str())
-        .unified_diff()
+        .diff_lines(before, after.as_str());
+    let mut added_lines=0usize;
+    let mut removed_lines=0usize;
+    for change in text_diff.iter_all_changes() {
+        match change.tag() {
+            similar::ChangeTag::Insert => added_lines+=1,
+            similar::ChangeTag::Delete => removed_lines+=1,
+            similar::ChangeTag::Equal => {},
+        }
+    }
+    let change_summary=json!({"addedLines":added_lines,"removedLines":removed_lines});
+    let diff = text_diff.unified_diff()
         .context_radius(3)
         .header(if old.is_some() { raw } else { "/dev/null" }, raw)
         .to_string();
     check(cancel)?;
-    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"createOnly":create_only,"bytes":after.len(),"sourceHashVerified":args.get("expectedSha256").is_some()});
+    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"createOnly":create_only,"changeSummary":change_summary,"bytes":after.len(),"sourceHashVerified":args.get("expectedSha256").is_some()});
     Ok(Prepared {
         review,
         action: Action::File {
@@ -405,7 +415,7 @@ impl Prepared {
                         .map_err(|_| "无法原子替换目标文件")?;
                 }
                 Ok(
-                    json!({"applied":true,"path":self.review["path"],"bytes":after.len(),"sha256":hash(after.as_bytes())}),
+                    json!({"applied":true,"path":self.review["path"],"bytes":after.len(),"sha256":hash(after.as_bytes()),"previousSha256":self.review["beforeHash"],"created":self.review["newFile"],"changeSummary":self.review["changeSummary"]}),
                 )
             }
             Action::Command {
@@ -689,6 +699,27 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path.join("multi.txt")).unwrap(),"ONE\nTWO\n");
         let invalid=json!({"path":"multi.txt","edits":[{"oldText":"ONE","newText":"changed"},{"oldText":"missing","newText":"bad"}]});assert!(prepare(root.clone(),path.to_str().unwrap(),"apply_patch",&invalid,&flag()).is_err());assert_eq!(std::fs::read_to_string(path.join("multi.txt")).unwrap(),"ONE\nTWO\n");
         for args in [json!({"path":"multi.txt","edits":[]}),json!({"path":"multi.txt","edits":[{"oldText":"ONE","newText":"x"}],"oldText":"ONE","newText":"x"})]{assert!(prepare(root.clone(),path.to_str().unwrap(),"apply_patch",&args,&flag()).is_err());}
+        drop(root);std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn reviewed_line_counts_match_committed_result() {
+        let (path,root)=fixture();
+        for (index,(before,after,added,removed)) in [
+            (None,"",0,0),(None,"一\n二",2,0),
+            (Some("a\nb\n"),"a\nc\n",1,1),
+            (Some("a\nb\n"),"",0,2),
+            (Some("a\r\nb\r\n"),"a\r\nc\r\n",1,1),
+            (Some("a"),"a\n",1,1),
+        ].into_iter().enumerate() {
+            let name=format!("stats-{index}.txt");if let Some(content)=before {std::fs::write(path.join(&name),content).unwrap();}
+            let plan=prepare(root.clone(),path.to_str().unwrap(),"write_file",&json!({"path":name,"content":after}),&flag()).unwrap();
+            let summary=json!({"addedLines":added,"removedLines":removed});assert_eq!(plan.review["changeSummary"],summary);
+            let result=plan.execute(flag(), |_|{}).unwrap();assert_eq!(result["changeSummary"],summary);assert_eq!(result["created"],before.is_none());
+            assert_eq!(result["previousSha256"],json!(before.map(|s|hash(s.as_bytes()))));assert_eq!(result["sha256"],hash(after.as_bytes()));
+        }
+        std::fs::write(path.join("patch.txt"),"a\nb\nc\n").unwrap();
+        let plan=prepare(root.clone(),path.to_str().unwrap(),"apply_patch",&json!({"path":"patch.txt","edits":[{"oldText":"a","newText":"A"},{"oldText":"c","newText":"C"}]}),&flag()).unwrap();
+        assert_eq!(plan.execute(flag(), |_|{}).unwrap()["changeSummary"],json!({"addedLines":2,"removedLines":2}));
         drop(root);std::fs::remove_dir_all(path).unwrap();
     }
     #[test]

@@ -46,8 +46,8 @@ context.agent.detail.modelPending=false;context.renderPending(document.querySele
 assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(document.querySelector('.agent-stream-status'),null);
 (async()=>{
  const captured=[];context.invoke=async(name,args)=>{captured.push({name,args});};context.select=async()=>{};
- const current=context.agent.detail.runs.find(r=>r.id==='new-run');current.status='pending_approval';current.review={kind:'file',hash:'immutable-review',path:'README.md',newFile:false,diff:'--- README.md\n+++ README.md\n-old\n+<script>new</script>\n'};
- context.agent.detail.modelPending=true;context.agent.detail.tasks[0].status='approval';context.renderConversation();
+ const current=context.agent.detail.runs.find(r=>r.id==='new-run');current.status='pending_approval';current.review={kind:'file',hash:'immutable-review',path:'README.md',newFile:false,changeSummary:{addedLines:1,removedLines:1},diff:'--- README.md\n+++ README.md\n-old\n+<script>new</script>\n'};
+ context.agent.detail.modelPending=true;context.agent.detail.tasks[0].status='approval';context.renderConversation();assert.match(document.querySelector('#agent-messages').textContent,/新增 1 行 · 删除 1 行/);
  assert.match(document.querySelector('.agent-stream-status').textContent,/等待你确认/);
  assert.equal(document.querySelector('.agent-model-tool').open,true,'approval must reveal its controls even after a previously collapsed run');
  assert.equal(context.runCard(current,new Map([[current.id,false]])).open,true,'pending approval overrides remembered collapsed state');

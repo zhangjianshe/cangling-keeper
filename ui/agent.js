@@ -589,6 +589,8 @@
       if(run.review?.approvalReason)card.append(element('div','agent-approval-audit',(run.review.approvalSource==='policy'?'自动批准 · ':'需要确认 · ')+run.review.approvalReason));
       if(run.review?.kind==='file'){
         card.append(element('div','agent-review-path',(run.review.newFile?'新建文件：':'修改文件：')+run.review.path));
+        const summary=run.review.changeSummary;
+        if(summary && Number.isSafeInteger(summary.addedLines) && summary.addedLines>=0 && Number.isSafeInteger(summary.removedLines) && summary.removedLines>=0)card.append(element('div','agent-command-meta',`新增 ${summary.addedLines} 行 · 删除 ${summary.removedLines} 行`));
         const diff=element('pre','agent-file-diff');
         for(const line of (run.review.diff || '新建空文件').split('\n'))diff.append(element('span',line.startsWith('@@')?'diff-hunk':line.startsWith('+')?'diff-add':line.startsWith('-')?'diff-delete':'',line+'\n'));
         card.append(diff);
