@@ -440,3 +440,11 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 }
+
+/// Full, lossless editor read. Never assemble editable content from clipped tool pages.
+pub(crate) fn editor_text(root:&Dir,raw:&str)->Result<Value,String>{
+    let mut scope=Scope{dir:root.try_clone().map_err(|_|"无法打开项目")?,cancel:Arc::new(AtomicBool::new(false)),deadline:Instant::now()+Duration::from_secs(8),visited:0,bytes:0};
+    let path=scope.path(raw)?;let content=scope.text(&path)?;
+    let editable=content.len()<=131072;
+    Ok(json!({"content":content,"sha256":crate::agent_actions::hash(content.as_bytes()),"editable":editable}))
+}

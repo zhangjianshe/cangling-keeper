@@ -454,15 +454,29 @@ pub(crate) async fn dispatch(
             store.conn.execute("UPDATE agent_sessions SET pinned=?2 WHERE id=?1",params![session,pinned]).map_err(|e|e.to_string())?;
             Ok(json!({"pinned":pinned}))
         }
+        "agent_project_file_save" => {
+            let project=text(&args,"projectId")?;let path=text(&args,"path")?;let content=args["content"].as_str().ok_or("缺少文件内容")?.to_owned();let expected=text(&args,"sha256")?;
+            if content.len()>131072 || content.contains('\0'){return Err("仅可保存不超过128 KiB的UTF-8文本".into());}
+            let directory={let store=core.store.lock().map_err(|e|e.to_string())?;store.conn.query_row("SELECT directory FROM agent_projects WHERE id=?1",[&project],|r|r.get::<_,String>(0)).map_err(|_|"项目不存在")?};
+            tokio::task::spawn_blocking(move ||{
+                let root=std::sync::Arc::new(cap_std::fs::Dir::open_ambient_dir(&directory,cap_std::ambient_authority()).map_err(|_|"项目目录不可访问")?);
+                let flag=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let plan=crate::agent_actions::prepare_editor(root,&directory,&json!({"path":path,"content":content}),&flag)?;
+                if plan.review["beforeHash"].as_str()!=Some(&expected){return Err("文件已被其他程序修改，拒绝覆盖；请重新打开文件。当前编辑内容仍保留。".into());}
+                let result=plan.execute(flag,|_|{})?;if result["applied"]!=true{return Err("保存未完成".into());}
+                Ok(json!({"saved":true,"sha256":crate::agent_actions::hash(content.as_bytes())}))
+            }).await.map_err(|_|"保存文件失败".to_string())?
+        }
         "agent_project_browse" => {
             let project=text(&args,"projectId")?;
             let directory={let store=core.store.lock().map_err(|e|e.to_string())?;store.conn.query_row("SELECT directory FROM agent_projects WHERE id=?1",[&project],|r|r.get::<_,String>(0)).map_err(|_|"项目不存在")?};
             let action=args["action"].as_str().unwrap_or("list");
-            let tool=match action {"list"=>"list_directory","read"=>"read_file",_=>return Err("不支持的浏览操作".into())};
+            let tool=match action {"edit"=>"editor","list"=>"list_directory","read"=>"read_file",_=>return Err("不支持的浏览操作".into())};
             let mut request=json!({"path":args.get("path").cloned().unwrap_or(json!("."))});
             if action=="read" {request["startLine"]=args.get("startLine").cloned().unwrap_or(json!(1));request["lineCount"]=json!(200);}
             tokio::task::spawn_blocking(move || {
                 let root=cap_std::fs::Dir::open_ambient_dir(directory,cap_std::ambient_authority()).map_err(|_|"项目目录不可访问".to_string())?;
+                if tool=="editor"{return crate::agent_files::editor_text(&root,request["path"].as_str().ok_or("无效路径")?);}
                 crate::agent_files::execute(&root,tool,&request,std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),|_|{})
             }).await.map_err(|_|"读取项目目录失败".to_string())?
         }

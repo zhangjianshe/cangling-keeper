@@ -181,12 +181,19 @@ pub(crate) fn command_shell()->Result<String,String>{
     #[cfg(windows)] {Ok(std::env::var("SystemRoot").map_err(|_|"无法确定 Windows shell")?+"\\System32\\cmd.exe")}
     #[cfg(not(windows))] {Ok("/bin/sh".to_owned())}
 }
-pub(crate) fn prepare(
+pub(crate) fn prepare(root:Arc<Dir>,directory:&str,name:&str,args:&Value,cancel:&AtomicBool)->Result<Prepared,String>{
+    prepare_with_limit(root,directory,name,args,cancel,32768)
+}
+pub(crate) fn prepare_editor(root:Arc<Dir>,directory:&str,args:&Value,cancel:&AtomicBool)->Result<Prepared,String>{
+    prepare_with_limit(root,directory,"write_file",args,cancel,131072)
+}
+fn prepare_with_limit(
     root: Arc<Dir>,
     directory: &str,
     name: &str,
     args: &Value,
     cancel: &AtomicBool,
+    content_limit:usize,
 ) -> Result<Prepared, String> {
     check(cancel)?;
     let definition = definitions()
@@ -249,8 +256,8 @@ pub(crate) fn prepare(
     let before = old.as_ref().map(|(s, _)| s.as_str()).unwrap_or("");
     let after = if name == "write_file" {
         let content = text(args, "content")?;
-        if content.len() > 32768 {
-            return Err("write_file 内容最多 32 KiB".into());
+        if content.len() > content_limit {
+            return Err(format!("写入内容最多 {} KiB",content_limit/1024));
         }
         content.to_owned()
     } else {

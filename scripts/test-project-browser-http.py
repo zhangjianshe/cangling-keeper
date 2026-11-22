@@ -21,6 +21,16 @@ with tempfile.TemporaryDirectory(prefix='keeper-browser-') as tmp:
   p=start();args={'projectId':'general'}
   data=call('agent_project_browse',args);names=[e['name'] for e in data['entries']];assert 'sub' in names and '.env' not in names and 'link' not in names
   data=call('agent_project_browse',{**args,'action':'read','path':'sub/readme.txt','startLine':201});assert data['totalLines']==450 and data['lines'][0]['line']==201
+  current=call('agent_project_browse',{**args,'action':'edit','path':'sub/readme.txt'});assert current['editable'] and len(current['content'].splitlines())==450
+  save={**args,'path':'sub/readme.txt','content':'changed\r\n','sha256':current['sha256']}
+  result=call('agent_project_file_save',save);assert result['saved'] and (root/'sub/readme.txt').read_bytes()==b'changed\r\n'
+  try:call('agent_project_file_save',{**save,'content':'overwrite'});raise AssertionError('stale hash accepted')
+  except urllib.error.HTTPError as e:assert e.code==400
+  assert (root/'sub/readme.txt').read_bytes()==b'changed\r\n'
+  for path in ['../outside','link','.env','binary']:
+   try:call('agent_project_browse',{**args,'action':'edit','path':path});raise AssertionError(path)
+   except urllib.error.HTTPError as e:assert e.code==400
+  (root/'large.txt').write_text('a'*140000);assert call('agent_project_browse',{**args,'action':'edit','path':'large.txt'})['editable'] is False
   for more in [{'path':'../outside','action':'read'},{'path':'link','action':'read'},{'path':'.env','action':'read'},{'path':'binary','action':'read'},{'projectId':'missing'},{'action':'write'}]:
    try:call('agent_project_browse',{**args,**more});raise AssertionError(more)
    except urllib.error.HTTPError as e:assert e.code==400
