@@ -15,8 +15,8 @@ use std::{
 
 pub(crate) fn definitions() -> Vec<Value> {
     [
- ("write_file","创建或覆盖项目内 UTF-8 文件。由系统安全策略决定自动批准或等待用户确认；父目录必须存在。",json!({"path":{"type":"string"},"content":{"type":"string"}}),json!(["path","content"])),
- ("apply_patch","精确替换项目文件内唯一匹配的 oldText 为 newText；oldText 不能为空。由系统安全策略决定自动批准或等待用户确认。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"}}),json!(["path","oldText","newText"])),
+ ("write_file","创建或覆盖项目内 UTF-8 文件。由系统安全策略决定自动批准或等待用户确认；父目录必须存在。修改已有文件时应将 read_file 返回的 sha256 传入 expectedSha256；不匹配则拒绝生成修改预览。",json!({"path":{"type":"string"},"content":{"type":"string"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path","content"])),
+ ("apply_patch","精确替换项目文件内唯一匹配的 oldText 为 newText；oldText 不能为空。由系统安全策略决定自动批准或等待用户确认；应传入 read_file 的 sha256 作为 expectedSha256，拒绝基于旧版本修改。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path","oldText","newText"])),
  ("run_command","提出本机 shell 命令，默认在当前项目根目录运行。系统按安全模式决定自动批准或等待用户确认完整命令和执行目录。以 Keeper 用户权限执行，不是文件沙箱。timeoutSeconds 默认 60，最多 120。",json!({"command":{"type":"string"},"cwd":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!(["command"])),
 ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).collect()
 }
@@ -254,6 +254,11 @@ fn prepare_with_limit(
     let filename = PathBuf::from(relative.file_name().ok_or("无效文件名")?);
     let old = snapshot(&parent, &filename)?;
     let before = old.as_ref().map(|(s, _)| s.as_str()).unwrap_or("");
+    if let Some(value)=args.get("expectedSha256") {
+        let expected=value.as_str().filter(|s|s.len()==64 && s.bytes().all(|c|c.is_ascii_hexdigit())).ok_or("expectedSha256 须为64位十六进制校验值")?;
+        if old.is_none() || !hash(before.as_bytes()).eq_ignore_ascii_case(expected){return Err("文件与读取时的版本不一致，未生成修改预览或写入；请重新读取后调整修改。".into());}
+    }
+
     let after = if name == "write_file" {
         let content = text(args, "content")?;
         if content.len() > content_limit {
@@ -288,7 +293,7 @@ fn prepare_with_limit(
         .header(if old.is_some() { raw } else { "/dev/null" }, raw)
         .to_string();
     check(cancel)?;
-    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"bytes":after.len()});
+    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"bytes":after.len(),"sourceHashVerified":args.get("expectedSha256").is_some()});
     Ok(Prepared {
         review,
         action: Action::File {
@@ -626,6 +631,17 @@ mod tests {
     }
     fn flag() -> Arc<AtomicBool> {
         Arc::new(AtomicBool::new(false))
+    }
+    #[test]
+    fn read_revision_checked_before_write_or_patch_preview(){
+        let (path,root)=fixture();std::fs::write(path.join("version.txt"),"before").unwrap();let digest=hash(b"before");
+        for (name,mut args) in [("write_file",json!({"path":"version.txt","content":"after"})),("apply_patch",json!({"path":"version.txt","oldText":"before","newText":"after"}))]{
+            args["expectedSha256"]=json!(digest.to_uppercase());let plan=prepare(root.clone(),path.to_str().unwrap(),name,&args,&flag()).unwrap();assert_eq!(plan.review["sourceHashVerified"],true);drop(plan);
+            args["expectedSha256"]=json!(hash(b"stale"));assert!(prepare(root.clone(),path.to_str().unwrap(),name,&args,&flag()).is_err());
+            assert_eq!(std::fs::read_to_string(path.join("version.txt")).unwrap(),"before");
+        }
+        assert!(prepare(root.clone(),path.to_str().unwrap(),"write_file",&json!({"path":"absent","content":"x","expectedSha256":hash(b"")}),&flag()).is_err());
+        drop(root);std::fs::remove_dir_all(path).unwrap();
     }
     #[test]
     fn preparation_is_read_only_and_commits_exact_reviewed_content() {

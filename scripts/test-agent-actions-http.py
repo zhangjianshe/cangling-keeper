@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Reviewed agent actions against an isolated localhost model and project."""
-import sqlite3,http.server,json,os,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error,sys
+import hashlib,sqlite3,http.server,json,os,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error,sys
 from pathlib import Path
 if os.name!='posix':raise SystemExit('This isolated HTTP command fixture runs on POSIX; file tools also have portable Rust unit tests.')
 requests=[];preview='--preview' in sys.argv
@@ -19,7 +19,9 @@ class API(http.server.BaseHTTPRequestHandler):
    elif body['messages'][-1]['role']=='tool':
     result=json.loads(body['messages'][-1]['content']);assert result['keeperResult']['automaticRetry'] is False;assert result['keeperResult']['outcome']==('rejected' if result.get('rejected') else 'timeout' if result.get('timedOut') else 'failed' if result.get('error') else 'success');event({'content':'操作结果已保存。'+('用户拒绝，未执行。' if result.get('rejected') else '')},'stop')
    else:
-    if 'patch' in prompt:name,args='apply_patch',{'path':'hello.txt','oldText':'hello v1','newText':'hello v2'}
+    if 'stale revision' in prompt:name,args='write_file',{'path':'version.txt','content':'overwrite','expectedSha256':hashlib.sha256(b'old').hexdigest()}
+    elif 'valid revision' in prompt:name,args='write_file',{'path':'version.txt','content':'updated','expectedSha256':hashlib.sha256(b'current').hexdigest()}
+    elif 'patch' in prompt:name,args='apply_patch',{'path':'hello.txt','oldText':'hello v1','newText':'hello v2'}
     elif 'long' in prompt:name,args='run_command',{'command':"printf 'starting\\n'; sleep 120 & child=$!; echo $child > child.pid; wait $child; printf bad > after-stop.txt",'timeoutSeconds':120}
     elif 'timeout' in prompt:name,args='run_command',{'command':'sleep 10; printf bad > timeout-result.txt','timeoutSeconds':1}
     elif 'command' in prompt:name,args='run_command',{'command':"printf 'stream-out\\n'; printf 'stream-err\\n' >&2; printf completed > command-result.txt",'timeoutSeconds':10}
@@ -81,6 +83,10 @@ with tempfile.TemporaryDirectory(prefix='keeper-action-http-') as folder:
    wrong=call('agent_new_session')['id'];approve(wrong,run,expected=400)
    call('agent_review_tool',{'sessionId':s,'runId':run['id'],'reviewHash':run['review']['hash'],'approved':True},403,origin='http://untrusted.invalid')
    approve(s,run,content='not-reviewed',arguments={'path':'tampered.txt','content':'not-reviewed'});approve(s,run,expected=400);d=done(s);assert (root/'hello.txt').read_text()=='hello v1\n';assert d['runs'][-1]['status']=='succeeded'
+   (root/'version.txt').write_text('current')
+   stale=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':stale,'content':'stale revision'});stale_detail=done(stale)
+   assert stale_detail['runs'][0]['status']=='failed' and not stale_detail['runs'][0].get('review');assert (root/'version.txt').read_text()=='current'
+   s,run,_=pending('valid revision');assert run['review']['sourceHashVerified'];approve(s,run);done(s);assert (root/'version.txt').read_text()=='updated'
    s,run,_=pending('apply patch');assert '-hello v1' in run['review']['diff'] and '+hello v2' in run['review']['diff'];approve(s,run);done(s);assert (root/'hello.txt').read_text()=='hello v2\n'
    (root/'hello.txt').write_text('hello v1\n');s,run,_=pending('conflict patch');(root/'hello.txt').write_text('user edit\n');approve(s,run);d=done(s);assert d['runs'][-1]['status']=='failed';assert (root/'hello.txt').read_text()=='user edit\n'
    s,run,_=pending('parent changed');(root/'sub').rename(root/'moved');(root/'sub').mkdir();approve(s,run);assert done(s)['runs'][-1]['status']=='failed';assert not (root/'sub/child.txt').exists() and not (root/'moved/child.txt').exists()

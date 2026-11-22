@@ -771,3 +771,5 @@ ReAct 综合验收：先执行 `cargo build`，再执行 `NODE_PATH=<jsdom 所�
 `search_files` 可指定 `mode`：`all`（默认，相对文件路径及内容）、`filename`（仅相对文件路径）或 `content`（仅正文）。`extensions` 如 `["rs","py"]` 仅搜索指定后缀，不带点、不区分大小写，最多10种；不改变目录扫描上限。结果包含过滤文件数量，默认用法保持兼容。搜索关键词最多200个Unicode字符。
 
 内容搜索结果的 `column` 为该行首个命中的原文Unicode字符列号（从1开始），`snippetStartColumn` 为片段起点；`lineTruncated` 表示仅返回行的一部分。`text` 围绕命中位置展示，`readArgs` 可直接用于 `read_file`，并通过文件SHA-256避免读取已变更版本。搜索依旧为字面匹配，每个匹配行返回一条结果。
+
+`write_file` 和 `apply_patch` 支持可选 `expectedSha256`：传入此前 `read_file` 返回的 `sha256`，在生成修改预览前确认文件仍为读取时版本。文件不存在或内容已变化则拒绝，不进入审批；通过后仍保留审批后至执行前的冲突检查。参数可选以兼容旧调用，不传时不能检测读取到预览之间的变化。系统提示要求模型修改已有文件时使用该参数，冲突后重新读取并调整修改。
