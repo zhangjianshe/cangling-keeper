@@ -5,11 +5,11 @@ Only disposable local fixtures and a simulated model are used; no real API keys.
 import base64,http.server,json,os,queue,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.request,urllib.error,uuid
 from pathlib import Path
 
-BINARY=base64.b64encode(b'BINARY_SECRET_MUST_NOT_ENTER_CONTEXT').decode()
+BINARY='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQaDgAAAIkAWHdFJqQAAAAAElFTkSuQmCC'
 INJECTION='TEMPLATE_ASSISTANT_DATA_NOT_SYSTEM_INSTRUCTIONS'
 HEADER='fixture-native-secret'
 ENGINE='''import base64,json,time
-BINARY=base64.b64encode(b'BINARY_SECRET_MUST_NOT_ENTER_CONTEXT').decode()
+BINARY='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQaDgAAAIkAWHdFJqQAAAAAElFTkSuQmCC'
 def capability(mode):
  return {'resources':{}} if mode=='resource' else {'prompts':{}} if mode=='prompt' else {'tools':{}} if mode in ('forged','reserved') else {'tools':{},'resources':{},'prompts':{}}
 def execute(method,params,mode):
@@ -162,7 +162,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-mcp-content-') as folder:
    url=f'http://127.0.0.1:{remote.server_port}/must-not-fetch';opaque=turn(session,sid,server,'resources/read',{'uri':url});assert 'REMOTE_MCP_ONLY' in json.dumps(result(opaque)) and not unexpected_fetches
    prompts=turn(session,sid,server,'prompts/list');assert result(prompts)['prompts'][0]['arguments'][0]['required'] is True
    prompt=turn(session,sid,server,'prompts/get',{'name':'code-review','arguments':{'code':'print(1)','language':'python'}});out=json.dumps(result(prompt));assert 'PROMPT_TEXT_SENTINEL' in out and INJECTION in out and 'EMBEDDED_RESOURCE_TEXT' in out;assert BINARY not in out and 'BINARY_SECRET_MUST_NOT_ENTER_CONTEXT' not in out
-   binary=turn(session,sid,server,'resources/read',{'uri':'fixture://binary'});out=json.dumps(result(binary));assert BINARY not in out and 'BINARY_SECRET_MUST_NOT_ENTER_CONTEXT' not in out;assert 'image/png' in out and ('unsupported' in out.lower() or '不支持' in out)
+   binary=turn(session,sid,server,'resources/read',{'uri':'fixture://binary'});out=json.dumps(result(binary));assert BINARY not in out and 'BINARY_SECRET_MUST_NOT_ENTER_CONTEXT' not in out;assert 'image/png' in out and 'mcpImages' in out
    # Caller cannot read another account's sessions or native server configuration.
    identity(2);assert call('agent_mcp_list')==[];call('agent_session',{'sessionId':session},400);call('agent_mcp_tools',{'id':sid,'tools':[native[0]['name']]},400);identity(1)
    other=call('agent_new_session')['id'];turn(other,sid,server,'resources/list');assert native_records()[-1]['connection']!=first_record['connection'] and native_records()[-1]['id']==2

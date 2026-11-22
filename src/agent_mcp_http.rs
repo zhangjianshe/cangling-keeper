@@ -81,7 +81,7 @@ impl EventStream {
                     self.buffer.push(byte);
                 }
             }
-            if self.buffer.len() > 262144 {
+            if self.buffer.len() > 6291456 {
                 return Err("MCP SSE 消息过大".into());
             }
         }
@@ -298,7 +298,7 @@ impl Client {
                 let mut bytes = Vec::new();
                 while let Some(chunk) = response.chunk().await.map_err(|_| "MCP HTTP 读取失败")?
                 {
-                    if bytes.len() + chunk.len() > 262144 {
+                    if bytes.len() + chunk.len() > 6291456 {
                         return Err("MCP HTTP 响应过大".into());
                     }
                     bytes.extend_from_slice(&chunk);

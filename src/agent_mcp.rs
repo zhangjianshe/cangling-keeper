@@ -220,11 +220,11 @@ impl StdioClient {
         for _ in 0..64 {
             let mut line = Vec::new();
             let n = (&mut self.stdout)
-                .take(262145)
+                .take(6291457)
                 .read_until(b'\n', &mut line)
                 .await
                 .map_err(|_| "读取 MCP 响应失败")?;
-            if n == 0 || line.len() > 262144 || !line.ends_with(b"\n") {
+            if n == 0 || line.len() > 6291456 || !line.ends_with(b"\n") {
                 return Err("MCP 响应过大或连接已关闭".into());
             }
             let v: Value = serde_json::from_slice(&line).map_err(|_| "MCP 响应不是有效 JSON")?;
@@ -625,10 +625,11 @@ pub(crate) async fn call(
         if !connection.client.capabilities()[capability].is_object(){return Err("MCP 服务能力已变更，请重新发现服务能力".to_owned());}
         let id=connection.next_id;connection.next_id+=1;
         let response=tokio::select!{biased;_=&mut lease.invalidated=>return Err("MCP 连接已断开或配置已变更；外部操作结果需核实，不要自动重试".to_string()),result=connection.client.request(id,&method,parameters)=>result.map_err(|e|format!("{e}；本次调用未自动重放，外部操作结果需核实"))?};
-        if native.is_some(){return Ok(Ok(crate::agent_mcp_content::normalize(&method,response)?));}
+        let images=crate::agent_mcp_images::extract(&method,&response)?;
+        if native.is_some(){let mut value=crate::agent_mcp_content::normalize(&method,response)?;if !images.is_empty(){crate::agent_mcp_images::mark_placeholders(&mut value);}value["keeperImageData"]=json!(images);return Ok(Ok(value));}
         let text=response["content"].as_array().ok_or("MCP 工具结果无效")?.iter().filter_map(|x|if x["type"]=="text"{x["text"].as_str()}else{None}).collect::<Vec<_>>().join("\n");
         if text.len()>40000{return Err("MCP 工具结果过大".to_owned());}
-        Ok(if response["isError"]==true{Err(format!("MCP 工具错误：{text}"))}else{Ok(json!({"output":text}))})
+        Ok(if response["isError"]==true{Err(format!("MCP 工具错误：{text}"))}else{Ok(json!({"output":text,"keeperImageData":images}))})
     }).await.map_err(|_|"MCP 工具执行超时；外部操作结果需核实，不要自动重试".to_owned())??;
     // Recheck identity and exact configuration before retaining a live connection.
     let valid = {
@@ -641,6 +642,7 @@ pub(crate) async fn call(
                 .iter()
                 .any(|s| s == server)
     };
+    if !valid{return Err("账号或 MCP 配置已变化，已丢弃结果".into());}
     if valid {
         let _ = lease.retain();
     }

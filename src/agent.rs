@@ -64,6 +64,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     crate::agent_account::initialize(store)?;
     crate::agent_history::initialize(store)?;
     crate::agent_attachments::initialize(store)?;
+    crate::agent_mcp_images::initialize(store)?;
     crate::model::initialize(store)?;
     store.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_drafts(session_id TEXT PRIMARY KEY,content TEXT NOT NULL,revision INTEGER NOT NULL);").map_err(|e|e.to_string())?;
     let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
@@ -630,6 +631,7 @@ pub(crate) async fn dispatch(
             launch_model(core.clone(),session.clone(),response_id,cancel_rx,sink);
             let store=core.store.lock().map_err(|e|e.to_string())?;detail(&store,&session)
         }
+        "agent_mcp_image" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp_images::read(&store,&text(&args,"sessionId")?,&text(&args,"sha256")?)},
         "agent_draft_get" | "agent_draft_save" => {
             let session=text(&args,"sessionId")?;
             let store=core.store.lock().map_err(|e|e.to_string())?;

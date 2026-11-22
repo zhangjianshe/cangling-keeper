@@ -309,7 +309,7 @@
   async function restoreHistoryRequest(args){const response=await fetch('/api/history/restore',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args)});if(response.status===413)throw new Error('备份文件过大');const data=await response.json();if(!response.ok || !data.ok)throw new Error(data.error || '无法恢复备份');return data.result;}
   $('#history-backup-file').onchange=async event=>{const file=event.target.files?.[0];if(!file)return;historyBusy(true);const epoch=agent.identityEpoch || 0;$('#history-backup-status').textContent='正在检查备份…';try{
     if(file.size>24*1024*1024)throw new Error('备份文件不能超过 24 MiB');const backup=JSON.parse(await file.text());const preview=await restoreHistoryRequest({mode:'preview',backup});if(epoch!==(agent.identityEpoch || 0))throw new Error('账号已切换，请重新选择备份');
-    const message='备份包含 '+preview.projects+' 个关联项目、'+preview.sessions+' 个会话、'+preview.messages+' 条消息、'+preview.runs+' 条工具记录、'+(preview.attachments || 0)+' 个附件。'+(preview.differentAccount?' 此备份来自其他账户，将导入当前账户。':'')+'\n恢复将新增会话并保留现有数据。工具不会重新执行，项目文件不会恢复。是否继续？';
+    const message='备份包含 '+preview.projects+' 个关联项目、'+preview.sessions+' 个会话、'+preview.messages+' 条消息、'+preview.runs+' 条工具记录、'+(preview.attachments || 0)+' 个附件、'+(preview.mcpImages || 0)+' 张 MCP 图片。'+(preview.differentAccount?' 此备份来自其他账户，将导入当前账户。':'')+'\n恢复将新增会话并保留现有数据。工具不会重新执行，项目文件不会恢复。是否继续？';
     if(!await uiConfirm(message,'恢复对话备份')){$('#history-backup-status').textContent='已取消恢复';return;}
     const result=await restoreHistoryRequest({mode:'restore',backup,confirmed:true,expectedAccount:preview.accountKey});if(epoch!==(agent.identityEpoch || 0))throw new Error('备份已恢复到确认时的账户，当前账号已切换');await bootstrap();$('#history-backup-status').textContent='已恢复 '+result.sessions+' 个会话，原有数据已保留。';
   }catch(error){$('#history-backup-status').textContent='恢复失败：'+String(error);}finally{historyBusy(false);}};
@@ -577,6 +577,7 @@
         card.append(actions);
       }
       if(run.output)card.append(element('pre','agent-tool-output',run.output));
+      window.keeperMcpImagePreview?.(card,run,agent.selected,invoke);
       return card;
     }
     if(run.tool==='ssh_execute'){

@@ -225,6 +225,7 @@ pub(crate) fn mutate(store: &Store, command: &str, args: &Value) -> Result<Value
             sql(store.conn.execute("DELETE FROM agent_model_contexts WHERE message_id IN (SELECT id FROM agent_messages WHERE session_id=?1)",[session]))?;
             for table in [
                 "agent_drafts",
+                "agent_mcp_images",
                 "agent_reply_versions",
                 "agent_runs",
                 "agent_events",
@@ -369,6 +370,7 @@ mod tests {
     #[test]
     fn purge_requires_confirmation_and_rolls_back_all_children() {
         let store = store();
+        store.conn.execute_batch("CREATE TABLE agent_drafts(session_id TEXT);CREATE TABLE agent_mcp_images(session_id TEXT);").unwrap();
         add(&store, "a", "guest");
         store.conn.execute_batch("INSERT INTO agent_messages VALUES ('m','a','user','keep','{}');INSERT INTO agent_model_contexts VALUES ('m');INSERT INTO agent_runs VALUES ('r','a','succeeded');INSERT INTO agent_reviews VALUES ('r');").unwrap();
         store.conn.execute_batch("INSERT INTO agent_attachments(id,owner_key,session_id,name,mime_type,kind,data,sha256,created_at,size) VALUES ('file','guest','a','notes.txt','text/plain','text',x'616263','ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',0,3);INSERT INTO agent_message_attachments VALUES ('m','file',0);").unwrap();

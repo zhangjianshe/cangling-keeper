@@ -15,6 +15,7 @@ fn estimate(v: &Value) -> usize {
 fn image_count(messages:&[Value],supports_images:bool)->usize{
     if !supports_images{return 0;}
     messages.iter().filter_map(|m|m["keeperAttachments"].as_array()).flatten().filter(|a|a["kind"]=="image").count()
+        + messages.iter().filter(|m|m["role"]=="tool").map(|m|crate::agent_mcp_images::references(m["content"].as_str().unwrap_or("")).len()).sum::<usize>()
 }
 fn cost(messages: &[Value], tools: &[Value], supports_images:bool) -> usize {
     let attachment_framing=messages.iter().filter_map(|m|m["keeperAttachments"].as_array()).map(|a|a.len()*1024).sum::<usize>();
@@ -335,6 +336,13 @@ mod tests {
         let before=cost(&m,&[],true);m[0]["keeperAttachments"][1]["text"]=json!("x".repeat(64000));assert!(cost(&m,&[],true)>=before+63990);
         assert!(summary_cost(&m,&[])<cost(&m,&[],true));
         assert!(cost(&[json!({"role":"user","content":"","keeperAttachments":[{"kind":"image"}]})],&[],true)>16384-OUTPUT-RESERVE);
+    }
+    #[test]
+    fn mcp_image_budget_is_capability_gated_and_summary_is_metadata_only(){
+        let messages=vec![json!({"role":"tool","content":json!({"mcpImages":[{"sha256":"hash","mimeType":"image/png"}]}).to_string()})];
+        assert_eq!(cost(&messages,&[],true)-cost(&messages,&[],false),IMAGE_TOKEN_ALLOWANCE);
+        assert_eq!(image_count(&messages,false),0);
+        assert!(!json!(summary_messages(&messages)).to_string().contains("base64"));
     }
     #[test]
     fn cache_key_tracks_versions() {

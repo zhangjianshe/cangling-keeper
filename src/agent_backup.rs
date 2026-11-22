@@ -46,6 +46,8 @@ struct Session {
     deleted_at: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     attachments: Vec<Attachment>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    mcp_images: Vec<Value>,
     messages: Vec<Message>,
     versions: Vec<Version>,
     runs: Vec<Run>,
@@ -190,7 +192,7 @@ fn parse(value: &str) -> Result<Value, String> {
     serde_json::from_str(value).map_err(|_| "历史记录中的 JSON 无效，无法备份".into())
 }
 fn counts(s: &Snapshot) -> Value {
-    json!({"projects":s.projects.len(),"sessions":s.sessions.len(),"messages":s.sessions.iter().map(|s|s.messages.len()).sum::<usize>(),"runs":s.sessions.iter().map(|s|s.runs.len()).sum::<usize>(),"attachments":s.sessions.iter().map(|s|s.attachments.len()).sum::<usize>(),"createdAt":s.created_at})
+    json!({"projects":s.projects.len(),"sessions":s.sessions.len(),"messages":s.sessions.iter().map(|s|s.messages.len()).sum::<usize>(),"runs":s.sessions.iter().map(|s|s.runs.len()).sum::<usize>(),"attachments":s.sessions.iter().map(|s|s.attachments.len()).sum::<usize>(),"mcpImages":s.sessions.iter().map(|s|s.mcp_images.len()).sum::<usize>(),"createdAt":s.created_at})
 }
 pub(crate) fn export(store: &Store) -> Result<Value, String> {
     let tx = sql(store.conn.unchecked_transaction())?;
@@ -216,6 +218,7 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
             archived_at: r.get(7)?,
             deleted_at: r.get(8)?,
             attachments: Vec::new(),
+            mcp_images: Vec::new(),
             messages: Vec::new(),
             versions: Vec::new(),
             runs: Vec::new(),
@@ -224,6 +227,8 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
     let mut bytes = 0;
     for row in rows {
         let mut session = sql(row)?;
+        session.mcp_images=crate::agent_mcp_images::export(store,&session.id)?;
+        if !session.mcp_images.is_empty(){snapshot.version=3;}
         let mut attachment_stmt=sql(store.conn.prepare("SELECT id,name,mime_type,kind,data,sha256,created_at FROM agent_attachments WHERE session_id=?1 AND owner_key=?2 ORDER BY created_at,rowid"))?;
         let attachment_rows = sql(attachment_stmt.query_map(
             params![session.id, snapshot.source_account],
@@ -256,7 +261,7 @@ pub(crate) fn export(store: &Store) -> Result<Value, String> {
             });
         }
         if !session.attachments.is_empty() {
-            snapshot.version = 2;
+            snapshot.version = snapshot.version.max(2);
         }
         let mut messages=sql(store.conn.prepare("SELECT m.id,m.role,m.content,m.created_at,m.model_metadata,c.messages FROM agent_messages m LEFT JOIN agent_model_contexts c ON c.message_id=m.id WHERE m.session_id=?1 ORDER BY m.rowid"))?;
         let raw = sql(messages.query_map([&session.id], |r| {
@@ -384,7 +389,7 @@ fn checked_time(time: i64) -> Result<(), String> {
 }
 fn validate(archive: &Archive) -> Result<(), String> {
     let s = &archive.snapshot;
-    if s.format != FORMAT || !matches!(s.version, 1 | 2) {
+    if s.format != FORMAT || !matches!(s.version, 1 | 2 | 3) {
         return Err("不支持的 Keeper 备份格式或版本".into());
     }
     if archive.sha256 != digest(s)? {
@@ -434,6 +439,15 @@ fn validate(archive: &Archive) -> Result<(), String> {
         {
             return Err("附件需要第2版备份格式".into());
         }
+        if s.version<3 && !session.mcp_images.is_empty(){return Err("MCP 图片需要版本3备份".into());}
+        let mut image_refs=HashMap::new();
+        for image in &session.mcp_images {
+            let checked=crate::agent_mcp_images::validate(image)?;
+            if checked!=*image || image_refs.insert(image["sha256"].as_str().unwrap(),crate::agent_mcp_images::metadata(image)).is_some(){return Err("备份 MCP 图片校验失败或重复".into());}
+        }
+        let check_images=|content:&str|->Result<(),String>{for reference in crate::agent_mcp_images::references(content){if reference["sha256"].as_str().and_then(|h|image_refs.get(h))!=Some(&reference){return Err("备份 MCP 图片引用无效".into());}}Ok(())};
+        for run in &session.runs{check_images(&run.output)?;}
+        for message in &session.messages{if let Some(context)=&message.context{for item in context{if item["role"]=="tool"{check_images(item["content"].as_str().unwrap_or(""))?;}}}}
         let mut attachments = HashMap::new();
         for attachment in &session.attachments {
             checked_id(&attachment.id)?;
@@ -644,6 +658,7 @@ pub(crate) fn restore(core: &AppState, args: &Value) -> Result<Value, String> {
                 default.as_str()
             };
             sql(store.conn.execute("INSERT INTO agent_sessions(id,title,created_at,updated_at,project_id,pinned,title_custom,server_id,security_mode,owner_key,archived_at,deleted_at) VALUES (?1,?2,?3,?4,?5,?6,1,?7,'ask',?8,?9,?10)",params![id,session.title,session.created_at,session.updated_at,project_ids[&session.project_id],session.pinned,model,owner,session.archived_at,session.deleted_at]))?;
+            crate::agent_mcp_images::save(&store,&id,&session.mcp_images)?;
             let mut attachment_ids = HashMap::new();
             for attachment in &session.attachments {
                 let attachment_id = uuid::Uuid::new_v4().to_string();

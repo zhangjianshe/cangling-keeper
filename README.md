@@ -576,7 +576,7 @@ DeepSeek 回复使用 SSE 流，生成中的同一条助手消息会持续写入
 
 工具调用记录和执行参数显示在对话中，并可在刷新后恢复。请求批准和自动审批模式需要逐次确认 MCP 操作；完全访问模式自动批准。修改或停用服务会使等待审批的旧操作失效。停止时关闭 MCP 本机子进程（Unix 下同时终止进程组），或向远程服务发送取消通知；外部系统中已经发生的操作不会自动撤销，结果不明时需自行核实。
 
-当前支持文本工具结果；stdio 进程默认仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR，并可配置显式传入子进程的环境变量。暂不支持图像结果或插件安装。工具发现使用独立临时连接；正式工具调用按“当前账户 + Keeper 会话 + 服务配置”复用连接，跨轮次保留 MCP 服务端会话状态，不同 Keeper 会话相互隔离。连接池最多保留 32 个连接，闲置 5 分钟后回收，资源回收或 Keeper 重启后服务端会话状态不会恢复。连接失败或调用超时会丢弃连接，不自动重放该请求；下一次调用重新连接。修改服务配置、工具选择、重新发现工具、退出账号和关闭服务会清理 MCP 连接；账户页显示关联的连接会话数，并提供“断开 MCP 连接”操作。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
+当前支持文本及 PNG/JPEG 图片工具结果；stdio 进程默认仅继承 PATH、HOME、USER、USERPROFILE、SYSTEMROOT、WINDIR、TEMP、TMP 和 TMPDIR，并可配置显式传入子进程的环境变量。暂不支持插件安装。工具发现使用独立临时连接；正式工具调用按“当前账户 + Keeper 会话 + 服务配置”复用连接，跨轮次保留 MCP 服务端会话状态，不同 Keeper 会话相互隔离。连接池最多保留 32 个连接，闲置 5 分钟后回收，资源回收或 Keeper 重启后服务端会话状态不会恢复。连接失败或调用超时会丢弃连接，不自动重放该请求；下一次调用重新连接。修改服务配置、工具选择、重新发现工具、退出账号和关闭服务会清理 MCP 连接；账户页显示关联的连接会话数，并提供“断开 MCP 连接”操作。stdio 服务进程以 Keeper 用户权限运行，不在沙箱内。协议参考 [MCP 传输规范](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) 和 [MCP tools](https://modelcontextprotocol.io/specification/2025-06-18/server/tools)。
 
 验证：`cargo build --locked && python3 scripts/test-mcp-http.py && python3 scripts/test-mcp-remote-http.py && python3 scripts/test-mcp-sessions-http.py`；测试使用临时 MCP 和本机模拟模型，不访问外部模型服务。
 
@@ -596,7 +596,7 @@ DeepSeek 回复使用 SSE 流，生成中的同一条助手消息会持续写入
 
 启用后，可在对话中要求“列出该服务的资料”“读取指定资料 URI”或“使用指定提示模板”。支持 `resources/list`、`resources/read`、`resources/templates/list`、`prompts/list` 和 `prompts/get`；列表的 `nextCursor` 可用于下一页。提示模板用于用户明确请求的任务，返回的 user/assistant 角色只作为一条外部工具结果中的数据，不会被提升为系统指令或直接拼接为模型历史消息。资源 URI 只传给所选 MCP 服务，不会被 Keeper 当作本机路径或另行访问网络地址。
 
-资料与模板复用现有 MCP 审批、执行记录、停止及连接池。请求批准和自动审批模式仍逐次确认，完全访问模式遵循用户已选择的会话策略；更改服务或操作选择会使等待中的旧调用失效。正文和参数有大小、条数限制；文本和嵌入文本资料可显示，二进制、图像与音频仅返回明确的不支持提示及基本元数据，不把 base64 内容送入模型。停止、刷新及重启后可以查看已有记录，重启不会自动重放。
+资料与模板复用现有 MCP 审批、执行记录、停止及连接池。请求批准和自动审批模式仍逐次确认，完全访问模式遵循用户已选择的会话策略；更改服务或操作选择会使等待中的旧调用失效。正文和参数有大小、条数限制；文本和嵌入文本资料可显示，PNG/JPEG 图像单独校验保存，按模型能力传递；其他二进制与音频返回不支持提示及元数据。停止、刷新及重启后可以查看已有记录，重启不会自动重放。
 
 协议参考 [MCP Resources](https://modelcontextprotocol.io/specification/2025-06-18/server/resources) 和 [MCP Prompts](https://modelcontextprotocol.io/specification/2025-06-18/server/prompts)。验证：`python3 scripts/test-mcp-content-http.py`，覆盖 stdio、Streamable HTTP 和旧版 SSE，全部使用临时数据库、本机模拟 MCP 及模型；加 `--preview` 可保留隔离界面供浏览器验证，不调用真实模型服务。界面验证：`NODE_PATH=<jsdom 路径>/node_modules node scripts/test-mcp-content-ui.cjs`。
 
@@ -687,3 +687,13 @@ Keeper 在 Agent 请求的系统上下文中附带操作系统、CPU 架构、`r
 会话更多菜单提供“导出 Markdown”，下载当前选中消息版本的阅读副本，包含回复模型、时间及附件名称。不会导出密钥、内部上下文、工具参数或附件原件；正在生成时标明内容尚未完整。
 
 开发顺序和每轮验收要求见 [TODO.md](TODO.md)。会话管理中的活动、归档和回收站列表均支持只读导出 Markdown，无需先恢复会话。
+
+
+### MCP 图片结果
+
+- 支持工具结果、资料读取和提示模板中的 PNG/JPEG 图片，单张最多 1 MiB、每次最多 4 张；MCP 响应总上限 6 MiB，文本结果仍限制 40 KiB。SVG、远程图片链接及无效编码不作为图片打开。
+- 图片按会话及 SHA-256 存入 SQLite。工具详情点击“预览图片”才加载，接口检查当前账户和会话归属；切换页面后忽略迟到的预览响应。
+- 支持图片的模型收到图片及明确的不可信工具来源说明，所有并行工具结果完整返回后才附加图像消息。纯文本模型仅得到元数据，不得推断图片内容。发送时同一请求最多 4 张图片（包含用户附件）。
+- 上下文预算每张图片保守预留 16,384 token，摘要仅处理元数据，图片原件与工具记录不因压缩而删除。实际 token 以模型返回为准。
+- 停止会取消 MCP 等待，迟到或账户/配置已变更的结果不保存、不重放。已经保存的图片仍可查看。
+- 含 MCP 图片的备份采用版本 3（仍可读取旧版本），总上限仍为 24 MiB；恢复会验证内容、哈希和引用，导入当前账户的新会话，不重放工具。旧 Keeper 不支持版本 3，应升级后恢复。
