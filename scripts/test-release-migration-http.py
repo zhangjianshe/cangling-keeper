@@ -2,6 +2,7 @@
 """Legacy schema migration and versioned draft backup regression; isolated local data."""
 import os, json, socket, subprocess, tempfile, time, urllib.request, urllib.error, sqlite3
 from pathlib import Path
+from contextlib import closing
 with tempfile.TemporaryDirectory(prefix='keeper-drafts-') as folder:
     with socket.socket() as sock:
         sock.bind(('127.0.0.1',0)); port=sock.getsockname()[1]
@@ -27,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-drafts-') as folder:
         call('agent_draft_save',dict(args,content='unsent draft sentinel',revision=0))
         mcp=call('agent_mcp_save',{'name':'legacy config','transport':'stdio','command':'python3','args':['never-run-fixture.py'],'enabled':False})['id']
         p.terminate();p.wait()
-        with sqlite3.connect(Path(folder)/'data.sql') as db:
+        with closing(sqlite3.connect(Path(folder)/'data.sql')) as db, db:
             db.execute('ALTER TABLE agent_mcp_servers DROP COLUMN plugin_manifest')
             db.execute('ALTER TABLE agent_cis_models DROP COLUMN supports_images')
             db.execute('DROP TABLE agent_mcp_images')
@@ -39,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-drafts-') as folder:
             assert call('agent_session',args)['messages'][0]['content']=='history sentinel'
             assert call('agent_session',args)['runs'][0]['status']=='interrupted'
             assert call('agent_mcp_list')[0]['id']==mcp and call('agent_mcp_list')[0]['plugin']=={}
-            with sqlite3.connect(Path(folder)/'data.sql') as db:
+            with closing(sqlite3.connect(Path(folder)/'data.sql')) as db, db:
                 assert db.execute("SELECT supports_images FROM agent_cis_models WHERE id='legacy'").fetchone()[0]==0
                 assert db.execute('SELECT count(*) FROM agent_mcp_images').fetchone()[0]==0
             p.terminate();p.wait()
