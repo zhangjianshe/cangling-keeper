@@ -25,3 +25,11 @@ NODE_PATH 指向本机已安装 jsdom 的 node_modules。运行器为每项设�
 ## 验证边界
 
 迁移使用临时数据库中的旧结构夹具，升级使用本机测试程序；不等同于所有历史安装版本的兼容认证。浏览器重连使用自动化事件模拟，MCP 使用本地测试服务。Windows、ARM、macOS 原生升级和运行未验证；生产 CIS 数据迁移及真实模型连通性未验证，须在对应环境另行执行。跨平台 TODO 保持未完成。
+
+## 独立原生平台工作流
+
+`.github/workflows/release-regression.yml` 可手动执行，也在相关代码的 PR 上运行。三个原生 runner 分别覆盖 Linux x86_64、Linux ARM64 与 Windows；Windows 使用与发布流程相同的 win7 MSVC 构建目标，但 runner 并非 Windows 7，因此不宣称完成 Windows 7 运行验证。
+
+工作流不需要发布凭证，只有仓库读取权限，不创建 Release、不上传软件仓库或网盘。测试迁移、版本1–4备份恢复、实际程序替换及回滚和浏览器重连；测试日志作为 artifact 保存14天。每项运行测试限制5分钟，平台任务限制45分钟。
+
+迁移脚本支持 `KEEPER_TEST_BINARY` 指定当前平台程序路径，默认仍使用本机 debug 程序；临时数据与临时文件目录独立。新增工作流本地完成 YAML 解析、平台矩阵/权限检查和迁移、重连测试；Windows/ARM 的通过状态必须以远端实际运行结果为准。

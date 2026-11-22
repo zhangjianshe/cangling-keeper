@@ -1,0 +1,95 @@
+name: Native release regression
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'ui/**'
+      - 'scripts/test-*'
+      - 'Cargo.*'
+      - '.github/workflows/release-regression.yml'
+permissions:
+  contents: read
+jobs:
+  native:
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            name: linux-amd64
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: linux-arm64
+          - runner: windows-latest
+            target: x86_64-win7-windows-msvc
+            name: windows-x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        if: runner.os == 'Linux'
+        with:
+          targets: ${{ matrix.target }}
+      - uses: dtolnay/rust-toolchain@nightly
+        if: runner.os == 'Windows'
+        with:
+          components: rust-src
+      - uses: swatinem/rust-cache@v2
+      - name: Build Linux native binary
+        if: runner.os == 'Linux'
+        run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Build Windows release target
+        if: runner.os == 'Windows'
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo +nightly build --locked --release -Z build-std=std,panic_abort --target ${{ matrix.target }}
+      - name: Stage test binary
+        shell: bash
+        run: |
+          mkdir -p dist
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            cp target/${{ matrix.target }}/release/cangling-keeper.exe dist/cangling-keeper-windows-x86_64.exe
+            echo "KEEPER_TEST_BINARY=$GITHUB_WORKSPACE/dist/cangling-keeper-windows-x86_64.exe" >> "$GITHUB_ENV"
+          else
+            cp target/${{ matrix.target }}/release/cangling-keeper dist/keeper
+            echo "KEEPER_TEST_BINARY=$GITHUB_WORKSPACE/dist/keeper" >> "$GITHUB_ENV"
+          fi
+      - name: Migration and backup compatibility
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -o pipefail
+          python scripts/test-release-migration-http.py 2>&1 | tee dist/migration.log
+      - name: Linux upgrade and rollback
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -o pipefail
+          python scripts/test-linux-self-update.py dist/keeper 2>&1 | tee dist/upgrade.log
+      - name: Windows upgrade and rollback
+        if: runner.os == 'Windows'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          Start-Transcript -Path dist/upgrade.log
+          try { ./scripts/test-windows-self-update.ps1 } finally { Stop-Transcript }
+      - name: Browser reconnect recovery
+        run: node scripts/test-transport-recovery.cjs
+      - name: Save regression logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regression-${{ matrix.name }}
+          path: dist/*.log
+          if-no-files-found: warn
+          retention-days: 14
