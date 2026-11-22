@@ -212,12 +212,14 @@ pub(crate) async fn execute(
         "正在准备操作…",
         sink.as_ref(),
     )?;
+    if call.name.starts_with("mcp_") {
+        return execute_mcp(&core,session,response,&run,call,parsed,step,cancel,deadline,sink.as_ref()).await;
+    }
+    let validation=parsed.as_ref().map_err(|_|"工具参数不是有效 JSON，未执行".to_string()).and_then(|args|crate::agent_tool_args::validate(&call.name,args));
+    if let Err(error)=validation{return finish_result(&core,session,response,&run,call,Err(error),false,sink.as_ref());}
     if call.name == "update_plan" {
         let result=parsed.map_err(|_|"计划参数不是有效 JSON".to_string()).and_then(crate::agent_plan::update);
         return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());
-    }
-    if call.name.starts_with("mcp_") {
-        return execute_mcp(&core,session,response,&run,call,parsed,step,cancel,deadline,sink.as_ref()).await;
     }
     let flag = Arc::new(AtomicBool::new(false));
     let mut prepared = None;

@@ -28,6 +28,14 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if 'correct args fixture' in user:
+    if not results:tools([('write_file',{'path':'must-not-exist.txt'}),('read_file',{'path':'README.md','lineCount':'10'})]);return
+    if len(results)==2:
+     assert all(json.loads(r['content'])['keeperResult']['outcome']=='failed' for r in results)
+     assert 'content' in json.loads(results[0]['content'])['error']
+     assert 'lineCount' in json.loads(results[1]['content'])['error']
+     tools([('read_file',{'path':'README.md','lineCount':10})]);return
+    event({'content':'Corrected arguments succeeded'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'invalid plan fixture' in user:
     if not results:tools([('update_plan',{'plan':[{'step':'a','status':'in_progress'},{'step':'b','status':'in_progress'}]})]);return
     assert json.loads(results[-1]['content'])['keeperResult']['outcome']=='failed'
@@ -123,6 +131,10 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   corrected=session('correct args fixture');corrected_detail=wait_for(corrected,lambda d:not d['modelPending'])
+   assert [r['status'] for r in corrected_detail['runs']]==['failed','failed','succeeded']
+   assert not (root/'must-not-exist.txt').exists()
+   assert all(not r.get('review') for r in corrected_detail['runs'])
    invalid_plan=session('invalid plan fixture');invalid_detail=wait_for(invalid_plan,lambda d:not d['modelPending']);assert len(invalid_detail['runs'])==1 and invalid_detail['runs'][0]['status']=='failed'
    planned=session('plan fixture');plan_detail=wait_for(planned,lambda d:not d['modelPending'])
    assert [r['tool'] for r in plan_detail['runs']]==['update_plan','read_file','update_plan']
