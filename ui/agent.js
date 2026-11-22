@@ -485,10 +485,17 @@
           const task=agent.detail.tasks?.find(t=>t.responseId===entry.id),metadata=entry.modelMetadata || {};
           if(task){
             const labels={model:'模型生成中',tool:'执行工具中',approval:'等待确认',complete:'已完成',failed:'执行失败',stopped:'已停止',interrupted:'已中断'};
-            const summary=element('details','agent-task-summary'),caption=element('summary','',`${labels[task.status] || '任务记录'} · ${task.step || 0} 轮 · 工具调用 ${runs.length} 次`);
+            const budget=metadata.taskBudget || task.budget,validBudget=budget && ['maxRounds','maxToolCalls','activeSeconds'].every(key=>Number.isSafeInteger(budget[key]) && budget[key]>0);
+            const rounds=validBudget?`${task.step || 0} / ${budget.maxRounds}`:String(task.step || 0),calls=validBudget?`${runs.length} / ${budget.maxToolCalls}`:String(runs.length);
+            const summary=element('details','agent-task-summary'),caption=element('summary','',`${labels[task.status] || '任务记录'} · ${rounds} 轮 · 工具调用 ${calls} 次`);
             const terminal=['complete','failed','stopped','interrupted'].includes(task.status);
             const reason=metadata.taskReason || (task.status==='interrupted'?'服务中断，执行记录已保留；不会自动重放操作。':terminal?'历史任务未记录具体结束原因。':'任务进行中，可随时停止生成。');
             summary.append(caption,element('p','',reason));
+            if(validBudget){
+              summary.append(element('p','agent-task-budget',`本轮上限：${budget.maxRounds} 轮、${budget.maxToolCalls} 次工具调用、${budget.activeSeconds} 秒运行预算（等待审批暂停计时）。调用数为已记录的工具调用；超限整批请求可能在执行前被拒绝。`));
+              if(!terminal && ((task.step || 0)>=budget.maxRounds-1 || runs.length>=budget.maxToolCalls-4)){const warning=element('p','agent-budget-warning','执行预算即将用尽；可检查已完成内容，必要时停止并拆分剩余任务。');warning.setAttribute('role','status');summary.append(warning);caption.append(element('span','agent-budget-warning',' · 接近上限'));}
+            }
+
             const reasonCode=metadata.taskReasonCode || (task.status==='interrupted'?'interrupted':''),nextSteps={complete:'任务已结束，可检查结果或继续提出需求。',user_stopped:'已保留生成内容；继续前请核实已执行操作。',rejected_repeat:'模型重复提出了已拒绝的操作。若你改变决定，请明确发送新消息。',no_progress:'检查工具结果并调整目标或参数后，再发送新消息。',round_limit:'任务达到轮次上限；检查已完成步骤，将剩余工作拆分后继续。',tool_limit:'任务达到工具调用上限；缩小范围后继续。',time_limit:'任务达到运行时限；检查实际执行状态后再继续。',interrupted:'服务中断后不会自动重放操作；请先核实实际状态。',error:'查看上述错误并核实操作是否部分完成，再决定是否重试。'};
             if(terminal && nextSteps[reasonCode])summary.append(element('p','agent-task-next-step',nextSteps[reasonCode]));
 

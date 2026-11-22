@@ -107,9 +107,10 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
   normal=session('阅读项目并总结 normal')
   detail=wait_for(normal,lambda d:len(d['runs'])==3 and all(r['status']=='succeeded' for r in d['runs']) and '正在整理' in d['messages'][-1]['content'])
   assert detail['modelPending'] and detail['tasks'][-1]['status']=='model'
+  assert detail['messages'][-1]['modelMetadata']['taskBudget']=={'maxRounds':8,'maxToolCalls':32,'activeSeconds':180}
   assert len({r['toolCallId'] for r in detail['runs']})==3
   assert all(r['responseId']==detail['streamingMessageId'] for r in detail['runs'])
-  fresh=call('agent_session',{'sessionId':normal});assert fresh['runs']==detail['runs']
+  fresh=call('agent_session',{'sessionId':normal});assert fresh['runs']==detail['runs'];assert fresh['messages'][-1]['modelMetadata']['taskBudget']==detail['messages'][-1]['modelMetadata']['taskBudget']
   assert any(e['event']=='agent-tool-update' and e['payload']['status']=='running' for e in events)
   assert any(e['event']=='agent-tool-update' and e['payload']['status']=='succeeded' for e in events)
   assert not any(e['event'].startswith('agent-') for e in untrusted_events),'cross-origin WebSocket must not receive file contents'

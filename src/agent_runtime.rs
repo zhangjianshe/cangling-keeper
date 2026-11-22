@@ -9,6 +9,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
+pub(crate) const MAX_ROUNDS: usize = 8;
+pub(crate) const MAX_TOOL_CALLS: usize = 32;
+pub(crate) const ACTIVE_SECONDS: u64 = 180;
+pub(crate) fn budget() -> Value {
+    json!({"maxRounds":MAX_ROUNDS,"maxToolCalls":MAX_TOOL_CALLS,"activeSeconds":ACTIVE_SECONDS})
+}
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -112,7 +118,7 @@ pub(crate) fn phase(
     step: usize,
     sink: &dyn EventSink,
 ) -> Result<(), String> {
-    let payload = json!({"sessionId":session,"responseId":response,"status":status,"step":step,"updatedAt":now()});
+    let payload = json!({"sessionId":session,"responseId":response,"status":status,"step":step,"budget":budget(),"updatedAt":now()});
     {
         let store = core.store.lock().map_err(|e| e.to_string())?;
         store

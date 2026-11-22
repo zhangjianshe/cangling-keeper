@@ -219,6 +219,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
             text_field(&metadata,"requestedModel")?
         }else{current_model};
         if original.is_none(){metadata=json!({"source":"llm","generationStatus":"streaming","serverId":selected,"serverName":server["name"],"baseUrl":url,"provider":provider,"requestedModel":model,"model":model,"cisRevision":server["revision"]});}
+        metadata["taskBudget"]=crate::agent_runtime::budget();
         metadata.as_object_mut().unwrap().remove("usage");metadata.as_object_mut().unwrap().remove("context");
         store.conn.execute("UPDATE agent_messages SET model_metadata=?2 WHERE id=?1",rusqlite::params![response_id,metadata.to_string()]).map_err(|e|e.to_string())?;
         let saved_context=store.conn.query_row("SELECT messages FROM agent_model_contexts WHERE message_id=?1",[response_id],|r|r.get::<_,String>(0)).ok().or_else(||original.as_ref().and_then(|id|store.conn.query_row("SELECT messages FROM agent_model_contexts WHERE message_id=?1",[id],|r|r.get::<_,String>(0)).ok()));
@@ -247,14 +248,14 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
     {let store=core.store.lock().map_err(|e|e.to_string())?;let info=json!({"rulesStatus":guidance["rules"]["status"],"rulesSha256":guidance["rules"]["sha256"],"skills":guidance["skills"].as_array().map(|v|v.iter().map(|s|s["name"].clone()).collect::<Vec<_>>()).unwrap_or_default(),"warnings":guidance["warnings"]});store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.projectGuidance',json(?2)) WHERE id=?1",rusqlite::params![response_id,info.to_string()]).map_err(|e|e.to_string())?;}
     {let store=core.store.lock().map_err(|e|e.to_string())?;store.conn.execute("UPDATE agent_model_contexts SET messages=?2 WHERE message_id=?1",rusqlite::params![response_id,json!(messages).to_string()]).map_err(|e|e.to_string())?;}
     let tools={let store=core.store.lock().map_err(|e|e.to_string())?;let mut tools=crate::agent_files::definitions();tools.extend(crate::agent_mcp::definitions_for(&store,session)?);tools};
-    let mut deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(180);
+    let mut deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(crate::agent_runtime::ACTIVE_SECONDS);
     if let Err(e)=context::prepare(core,session,response_id,&url,&key,&model,&provider,supports_images,&mut messages,&tools,&mut cancel,deadline,sink.as_ref()).await {if e=="上下文压缩已停止，原始消息已保留。"{return Ok(ReplyFinish::Stopped);}return Err(e);}
     // Keep the saved canonical snapshot intact; compaction is local to this generation.
     let root=project_root;
     let mut visible=String::new();let mut total_calls=0;let mut loop_guard=loop_guard::LoopGuard::default();let mut refusals=loop_guard::RefusalGuard::default();
-    for round in 1..=8 {
+    for round in 1..=crate::agent_runtime::MAX_ROUNDS {
         if crate::agent_actions::is_shutting_down(){return Err("Keeper 正在关闭，任务不会自动重放。".into());}
-        if tokio::time::Instant::now()>=deadline{return Err(crate::agent_runtime::termination_error(core,response_id,"time_limit","Agent 已达到 180 秒运行时限，执行记录已保存。".into()));}
+        if tokio::time::Instant::now()>=deadline{return Err(crate::agent_runtime::termination_error(core,response_id,"time_limit",format!("Agent 已达到 {} 秒运行时限，执行记录已保存。",crate::agent_runtime::ACTIVE_SECONDS)));}
         crate::agent_runtime::phase(core,session,response_id,"model",round,sink.as_ref())?;
         if round>1 {if let Err(e)=context::prepare(core,session,response_id,&url,&key,&model,&provider,supports_images,&mut messages,&tools,&mut cancel,deadline,sink.as_ref()).await {if e=="上下文压缩已停止，原始消息已保留。"{return Ok(ReplyFinish::Stopped);}return Err(e);}}
         let wire_messages={let store=core.store.lock().map_err(|e|e.to_string())?;request_messages(&store,session,&messages,supports_images)?};
@@ -271,7 +272,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
             if visible.trim().is_empty(){return Err("LLM Server 未返回文字内容".into());}
             progress(&visible)?;return Ok(ReplyFinish::Complete);
         }
-        total_calls+=turn.calls.len();if total_calls>32{return Err(crate::agent_runtime::termination_error(core,response_id,"tool_limit","Agent 已达到 32 次工具调用上限，执行记录已保存。".into()));}
+        total_calls+=turn.calls.len();if total_calls>crate::agent_runtime::MAX_TOOL_CALLS{return Err(crate::agent_runtime::termination_error(core,response_id,"tool_limit",format!("Agent 已达到 {} 次工具调用上限，执行记录已保存。",crate::agent_runtime::MAX_TOOL_CALLS)));}
         let calls=turn.calls.iter().map(|c|json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments}})).collect::<Vec<_>>();
         messages.push(json!({"role":"assistant","content":if turn.content.is_empty(){Value::Null}else{json!(turn.content)},"tool_calls":calls}));
         crate::agent_runtime::phase(core,session,response_id,"tool",round,sink.as_ref())?;
@@ -286,7 +287,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         loop_guard.observe(&json!(round_results)).map_err(|error|crate::agent_runtime::termination_error(core,response_id,"no_progress",error))?;
         if !visible.is_empty(){visible.push_str("\n\n");}
     }
-    Err(crate::agent_runtime::termination_error(core,response_id,"round_limit","Agent 已达到 8 轮执行上限，执行记录已保存。".into()))
+    Err(crate::agent_runtime::termination_error(core,response_id,"round_limit",format!("Agent 已达到 {} 轮执行上限，执行记录已保存。",crate::agent_runtime::MAX_ROUNDS)))
 }
 struct Turn { content:String,calls:Vec<crate::agent_runtime::ToolCall> }
 async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&str,key:&str,body:Value,provider:&str,cancel:&mut tokio::sync::oneshot::Receiver<()>,deadline:tokio::time::Instant,sink:&dyn crate::EventSink,mut progress:impl FnMut(&str)->Result<(),String>)->Result<Option<Turn>,String>{
