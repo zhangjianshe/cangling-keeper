@@ -12,6 +12,9 @@ class API(http.server.BaseHTTPRequestHandler):
   assert self.headers['Authorization']=='Bearer fixture-only-key'
   user=next(m['content'] for m in reversed(body['messages']) if m['role']=='user')
   results=[m for m in body['messages'] if m['role']=='tool']
+  for result in results:
+   summary=json.loads(result['content'])['keeperResult'];assert summary['version']==1 and summary['automaticRetry'] is False
+   assert summary['outcome'] in ['success','failed','truncated','timeout','stopped','rejected']
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   def event(delta,reason=None):
    packet=('data: '+json.dumps({'model':'fixture-agent','choices':[{'delta':delta,'finish_reason':reason}]},ensure_ascii=False)+'\r\n\r\n').encode()

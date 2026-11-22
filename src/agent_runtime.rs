@@ -314,7 +314,8 @@ pub(crate) async fn execute(
             }
             if !automatic {*deadline += waiting.elapsed();}
             if state == "rejected" {
-                let result = json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});
+                let mut result = json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});
+                crate::agent_tool_result::annotate(&call.name,&mut result,"rejected");
                 persist_run(
                     &core,
                     session,
@@ -430,7 +431,7 @@ async fn execute_mcp(core:&AppState,session:&str,response:&str,run:&str,call:&To
         tokio::select!{biased;_=&mut *cancel=>{persist_run(core,session,response,run,"stopped","已停止，MCP 工具未执行",sink)?;return Ok(None)},_ = tokio::time::sleep(std::time::Duration::from_millis(100))=>{}}
         let state={let store=core.store.lock().map_err(|e|e.to_string())?;let state=store.conn.query_row("SELECT status FROM agent_runs WHERE id=?1",[run],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?;if state=="approved" {let changed=store.conn.execute("UPDATE agent_runs SET status='running' WHERE id=?1 AND status='approved' AND EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?2 AND message_id=?3 AND stop_requested=0)",params![run,session,response]).map_err(|e|e.to_string())?;if changed==1{"running".to_owned()}else{"stopped".to_owned()}}else{state}};
         if state=="pending_approval" {continue;}if !automatic {*deadline+=waiting.elapsed();}
-        if state=="rejected"{let result=json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});persist_run(core,session,response,run,"rejected",&result.to_string(),sink)?;phase(core,session,response,"tool",step,sink)?;return Ok(Some(json!({"role":"tool","tool_call_id":call.id,"content":result.to_string()})));}
+        if state=="rejected"{let mut result=json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});crate::agent_tool_result::annotate(&call.name,&mut result,"rejected");persist_run(core,session,response,run,"rejected",&result.to_string(),sink)?;phase(core,session,response,"tool",step,sink)?;return Ok(Some(json!({"role":"tool","tool_call_id":call.id,"content":result.to_string()})));}
         if state!="running"{persist_run(core,session,response,run,"stopped","操作已停止，未执行",sink)?;return Ok(None)}break;
     }
     let unchanged={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::resolve_for(&store,session,&call.name).is_ok_and(|current|current.0==server && current.1==tool)};
@@ -491,6 +492,7 @@ fn finish_result(
         }
         result["truncated"] = json!(true);
     }
+    crate::agent_tool_result::annotate(&call.name,&mut result,status);
     persist_run(
         core,
         session,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Reviewed agent actions against an isolated localhost model and project."""
-import http.server,json,os,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error,sys
+import sqlite3,http.server,json,os,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error,sys
 from pathlib import Path
 if os.name!='posix':raise SystemExit('This isolated HTTP command fixture runs on POSIX; file tools also have portable Rust unit tests.')
 requests=[];preview='--preview' in sys.argv
@@ -15,7 +15,7 @@ class API(http.server.BaseHTTPRequestHandler):
    data=('data: '+json.dumps({'model':'review-fixture','choices':[{'delta':delta,'finish_reason':reason}]},ensure_ascii=False)+'\n\n').encode();self.wfile.write(data);self.wfile.flush()
   try:
    if body['messages'][-1]['role']=='tool':
-    result=json.loads(body['messages'][-1]['content']);event({'content':'操作结果已保存。'+('用户拒绝，未执行。' if result.get('rejected') else '')},'stop')
+    result=json.loads(body['messages'][-1]['content']);assert result['keeperResult']['automaticRetry'] is False;assert result['keeperResult']['outcome']==('rejected' if result.get('rejected') else 'timeout' if result.get('timedOut') else 'failed' if result.get('error') else 'success');event({'content':'操作结果已保存。'+('用户拒绝，未执行。' if result.get('rejected') else '')},'stop')
    else:
     if 'patch' in prompt:name,args='apply_patch',{'path':'hello.txt','oldText':'hello v1','newText':'hello v2'}
     elif 'long' in prompt:name,args='run_command',{'command':"printf 'starting\\n'; sleep 120 & child=$!; echo $child > child.pid; wait $child; printf bad > after-stop.txt",'timeoutSeconds':120}
@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-action-http-') as folder:
   return result.get('result') if status==200 else result
  def start():
   global process
-  process=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'HOME':folder,'TMPDIR':folder},stdout=log,stderr=log)
+  process=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder},stdout=log,stderr=log)
   for _ in range(100):
    try:call('agent_bootstrap');return
    except Exception:time.sleep(.05)
@@ -64,7 +64,9 @@ with tempfile.TemporaryDirectory(prefix='keeper-action-http-') as folder:
    stat=Path(f'/proc/{pid}/stat').read_text().split();return stat[2]!='Z'
   except FileNotFoundError:return False
  try:
-  start();root=Path(call('agent_bootstrap')['projects'][0]['directory']);(root/'sub').mkdir()
+  start();process.terminate();process.wait(timeout=10);root=Path(folder)/'project';root.mkdir();
+  with sqlite3.connect(Path(folder)/'data.sql') as db:db.execute("UPDATE agent_projects SET directory=? WHERE id='general'",(str(root),))
+  start();(root/'sub').mkdir()
   call('agent_model_save',{'name':'Review fixture','provider':'openai-compatible','enabled':True,'baseUrl':f'http://127.0.0.1:{api.server_port}','model':'fixture','apiKey':'fixture-only-key'})
   s,run,d=pending('write new file')
   assert not (root/'hello.txt').exists();assert d['tasks'][-1]['status']=='approval';assert '+hello v1' in run['review']['diff']
