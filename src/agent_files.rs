@@ -13,7 +13,7 @@ use std::{
 
 pub(crate) fn definitions() -> Vec<Value> {
     [
-        ("list_directory", "列出当前项目内目录，返回名称、类型和大小。path 默认为 .，只允许项目相对路径。", json!({"path":{"type":"string"}}), json!([])),
+        ("list_directory", "分页列出当前项目目录，返回名称、类型和大小。path 默认为 .；有 nextList 时使用其完整参数续读。offset 从0开始，expectedSha256 校验目录列表，变化时须从首页重新读取。", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":0},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}), json!([])),
         ("read_file", "读取项目 UTF-8 文本文件，返回带行号内容；每页最多200行，每行片段最多1000字节。结果有 nextRead 时使用其完整参数续读，避免遗漏长行；startColumn 为首行从1开始的Unicode字符列，expectedSha256 用于拒绝跨文件版本续读。", json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"startColumn":{"type":"integer","minimum":1},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
         ("search_files", "在项目文件名和 UTF-8 文本中搜索字面字符串，递归搜索指定 path（默认 .）；跳过链接、私密文件和构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"}}), json!(["query"])),
     ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect()
@@ -211,11 +211,17 @@ pub(crate) fn execute(
     let path = scope.path(raw)?;
     match name {
         "list_directory" => {
-            let entries = scope.entries(&path)?;
-            let truncated = entries.len() > 200;
-            Ok(
-                json!({"path":raw,"entries":entries.into_iter().take(200).map(|(name,_,directory,size)|json!({"name":name,"type":if directory{"directory"}else{"file"},"size":size})).collect::<Vec<_>>(),"truncated":truncated}),
-            )
+            let entries=scope.entries(&path)?.into_iter().map(|(name,_,directory,size)|json!({"name":name,"type":if directory{"directory"}else{"file"},"size":size})).collect::<Vec<_>>();
+            let hash=crate::agent_actions::hash(serde_json::to_string(&entries).map_err(|_|"目录列表编码失败")?.as_bytes());
+            if let Some(expected)=args.get("expectedSha256") {if expected.as_str()!=Some(hash.as_str()){return Err("目录列表已变化，请从首页重新读取，避免跨页遗漏或重复。".into());}}
+            let offset=match args.get("offset"){None=>0,Some(v)=>v.as_u64().ok_or("offset 必须为非负整数")?};
+            if offset>entries.len() as u64{return Err("offset 超出目录列表范围".into());}
+            let mut page=Vec::new();let mut bytes=0;
+            for entry in entries.iter().skip(offset as usize){
+                let size=entry.to_string().len();if page.len()>=200 || bytes+size>12000{break;}bytes+=size;page.push(entry.clone());
+            }
+            let next=offset as usize+page.len();let truncated=next<entries.len();
+            Ok(json!({"path":raw,"entries":page,"totalEntries":entries.len(),"offset":offset,"sha256":hash,"truncated":truncated,"nextList":if truncated{json!({"path":raw,"offset":next,"expectedSha256":hash})}else{Value::Null}}))
         }
         "read_file" => {
             let number = |key: &str, default: u64| -> Result<u64, String> {
@@ -447,6 +453,22 @@ mod tests {
             if result["nextRead"].is_null(){break;}args=result["nextRead"].clone();assert!(pages<20);
         }
         assert_eq!(seen,10000);drop(dir);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn directory_pages_are_complete_and_revision_checked(){
+        let (root,dir)=fixture();std::fs::create_dir(root.join("many")).unwrap();
+        for i in 0..240{std::fs::write(root.join("many").join(format!("{i:03}-{}", "x".repeat(80))),"").unwrap();}
+        std::fs::write(root.join("many/.env"),"hidden").unwrap();
+        let first=run(&dir,"list_directory",json!({"path":"many"})).unwrap();assert_eq!(first["totalEntries"],240);assert_eq!(first["truncated"],true);
+        let mut args=json!({"path":"many"});let mut names=std::collections::HashSet::new();let mut pages=0;
+        loop{let result=run(&dir,"list_directory",args).unwrap();pages+=1;assert!(result.to_string().len()<16000);
+            for item in result["entries"].as_array().unwrap(){assert!(names.insert(item["name"].as_str().unwrap().to_owned()));}
+            if result["nextList"].is_null(){break;}args=result["nextList"].clone();assert!(pages<10);
+        }
+        assert_eq!(names.len(),240);assert!(pages>1);
+        std::fs::write(root.join("many/new"),"").unwrap();assert!(run(&dir,"list_directory",first["nextList"].clone()).unwrap_err().contains("已变化"));
+        assert!(run(&dir,"list_directory",json!({"offset":99999})).is_err());
+        drop(dir);std::fs::remove_dir_all(root).unwrap();
     }
     #[cfg(unix)]
     #[test]

@@ -28,6 +28,12 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if 'paged directory fixture' in user:
+    if not results:tools([('list_directory',{'path':'many'})]);return
+    last=json.loads(results[-1]['content'])
+    if last.get('nextList'):tools([('list_directory',last['nextList'])]);return
+    assert last.get('nextList') is None
+    event({'content':'Listed entire directory'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'continued read fixture' in user:
     if not results:tools([('read_file',{'path':'long.txt'})]);return
     last=json.loads(results[-1]['content'])
@@ -138,6 +144,12 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   (root/'many').mkdir()
+   for index in range(205):(root/'many'/f'{index:03}.txt').write_text('')
+   paged=session('paged directory fixture');paged_detail=wait_for(paged,lambda d:not d['modelPending'])
+   assert paged_detail['tasks'][-1]['status']=='complete' and len(paged_detail['runs'])==2
+   listed=[e['name'] for run in paged_detail['runs'] for e in json.loads(run['output'])['entries']]
+   assert len(listed)==205 and len(set(listed))==205
    (root/'long.txt').write_text('中文🙂'*250)
    continued=session('continued read fixture');continued_detail=wait_for(continued,lambda d:not d['modelPending'])
    assert continued_detail['tasks'][-1]['status']=='complete' and len(continued_detail['runs'])==3

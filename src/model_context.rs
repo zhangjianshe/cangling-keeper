@@ -12,6 +12,17 @@ const IMAGE_TOKEN_ALLOWANCE: usize = 16384;
 fn estimate(v: &Value) -> usize {
     v.to_string().len() + 16
 }
+fn shortened_tool_output(content: &str, max_bytes: usize) -> Value {
+    let preview=&content[..content.floor_char_boundary(max_bytes.min(content.len()))];
+    let mut output=json!({"contextTruncated":true,"preview":preview,"note":"完整工具输出保存在本机执行记录。预览不含全部条目；续页参数仅用于后续页，不能补回被省略的本页内容。需要本页细节时缩小读取范围。"});
+    if let Ok(original)=serde_json::from_str::<Value>(content) {
+        for key in ["keeperResult","nextList","nextRead"] {
+            if let Some(value)=original.get(key).filter(|v|v.to_string().len()<=2048){output[key]=value.clone();}
+        }
+        if output["keeperResult"].is_object(){output["keeperResult"]["truncated"]=json!(true);if output["keeperResult"]["status"]=="succeeded"{output["keeperResult"]["outcome"]=json!("truncated");}}
+    }
+    output
+}
 fn image_count(messages:&[Value],supports_images:bool)->usize{
     if !supports_images{return 0;}
     messages.iter().filter_map(|m|m["keeperAttachments"].as_array()).flatten().filter(|a|a["kind"]=="image").count()
@@ -138,9 +149,7 @@ pub(super) async fn prepare(
         if estimate(message) > per_tool {
             if let Some(content) = message["content"].as_str() {
                 let max_bytes = per_tool.saturating_sub(400).max(64) / 2;
-                let preview =
-                    content[..content.floor_char_boundary(max_bytes.min(content.len()))].to_owned();
-                message["content"]=json!(json!({"contextTruncated":true,"preview":preview,"note":"完整工具输出保存在本机执行记录；需要更多细节时重新读取具体范围。"}).to_string());
+                message["content"]=json!(shortened_tool_output(content,max_bytes).to_string());
                 shortened = true;
             }
         }
@@ -322,6 +331,11 @@ pub(super) async fn prepare(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shortened_results_keep_bounded_continuations_and_status(){
+        let result=shortened_tool_output(&json!({"entries":["x".repeat(2000)],"keeperResult":{"status":"succeeded","outcome":"success","automaticRetry":false},"nextList":{"offset":200,"expectedSha256":"a".repeat(64)}}).to_string(),64);
+        assert_eq!(result["nextList"]["offset"],200);assert_eq!(result["keeperResult"]["outcome"],"truncated");assert_eq!(result["contextTruncated"],true);assert!(result["preview"].as_str().unwrap().len()<=64);
+    }
     #[test]
     fn budget_includes_tools_and_unicode() {
         let m = vec![json!({"role":"user","content":"中文"})];

@@ -35,7 +35,7 @@
    const before=seq,identity=agent.identityEpoch;if(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
    const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';location.textContent=selected.directory+(target==='.'?'':' / '+target);location.title=location.textContent;
    try{const data=await invoke('agent_project_browse',{projectId:selected.id,path:target,action:'list'});if(version!==seq||epoch!==agent.identityEpoch)return;
-    status.textContent=data.truncated?'目录条目较多，仅显示前 200 项。':`${data.entries.length} 项 · 隐藏敏感文件、链接及构建缓存`;
+    status.textContent=data.truncated?`目录条目较多，仅显示前 ${data.entries.length} 项。`:`${data.entries.length} 项 · 隐藏敏感文件、链接及构建缓存`;
     for(const entry of data.entries){const row=node('button','project-browser-entry');row.type='button';row.append(node('span','',entry.type==='directory'?'▱':'▤'),node('span','project-browser-name',entry.name),node('small','',entry.type==='directory'?'目录':entry.size+' B'));const child=target==='.'?entry.name:target+'/'+entry.name;row.dataset.path=child;row.onclick=()=>{if(entry.type==='directory')loadDirectory(child);else loadFile(child);};list.append(row);}
     if(!data.entries.length)list.append(node('p','','此目录为空。'));
    }catch(e){if(version===seq)status.textContent=String(e);}
