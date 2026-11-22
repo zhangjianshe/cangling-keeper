@@ -27,7 +27,7 @@ assert.equal(context.relativeMessageTime(1000,61000),'1分钟前');assert.equal(
 assert.ok(document.querySelector('.agent-message.user .agent-message-time'));assert.equal(document.querySelector('.agent-message.user .agent-reply-actions').firstElementChild.className,'agent-message-time');
 assert.equal(document.querySelectorAll('.agent-model-tool').length,1,'only selected reply tool history is displayed');
 assert.equal(document.querySelector('.agent-model-tool').dataset.runId,'new-run');
-assert.match(document.querySelector('.agent-stream-status').textContent,/第 2 轮/);
+assert.match(document.querySelector('.agent-stream-status').textContent,/第 2 轮/);assert.match(document.querySelector('.agent-task-summary').textContent,/执行工具中 · 2 轮 · 工具调用 1 次/);
 assert.equal(document.querySelector('#agent-stop').hidden,false);
 document.querySelector('.agent-model-tool').open=true;
 context.updateAgentRun({payload:{...run('new-run','new'),sessionId:'session',output:'updated output',updatedAt:2}});
@@ -37,6 +37,7 @@ context.updateAgentRun({payload:{...run('other','other'),sessionId:'different',o
 assert.doesNotMatch(document.querySelector('#agent-messages').textContent,/must not appear/);
 context.agent.detail=JSON.parse(JSON.stringify(context.agent.detail));document.querySelector('#agent-messages').replaceChildren();document.querySelector('#agent-messages').dataset.signature='';context.renderConversation();
 assert.equal(document.querySelectorAll('.agent-model-tool').length,1);assert.match(document.querySelector('#agent-messages').textContent,/updated output/);
+context.agent.detail.tasks[0].status='failed';context.agent.detail.messages.find(m=>m.id==='new').modelMetadata.taskReason='<img src=x> Agent reached limit';context.renderConversation();assert.match(document.querySelector('.agent-task-summary').textContent,/执行失败/);assert.match(document.querySelector('.agent-task-summary').textContent,/Agent reached limit/);assert.equal(document.querySelector('.agent-task-summary img'),null);context.agent.detail=JSON.parse(JSON.stringify(context.agent.detail));context.renderConversation();assert.match(document.querySelector('.agent-task-summary').textContent,/Agent reached limit/);
 context.agent.detail.modelPending=false;context.renderPending(document.querySelector('#agent-messages'));
 assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(document.querySelector('.agent-stream-status'),null);
 (async()=>{

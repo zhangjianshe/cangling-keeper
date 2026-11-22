@@ -446,7 +446,7 @@
     const follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<90;
     const draft=container.querySelector('.agent-run-form');
     const toolOpen=new Map([...container.querySelectorAll('.agent-compact-run')].map(node=>[node.dataset.runId,node.open]));
-    const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata,m.attachments]),agent.detail.replyGroups,agent.detail.runs,agent.editing?.session===agent.selected?agent.editing.id:null]);
+    const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata,m.attachments]),agent.detail.replyGroups,agent.detail.runs,agent.detail.tasks,agent.editing?.session===agent.selected?agent.editing.id:null]);
     if(!draft && container.dataset.signature===signature){
       for(const entry of agent.detail.messages){const body=container.querySelector('[data-message-id="'+entry.id+'"] .agent-message-body');if(body)window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');}
       renderPending(container);if(follow)timeline.scrollTop=timeline.scrollHeight;window.keeperThreadNav?.update({messages:visibleMessages(),detail:agent.detail});return;
@@ -477,6 +477,17 @@
         }
         if(entry.role==='assistant'){
           const runs=agent.detail.runs.filter(run=>run.responseId===entry.id);
+          const task=agent.detail.tasks?.find(t=>t.responseId===entry.id),metadata=entry.modelMetadata || {};
+          if(task){
+            const labels={model:'模型生成中',tool:'执行工具中',approval:'等待确认',complete:'已完成',failed:'执行失败',stopped:'已停止',interrupted:'已中断'};
+            const summary=element('details','agent-task-summary'),caption=element('summary','',`${labels[task.status] || '任务记录'} · ${task.step || 0} 轮 · 工具调用 ${runs.length} 次`);
+            const terminal=['complete','failed','stopped','interrupted'].includes(task.status);
+            const reason=metadata.taskReason || (task.status==='interrupted'?'服务中断，执行记录已保留；不会自动重放操作。':terminal?'历史任务未记录具体结束原因。':'任务进行中，可随时停止生成。');
+            summary.append(caption,element('p','',reason));
+            const counts={succeeded:0,failed:0,rejected:0,stopped:0,interrupted:0};for(const run of runs)if(run.status in counts)counts[run.status]++;
+            summary.append(element('p','',`工具结果：成功 ${counts.succeeded} · 失败 ${counts.failed} · 拒绝 ${counts.rejected} · 停止/中断 ${counts.stopped+counts.interrupted}`));
+            summary.open=!!agent.taskSummaryOpen?.has(entry.id);summary.ontoggle=()=>{agent.taskSummaryOpen ||= new Set();if(summary.open)agent.taskSummaryOpen.add(entry.id);else agent.taskSummaryOpen.delete(entry.id);};message.append(summary);
+          }
           if(runs.length){const steps=element('div','agent-tool-steps');steps.setAttribute('aria-label','工具执行过程');for(const run of runs)steps.append(runCard(run,toolOpen));message.append(steps);}
         }
         const body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');body.hidden=entry.role==='user' && !entry.content?.trim();message.append(body);agent.attachments?.decorate(message,entry);
@@ -540,7 +551,7 @@
     const task=event.payload;if(task.sessionId!==agent.selected || agent.detail.sessionId!==agent.selected)return;
     agent.detail.tasks ||= [];const index=agent.detail.tasks.findIndex(t=>t.responseId===task.responseId);
     if(index<0)agent.detail.tasks.push(task);else agent.detail.tasks[index]=task;
-    renderPending($('#agent-messages'));
+    renderConversation();
   });
   async function reviewAgentTool(run,approved){
     if(agent.detail.stopRequested || agent.stopping || agent.reviewing?.has(run.id))return;
@@ -672,7 +683,7 @@
     $('#agent-menu-logout').title=login.loggedIn?'退出当前账号':'当前未登录';
   }
   async function refreshAccountSessions(){
-    agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
+    agent.taskSummaryOpen?.clear();agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
     ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}

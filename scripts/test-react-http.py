@@ -106,6 +106,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert all(r['status']=='failed' for r in escaped['runs']);assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
    looping=session('loop');looped=wait_for(looping,lambda d:not d['modelPending']);assert looped['tasks'][-1]['status']=='failed' and len(looped['runs'])==3
+   assert any(m.get('modelMetadata',{}).get('taskReason') for m in looped['messages'] if m['role']=='assistant')
    assert '无进展' in json.dumps(looped,ensure_ascii=False)
    assert '无进展' in json.dumps(call('agent_session',{'sessionId':looping}),ensure_ascii=False)
    bounded=session('budget');bounded=wait_for(bounded,lambda d:not d['modelPending']);assert len(bounded['runs'])==8 and '8 轮' in json.dumps(bounded,ensure_ascii=False)

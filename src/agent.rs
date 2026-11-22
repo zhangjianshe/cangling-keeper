@@ -370,6 +370,8 @@ fn launch_model(core:Arc<AppState>,session:String,response_id:String,cancel_rx:t
                         if let Ok(tx)=store.conn.unchecked_transaction(){
                             let status=match &response{Ok(crate::model::ReplyFinish::Complete)=>"complete",Ok(crate::model::ReplyFinish::Stopped)=>"stopped",Err(_)=>"failed"};
                             let _=store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus',?2) WHERE id=?1",params![response_id,status]);
+                            let reason=match &response{Ok(crate::model::ReplyFinish::Complete)=>"模型已完成回复".to_string(),Ok(crate::model::ReplyFinish::Stopped)=>"用户停止生成，已保留现有内容和执行记录".to_string(),Err(error)=>error.chars().take(2000).collect::<String>()};
+                            let _=store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.taskReason',?2) WHERE id=?1",params![response_id,reason]);
                             let _=crate::agent_runtime::finish(&store,&model_session,&response_id,status);
                             let result=match response{Ok(_)=>Ok(()),Err(error)=>message(&store,&model_session,"error",&error)};
                             if result.is_ok(){let _=store.conn.execute("DELETE FROM agent_model_pending WHERE session_id=?1",[&model_session]);let _=tx.commit();}
