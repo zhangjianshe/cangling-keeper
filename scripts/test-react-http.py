@@ -8,7 +8,7 @@ class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
-  assert {t['function']['name'] for t in body['tools']}=={'list_directory','read_file','search_files','write_file','apply_patch','run_command','load_skill'}
+  assert {t['function']['name'] for t in body['tools']}=={'list_directory','read_file','search_files','write_file','apply_patch','run_command','load_skill','update_plan'}
   assert self.headers['Authorization']=='Bearer fixture-only-key'
   user=next(m['content'] for m in reversed(body['messages']) if m['role']=='user')
   results=[m for m in body['messages'] if m['role']=='tool']
@@ -28,6 +28,15 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if 'invalid plan fixture' in user:
+    if not results:tools([('update_plan',{'plan':[{'step':'a','status':'in_progress'},{'step':'b','status':'in_progress'}]})]);return
+    assert json.loads(results[-1]['content'])['keeperResult']['outcome']=='failed'
+    event({'content':'Invalid plan rejected'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if 'plan fixture' in user:
+    if len(results)==0:tools([('update_plan',{'plan':[{'step':'Read README','status':'in_progress'},{'step':'Summarize','status':'pending'}]})]);return
+    if len(results)==1:tools([('read_file',{'path':'README.md'})]);return
+    if len(results)==2:tools([('update_plan',{'plan':[{'step':'Read README','status':'completed'},{'step':'Summarize','status':'completed'}],'explanation':'Read results verified'})]);return
+    event({'content':'Plan complete'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'broken' in user:tools([('read_file',{'path':'README.md'})],True);return
    if 'escape' in user and not results:
     tools([('read_file',{'path':'../secret.txt'}),('not_registered',{'command':'touch unsafe'}),('search_files',{'query':''})]);return
@@ -114,6 +123,12 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   invalid_plan=session('invalid plan fixture');invalid_detail=wait_for(invalid_plan,lambda d:not d['modelPending']);assert len(invalid_detail['runs'])==1 and invalid_detail['runs'][0]['status']=='failed'
+   planned=session('plan fixture');plan_detail=wait_for(planned,lambda d:not d['modelPending'])
+   assert [r['tool'] for r in plan_detail['runs']]==['update_plan','read_file','update_plan']
+   assert all(r['status']=='succeeded' for r in plan_detail['runs'])
+   assert json.loads(plan_detail['runs'][-1]['output'])['plan'][1]['status']=='completed'
+   assert call('agent_session',{'sessionId':planned})['runs']==plan_detail['runs']
    complete=session('阅读项目并总结 complete');complete_detail=wait_for(complete,lambda d:not d['modelPending']);assert complete_detail['tasks'][-1]['status']=='complete';assert len(complete_detail['runs'])==3
    # A regenerated answer owns a separate tool history and selects the new version.
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2

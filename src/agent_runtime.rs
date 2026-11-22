@@ -212,6 +212,10 @@ pub(crate) async fn execute(
         "正在准备操作…",
         sink.as_ref(),
     )?;
+    if call.name == "update_plan" {
+        let result=parsed.map_err(|_|"计划参数不是有效 JSON".to_string()).and_then(crate::agent_plan::update);
+        return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());
+    }
     if call.name.starts_with("mcp_") {
         return execute_mcp(&core,session,response,&run,call,parsed,step,cancel,deadline,sink.as_ref()).await;
     }

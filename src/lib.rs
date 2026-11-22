@@ -15,6 +15,7 @@ mod agent_environment;
 mod model;
 mod agent_files;
 mod agent_runtime;
+mod agent_plan;
 mod agent_tool_result;
 mod agent_actions;
 mod app_update;

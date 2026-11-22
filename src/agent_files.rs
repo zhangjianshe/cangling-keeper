@@ -16,7 +16,7 @@ pub(crate) fn definitions() -> Vec<Value> {
         ("list_directory", "列出当前项目内目录，返回名称、类型和大小。path 默认为 .，只允许项目相对路径。", json!({"path":{"type":"string"}}), json!([])),
         ("read_file", "读取项目 UTF-8 文本文件，返回带行号内容；可指定 startLine 和最多 200 行的 lineCount。", json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
         ("search_files", "在项目文件名和 UTF-8 文本中搜索字面字符串，递归搜索指定 path（默认 .）；跳过链接、私密文件和构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"}}), json!(["query"])),
-    ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).collect()
+    ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect()
 }
 pub(crate) fn title(name: &str) -> &str {
     match name {
@@ -24,6 +24,7 @@ pub(crate) fn title(name: &str) -> &str {
         "read_file" => "读取项目文件",
         "search_files" => "搜索项目文件",
         "load_skill" => "加载项目技能",
+        "update_plan" => "更新任务计划",
         _ => "未知工具",
     }
 }

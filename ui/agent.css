@@ -323,3 +323,5 @@
 .project-code-editor.ace_editor{font-size:15px;line-height:1.6}
 
 .agent-task-summary{margin:8px 0 12px;color:#8b919b;font-size:13px;line-height:1.6}.agent-task-summary summary{cursor:pointer}.agent-task-summary summary:hover{color:#23883e}.agent-task-summary p{margin:6px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+
+.agent-task-plan{margin:8px 0 12px;font-size:13px;line-height:1.6}.agent-task-plan>small{margin-left:12px;color:#92929a}.agent-task-plan ol{margin:6px 0;padding-left:24px}.agent-task-plan li{padding:2px 0}.agent-task-plan li span:first-child{display:inline-block;width:60px;color:#92929a}.agent-task-plan .plan-in_progress span:first-child{color:#34844b}.agent-task-plan p{margin:6px 0;color:#777780}

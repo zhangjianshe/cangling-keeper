@@ -17,7 +17,7 @@
   function updateMessageTimes(){for(const node of document.querySelectorAll('.agent-message-time[data-time]')){const time=Number(node.dataset.time);if(Number.isFinite(time) && time>0)node.textContent=relativeMessageTime(time);}}
   function notice(message='') {$('#agent-notice').textContent=message;$('#agent-notice').hidden=!message;}
   function sessionStorageKey(){return 'keeper-agent-session:'+(agent.ownerKey || 'guest');}
-  function titleFor(tool) {return ({list_directory:'列出项目目录',read_file:'读取项目文件',load_skill:'加载项目技能',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
+  function titleFor(tool) {return ({update_plan:'更新任务计划',list_directory:'列出项目目录',read_file:'读取项目文件',load_skill:'加载项目技能',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
   function sessionRow(session){
     const row=element('div','agent-session-row');
     const button=element('button','agent-session'+(session.id===agent.selected?' active':''),session.title);button.type='button';
@@ -477,6 +477,11 @@
         }
         if(entry.role==='assistant'){
           const runs=agent.detail.runs.filter(run=>run.responseId===entry.id);
+          const planned=[...runs].reverse().find(run=>run.tool==='update_plan' && run.status==='succeeded');
+          if(planned){try{const plan=JSON.parse(planned.output);if(Array.isArray(plan.plan)){
+            const box=element('section','agent-task-plan');box.setAttribute('aria-label','任务计划');box.append(element('strong','','任务计划'),element('small','','模型报告的进度，以实际执行结果为准'));
+            const steps=element('ol');for(const item of plan.plan){const row=element('li','plan-'+item.status);row.append(element('span','',({pending:'待处理',in_progress:'进行中',completed:'已完成'})[item.status] || '未知状态'),element('span','',item.step));steps.append(row);}box.append(steps);if(plan.explanation)box.append(element('p','',plan.explanation));message.append(box);
+          }}catch{}}
           const task=agent.detail.tasks?.find(t=>t.responseId===entry.id),metadata=entry.modelMetadata || {};
           if(task){
             const labels={model:'模型生成中',tool:'执行工具中',approval:'等待确认',complete:'已完成',failed:'执行失败',stopped:'已停止',interrupted:'已中断'};
