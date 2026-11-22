@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """CIS model catalog and proxy routing; all identities and keys are disposable."""
-import http.server,json,os,socket,sqlite3,subprocess,tempfile,threading,time,urllib.request,urllib.error
+import base64,http.server,json,os,socket,sqlite3,subprocess,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
-seen=[];admin_writes=[];models=[{'id':'shared','name':'CIS Shared','provider':'deepseek','model':'central-v1','enabled':True,'contextLimit':32768,'revision':'revision-1','baseUrl':'http://provider.invalid','hasApiKey':True}]
+seen=[];admin_writes=[];models=[{'id':'shared','name':'CIS Shared','provider':'deepseek','model':'central-v1','enabled':True,'contextLimit':32768,'revision':'revision-1','supportsImages':True,'baseUrl':'http://provider.invalid','hasApiKey':True}]
 class CIS(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def payload(self,value):
@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-cis-model-') as folder:
    time.sleep(.03)
   raise AssertionError('timeout')
  try:
-  process=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'HOME':folder,'TMPDIR':folder},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  process=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
   for _ in range(100):
    try:call('agent_bootstrap');break
    except Exception:time.sleep(.05)
@@ -68,6 +68,17 @@ with tempfile.TemporaryDirectory(prefix='keeper-cis-model-') as folder:
   s=call('agent_new_session')['id'];call('agent_session_model',{'sessionId':s,'id':remote['id']});call('agent_send_message',{'sessionId':s,'content':'hello'});d=done(s);assert d['messages'][-1]['content']=='CIS reply',d['messages'][-1]
   assert seen[-1]['apiToken']=='alice-token' and seen[-1]['authorization'] is None and seen[-1]['body']['cis_model_revision']=='revision-1';assert 'local-private-fixture' not in json.dumps(seen)
   assert d['messages'][-1]['modelMetadata']['model']=='central-v1'
+  assert remote['supportsImages'] is True
+  with sqlite3.connect(str(Path(folder)/'data.sql')) as db:assert db.execute('SELECT supports_images FROM agent_cis_models WHERE id=?',('shared',)).fetchone()[0]==1
+  image_session=call('agent_new_session')['id'];call('agent_session_model',{'sessionId':image_session,'id':remote['id']})
+  # Generate valid PNG using stdlib, matching the attachment validator.
+  import zlib,struct
+  def chunk(k,b):return struct.pack('>I',len(b))+k+b+struct.pack('>I',zlib.crc32(k+b)&0xffffffff)
+  png=base64.b64encode(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1,1,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\0\x20\x80\xc0'))+chunk(b'IEND',b'')).decode()
+  req=urllib.request.Request(base+'/api/attachments/upload',data=json.dumps({'sessionId':image_session,'name':'image.png','mimeType':'image/png','data':png}).encode(),headers={'Content-Type':'application/json','Origin':base})
+  image=json.load(urllib.request.urlopen(req))['result']
+  call('agent_send_message',{'sessionId':image_session,'content':'describe','attachmentIds':[image['id']]});assert done(image_session)['messages'][-1]['content']=='CIS reply'
+  assert any(part.get('type')=='image_url' for part in seen[-1]['body']['messages'][-1]['content'])
   original=d['messages'][-1]['id'];before_regenerate=len(seen)
   call('agent_regenerate',{'sessionId':s,'messageId':original});regenerated=done(s)
   assert len(seen)==before_regenerate+1 and regenerated['messages'][-1]['content']=='CIS reply'

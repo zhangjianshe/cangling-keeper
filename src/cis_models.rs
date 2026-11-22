@@ -20,6 +20,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
             )
             .map_err(|e| e.to_string())?;
     }
+    if !columns.iter().any(|v|v=="supports_images") {store.conn.execute_batch("ALTER TABLE agent_cis_models ADD COLUMN supports_images INTEGER NOT NULL DEFAULT 0;").map_err(|e|e.to_string())?;}
     Ok(())
 }
 fn credentials(store: &Store) -> Result<(String, String, String), String> {
@@ -62,8 +63,8 @@ pub(crate) fn catalog(store: &Store) -> Result<Vec<Value>, String> {
     if owner == "guest" {
         return Ok(Vec::new());
     }
-    let mut stmt=store.conn.prepare("SELECT id,name,provider,model,context_limit,revision FROM agent_cis_models WHERE owner_key=?1 AND revision<>'' ORDER BY name,id").map_err(|e|e.to_string())?;
-    let rows=stmt.query_map([&owner],|r|{let id:String=r.get(0)?;Ok(json!({"id":format!("cis-model:{}:{}",owner,id),"remoteId":id,"name":r.get::<_,String>(1)?,"provider":"cis-proxy","upstreamProvider":r.get::<_,String>(2)?,"model":r.get::<_,String>(3)?,"contextLimit":r.get::<_,i64>(4)?,"revision":r.get::<_,String>(5)?,"source":"cis","enabled":true,"hasApiKey":true,"supportsImages":false}))}).map_err(|e|e.to_string())?;
+    let mut stmt=store.conn.prepare("SELECT id,name,provider,model,context_limit,revision,supports_images FROM agent_cis_models WHERE owner_key=?1 AND revision<>'' ORDER BY name,id").map_err(|e|e.to_string())?;
+    let rows=stmt.query_map([&owner],|r|{let id:String=r.get(0)?;Ok(json!({"id":format!("cis-model:{}:{}",owner,id),"remoteId":id,"name":r.get::<_,String>(1)?,"provider":"cis-proxy","upstreamProvider":r.get::<_,String>(2)?,"model":r.get::<_,String>(3)?,"contextLimit":r.get::<_,i64>(4)?,"revision":r.get::<_,String>(5)?,"source":"cis","enabled":true,"hasApiKey":true,"supportsImages":r.get::<_,bool>(6)?}))}).map_err(|e|e.to_string())?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())
 }
@@ -191,6 +192,7 @@ pub(crate) async fn refresh(core: &Arc<AppState>) -> Result<Value, String> {
             get("model", 128)?,
             limit,
             get("revision", 80)?,
+            m["supportsImages"].as_bool().unwrap_or(false),
         ));
     }
     let store = core.store.lock().map_err(|e| e.to_string())?;
@@ -205,12 +207,12 @@ pub(crate) async fn refresh(core: &Arc<AppState>) -> Result<Value, String> {
         .conn
         .execute("DELETE FROM agent_cis_models WHERE owner_key=?1", [&owner])
         .map_err(|e| e.to_string())?;
-    for (id, name, provider, model, limit, revision) in parsed {
+    for (id, name, provider, model, limit, revision, supports_images) in parsed {
         store
             .conn
             .execute(
-                "INSERT INTO agent_cis_models(owner_key,id,name,provider,model,context_limit,revision) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                rusqlite::params![owner, id, name, provider, model, limit, revision],
+                "INSERT INTO agent_cis_models(owner_key,id,name,provider,model,context_limit,revision,supports_images) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                rusqlite::params![owner, id, name, provider, model, limit, revision, supports_images],
             )
             .map_err(|e| e.to_string())?;
     }
