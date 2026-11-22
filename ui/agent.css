@@ -329,3 +329,5 @@
 .agent-budget-warning{color:#a46c20}
 
 .agent-task-plan .plan-blocked span:first-child{color:#a56721}.agent-task-plan .plan-skipped span:first-child{color:#777780}.agent-task-plan .agent-plan-reason{margin-left:60px;color:#777780;overflow-wrap:anywhere}
+
+.project-browser-bar>.project-browser-icon-button{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:6px}.project-browser-icon-button svg{width:20px;height:20px;flex:none}

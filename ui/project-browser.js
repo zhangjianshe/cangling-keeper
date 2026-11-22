@@ -1,20 +1,25 @@
 (() => {
  window.createKeeperProjectBrowser=({invoke,agent,showConversation})=>{
   const node=(tag,cls,text)=>{const el=document.createElement(tag);el.className=cls||'';if(text!==undefined)el.textContent=text;return el;};
+  const iconButton=(label,path,primary=false)=>{
+   const button=node('button','btn project-browser-icon-button'+(primary?' primary':''));button.type='button';button.title=label;button.setAttribute('aria-label',label);
+   const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');for(const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))svg.setAttribute(key,value);
+   const shape=document.createElementNS(svg.namespaceURI,'path');shape.setAttribute('d',path);svg.append(shape);button.append(svg);return button;
+  };
   const panel=node('section','keeper-project-browser hidden');panel.setAttribute('aria-label','项目目录');
   const header=node('header','keeper-settings-header'),back=node('button','agent-nav-button','← 返回会话'),title=node('h1','','项目目录');back.type='button';back.onclick=showConversation;header.append(back,title);
-  const location=node('p','project-browser-location'),bar=node('div','project-browser-bar'),up=node('button','btn','上级目录'),refresh=node('button','btn','刷新'),status=node('p','project-browser-status');status.setAttribute('role','status');bar.append(up,location,status,refresh);
+  const location=node('p','project-browser-location'),bar=node('div','project-browser-bar'),up=iconButton('上级目录','m6 10 6-6 6 6M12 4v16'),refresh=iconButton('刷新','M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9'),status=node('p','project-browser-status');status.setAttribute('role','status');bar.append(up,location,status,refresh);
   const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(code);layout.append(list,preview);panel.append(header,bar,layout);document.querySelector('#agent-main').after(panel);
-  const save=node('button','btn primary','保存文件');bar.append(save);save.disabled=true;
+  const save=iconButton('保存文件','M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2ZM7 3v6h10V3M7 21v-8h10v8',true);bar.append(save);save.disabled=true;
   const editor=window.ace.edit(code);window.ace.config.set('basePath','/vendor/ace');editor.setTheme('ace/theme/github');editor.session.setUseWorker(false);editor.setOptions({fontSize:15,showPrintMargin:false});editor.setReadOnly(true);
   let project=null,path='.',file=null,seq=0,popup=null,trigger=null,original='',hash='',editable=false,saving=false,creating=false;
   const dirty=()=>!!file&&editor.getValue()!==original;
-  function updateSave(){save.disabled=!editable||!dirty()||saving;save.textContent=saving?'正在保存…':dirty()?'保存文件 *':'保存文件';}
+  function updateSave(){save.disabled=!editable||!dirty()||saving;const label=saving?'正在保存…':dirty()?'保存文件（有未保存修改）':'保存文件';save.title=label;save.setAttribute('aria-label',label);save.setAttribute('aria-busy',String(saving));}
   editor.session.on('change',updateSave);
   const discard=async()=>!dirty()||await window.uiConfirm('当前文件有未保存的修改，放弃修改并继续？','未保存的修改');
   window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});
   save.onclick=async()=>{if(save.disabled)return;const ownerProject=project,ownerFile=file,epoch=agent.identityEpoch,text=editor.getValue();saving=true;updateSave();try{const data=await invoke('agent_project_file_save',{projectId:project.id,path:file,content:text,sha256:hash});if(project!==ownerProject||file!==ownerFile||epoch!==agent.identityEpoch)return;original=text;hash=data.sha256;status.textContent='已保存';}catch(e){if(project===ownerProject&&file===ownerFile&&epoch===agent.identityEpoch)status.textContent=String(e);}finally{saving=false;updateSave();}};
-  const newFile=node('button','btn','新建文件'),newDirectory=node('button','btn','新建目录');bar.insertBefore(newFile,refresh);bar.insertBefore(newDirectory,refresh);newFile.type=newDirectory.type='button';
+  const newFile=iconButton('新建文件','M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8ZM14 2v6h6M12 12v6M9 15h6'),newDirectory=iconButton('新建目录','M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2ZM12 10v7M8.5 13.5h7');bar.insertBefore(newFile,refresh);bar.insertBefore(newDirectory,refresh);newFile.type=newDirectory.type='button';
   async function create(kind){
    if(creating||saving||!project)return;const version=seq,epoch=agent.identityEpoch,selected=project,parent=path;creating=true;newFile.disabled=newDirectory.disabled=true;
    try{const name=await window.uiPrompt(kind==='file'?'请输入文件名称':'请输入目录名称','',kind==='file'?'新建文件':'新建目录');if(name===null||name===undefined||version!==seq||epoch!==agent.identityEpoch)return;
@@ -29,11 +34,11 @@
 
   function closeMenu(focus=false){popup?.remove();popup=null;if(trigger){trigger.setAttribute('aria-expanded','false');if(focus)trigger.focus();}trigger=null;}
   function hide(){panel.classList.add('hidden');seq++;closeMenu();}
-  function reset(){hide();project=null;file=null;list.replaceChildren();original='';editor.setValue('',-1);editor.setReadOnly(true);editable=false;updateSave();location.textContent='';}
+  function reset(){hide();project=null;file=null;list.replaceChildren();original='';editor.setValue('',-1);editor.setReadOnly(true);editable=false;updateSave();location.textContent='';location.title='';}
   function clearPreview(){file=null;original='';hash='';editable=false;editor.setValue('',-1);editor.setReadOnly(true);updateSave();code.setAttribute('aria-label','文件编辑器');}
   async function loadDirectory(target){
    const before=seq,identity=agent.identityEpoch;if(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
-   const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';location.textContent=selected.directory+(target==='.'?'':' / '+target);location.title=location.textContent;
+   const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';location.textContent=target==='.'?'根目录':'根目录 / '+target;location.title=selected.directory+(target==='.'?'':(selected.directory.endsWith('/')?'':'/')+target);
    try{const data=await invoke('agent_project_browse',{projectId:selected.id,path:target,action:'list'});if(version!==seq||epoch!==agent.identityEpoch)return;
     status.textContent=data.truncated?`目录条目较多，仅显示前 ${data.entries.length} 项。`:`${data.entries.length} 项 · 隐藏敏感文件、链接及构建缓存`;
     for(const entry of data.entries){const row=node('button','project-browser-entry');row.type='button';row.append(node('span','',entry.type==='directory'?'▱':'▤'),node('span','project-browser-name',entry.name),node('small','',entry.type==='directory'?'目录':entry.size+' B'));const child=target==='.'?entry.name:target+'/'+entry.name;row.dataset.path=child;row.onclick=()=>{if(entry.type==='directory')loadDirectory(child);else loadFile(child);};list.append(row);}
