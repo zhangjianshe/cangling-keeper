@@ -27,7 +27,7 @@
     function decorateRow(row,item){
       function openMenu(x,y){
         closeMenu();const node=element('div','history-row-menu');node.setAttribute('role','menu');node.setAttribute('aria-label',item.title+'的操作');
-        for(const [name,kind,command] of [[item.pinned?'取消置顶':'置顶会话','pin','pin'],['归档','archive','archive'],['移到回收站','trash','delete']]){
+        for(const [name,kind,command] of [[item.pinned?'取消置顶':'置顶会话','pin','pin'],['导出 Markdown','archive','export'],['归档','archive','archive'],['移到回收站','trash','delete']]){
           const b=button(name,kind,()=>{closeMenu();mutate(item,command);});b.setAttribute('role','menuitem');b.disabled=mutationBusy;node.append(b);
         }
         document.body.append(node);node.style.left=Math.max(8,Math.min(innerWidth-(node.offsetWidth || 190)-8,x))+'px';node.style.top=Math.max(8,Math.min(innerHeight-(node.offsetHeight || 130)-8,y))+'px';menu={node,launch:action};action.setAttribute('aria-expanded','true');node.querySelector('button:not(:disabled)')?.focus();
@@ -107,6 +107,11 @@
     async function mutate(item,action){
       if(mutationBusy)return;const epoch=agent.identityEpoch || 0;mutationBusy=true;renderResults();
       try{
+        if(action==='export'){
+          const detail=await invoke('agent_session',{sessionId:item.id});if(epoch!==(agent.identityEpoch || 0))return;
+          const blob=new Blob([window.keeperConversationMarkdown(detail)],{type:'text/markdown;charset=utf-8'}),url=URL.createObjectURL(blob),link=document.createElement('a');
+          link.href=url;link.download=(String(detail.session?.title || '会话').replace(/[\\/:*?"<>|\x00-\x1f]/g,'_').slice(0,100) || '会话')+'.md';document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);notice('会话已导出为 Markdown。');return;
+        }
         if(action==='delete' && !await uiConfirm('将会话“'+item.title+'”移到回收站？之后可以恢复。项目目录中的文件会保留。','删除会话'))return;
         if(action==='purge' && !await uiConfirm('永久删除会话“'+item.title+'”及其消息、版本和工具记录？此操作无法撤销，项目目录中的文件会保留。','永久删除会话'))return;
         if(epoch!==(agent.identityEpoch || 0))return;
