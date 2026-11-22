@@ -4,7 +4,7 @@
   const panel=node('section','keeper-project-browser hidden');panel.setAttribute('aria-label','项目目录');
   const header=node('header','keeper-settings-header'),back=node('button','agent-nav-button','← 返回会话'),title=node('h1','','项目目录');back.type='button';back.onclick=showConversation;header.append(back,title);
   const location=node('p','project-browser-location'),bar=node('div','project-browser-bar'),up=node('button','btn','上级目录'),refresh=node('button','btn','刷新'),status=node('p','project-browser-status');status.setAttribute('role','status');bar.append(up,refresh);
-  const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),filename=node('h2','','文件预览'),hint=node('p','','选择一个文本文件查看内容。'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(filename,hint,code);layout.append(list,preview);panel.append(header,location,bar,status,layout);document.querySelector('#agent-main').after(panel);
+  const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(code);layout.append(list,preview);panel.append(header,location,bar,status,layout);document.querySelector('#agent-main').after(panel);
   const save=node('button','btn primary','保存文件');bar.append(save);save.disabled=true;
   const editor=window.ace.edit(code);window.ace.config.set('basePath','/vendor/ace');editor.setTheme('ace/theme/github');editor.session.setUseWorker(false);editor.setOptions({fontSize:13,showPrintMargin:false});editor.setReadOnly(true);
   let project=null,path='.',file=null,seq=0,popup=null,trigger=null,original='',hash='',editable=false,saving=false;
@@ -13,13 +13,13 @@
   editor.session.on('change',updateSave);
   const discard=async()=>!dirty()||await window.uiConfirm('当前文件有未保存的修改，放弃修改并继续？','未保存的修改');
   window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});
-  save.onclick=async()=>{if(save.disabled)return;const ownerProject=project,ownerFile=file,epoch=agent.identityEpoch,text=editor.getValue();saving=true;updateSave();try{const data=await invoke('agent_project_file_save',{projectId:project.id,path:file,content:text,sha256:hash});if(project!==ownerProject||file!==ownerFile||epoch!==agent.identityEpoch)return;original=text;hash=data.sha256;hint.textContent='已保存';}catch(e){if(project===ownerProject&&file===ownerFile&&epoch===agent.identityEpoch)hint.textContent=String(e);}finally{saving=false;updateSave();}};
+  save.onclick=async()=>{if(save.disabled)return;const ownerProject=project,ownerFile=file,epoch=agent.identityEpoch,text=editor.getValue();saving=true;updateSave();try{const data=await invoke('agent_project_file_save',{projectId:project.id,path:file,content:text,sha256:hash});if(project!==ownerProject||file!==ownerFile||epoch!==agent.identityEpoch)return;original=text;hash=data.sha256;status.textContent='已保存';}catch(e){if(project===ownerProject&&file===ownerFile&&epoch===agent.identityEpoch)status.textContent=String(e);}finally{saving=false;updateSave();}};
   editor.commands.addCommand({name:'saveProjectFile',bindKey:{win:'Ctrl-S',mac:'Command-S'},exec:()=>save.click()});
 
   function closeMenu(focus=false){popup?.remove();popup=null;if(trigger){trigger.setAttribute('aria-expanded','false');if(focus)trigger.focus();}trigger=null;}
   function hide(){panel.classList.add('hidden');seq++;closeMenu();}
   function reset(){hide();project=null;file=null;list.replaceChildren();original='';editor.setValue('',-1);editor.setReadOnly(true);editable=false;updateSave();location.textContent='';}
-  function clearPreview(){file=null;original='';hash='';editable=false;editor.setValue('',-1);editor.setReadOnly(true);updateSave();filename.textContent='文件预览';hint.textContent='支持 UTF-8 文本；128 KiB 内可编辑，1 MiB 内可只读预览；二进制不可预览。';}
+  function clearPreview(){file=null;original='';hash='';editable=false;editor.setValue('',-1);editor.setReadOnly(true);updateSave();code.setAttribute('aria-label','文件编辑器');}
   async function loadDirectory(target){
    const before=seq,identity=agent.identityEpoch;if(saving||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
    const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';location.textContent=selected.directory+(target==='.'?'':' / '+target);
@@ -31,12 +31,12 @@
   }
   async function loadFile(target){
    const before=seq,identity=agent.identityEpoch;if(saving||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
-   const version=++seq,epoch=agent.identityEpoch;clearPreview();filename.textContent=target;hint.textContent='正在读取…';
+   const version=++seq,epoch=agent.identityEpoch;clearPreview();code.setAttribute('aria-label',target);status.textContent='正在读取…';
    try{const data=await invoke('agent_project_browse',{projectId:project.id,path:target,action:'edit'});if(version!==seq||epoch!==agent.identityEpoch)return;
     file=target;list.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.path===target));original=data.content;hash=data.sha256;editable=data.editable;editor.setValue(original,-1);editor.setReadOnly(!editable);
     const ext=target.split('.').pop().toLowerCase(),modes={js:'javascript',ts:'typescript',json:'json',html:'html',htm:'html',css:'css',py:'python',java:'java',rs:'rust',c:'c_cpp',cpp:'c_cpp',h:'c_cpp',sh:'sh',yaml:'yaml',yml:'yaml',xml:'xml',md:'markdown',sql:'sql',ini:'ini'};editor.session.setMode('ace/mode/'+(modes[ext]||'text'));editor.resize();
-    hint.textContent=editable?'可编辑 · Ctrl/Cmd+S 保存':'文件超过128 KiB，只读预览';updateSave();
-   }catch(e){if(version===seq)hint.textContent='不可预览：'+String(e);}
+    status.textContent=editable?'':'文件超过128 KiB，只读预览';updateSave();
+   }catch(e){if(version===seq)status.textContent='不可预览：'+String(e);}
   }
   up.onclick=()=>loadDirectory(path.includes('/')?path.slice(0,path.lastIndexOf('/')):'.');refresh.onclick=()=>loadDirectory(path);
   async function open(value){closeMenu();const before=seq,identity=agent.identityEpoch;const changed=project?.id!==value.id;if(changed&&(saving||!await discard()||before!==seq||identity!==agent.identityEpoch))return;const resume=!changed&&dirty();if(changed)clearPreview();project=value;for(const id of ['agent-main','keeper-account','keeper-settings'])document.getElementById(id).classList.add('hidden');panel.classList.remove('hidden');title.textContent=value.name+' · 项目目录';if(resume)editor.resize();else loadDirectory('.');}
