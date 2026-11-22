@@ -480,7 +480,7 @@
           const planned=[...runs].reverse().find(run=>run.tool==='update_plan' && run.status==='succeeded');
           if(planned){try{const plan=JSON.parse(planned.output);if(Array.isArray(plan.plan)){
             const box=element('section','agent-task-plan');box.setAttribute('aria-label','任务计划');box.append(element('strong','','任务计划'),element('small','','模型报告的进度，以实际执行结果为准'));
-            const steps=element('ol');for(const item of plan.plan){const row=element('li','plan-'+item.status);row.append(element('span','',({pending:'待处理',in_progress:'进行中',completed:'已完成'})[item.status] || '未知状态'),element('span','',item.step));steps.append(row);}box.append(steps);if(plan.explanation)box.append(element('p','',plan.explanation));message.append(box);
+            const steps=element('ol');for(const item of plan.plan){const row=element('li','plan-'+item.status);row.append(element('span','',({pending:'待处理',in_progress:'进行中',completed:'已完成',blocked:'受阻',skipped:'已跳过'})[item.status] || '未知状态'),element('span','',item.step));if(item.reason)row.append(element('div','agent-plan-reason',item.reason));steps.append(row);}box.append(steps);if(plan.explanation)box.append(element('p','',plan.explanation));message.append(box);
           }}catch{}}
           const task=agent.detail.tasks?.find(t=>t.responseId===entry.id),metadata=entry.modelMetadata || {};
           if(task){

@@ -66,6 +66,15 @@ class API(http.server.BaseHTTPRequestHandler):
      assert 'lineCount' in json.loads(results[1]['content'])['error']
      tools([('read_file',{'path':'README.md','lineCount':10})]);return
     event({'content':'Corrected arguments succeeded'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if 'blocked steps fixture' in user:
+    if not results:tools([('update_plan',{'plan':[{'step':'Read','status':'blocked','reason':'等待文件'},{'step':'Publish','status':'skipped','reason':'本轮不发布'}]})]);return
+    if len(results)==1:
+     assert json.loads(results[-1]['content'])['plan'][0]['reason']=='等待文件'
+     tools([('update_plan',{'plan':[{'step':'Read','status':'blocked'}]})]);return
+    if len(results)==2:
+     assert json.loads(results[-1]['content'])['keeperResult']['outcome']=='failed'
+     tools([('update_plan',{'plan':[{'step':'Read','status':'pending'},{'step':'Publish','status':'skipped','reason':'本轮不发布'}]})]);return
+    event({'content':'Blocked plan corrected; no actions executed'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'invalid plan fixture' in user:
     if not results:tools([('update_plan',{'plan':[{'step':'a','status':'in_progress'},{'step':'b','status':'in_progress'}]})]);return
     assert json.loads(results[-1]['content'])['keeperResult']['outcome']=='failed'
@@ -182,6 +191,12 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    assert [r['status'] for r in corrected_detail['runs']]==['failed','failed','succeeded']
    assert not (root/'must-not-exist.txt').exists()
    assert all(not r.get('review') for r in corrected_detail['runs'])
+   blocked=session('blocked steps fixture');blocked_detail=wait_for(blocked,lambda d:not d['modelPending']);assert blocked_detail['tasks'][-1]['status']=='complete'
+   assert [r['status'] for r in blocked_detail['runs']]==['succeeded','failed','succeeded']
+   assert all(r['tool']=='update_plan' and not r.get('review') for r in blocked_detail['runs'])
+   assert json.loads(blocked_detail['runs'][0]['output'])['plan'][0]['status']=='blocked'
+   assert json.loads(blocked_detail['runs'][-1]['output'])['plan'][1]['reason']=='本轮不发布'
+   assert call('agent_session',{'sessionId':blocked})['runs']==blocked_detail['runs']
    invalid_plan=session('invalid plan fixture');invalid_detail=wait_for(invalid_plan,lambda d:not d['modelPending']);assert len(invalid_detail['runs'])==1 and invalid_detail['runs'][0]['status']=='failed'
    planned=session('plan fixture');plan_detail=wait_for(planned,lambda d:not d['modelPending'])
    assert [r['tool'] for r in plan_detail['runs']]==['update_plan','read_file','update_plan']
