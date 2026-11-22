@@ -15,7 +15,7 @@ use std::{
 
 pub(crate) fn definitions() -> Vec<Value> {
     [
- ("write_file","创建或覆盖项目内 UTF-8 文件。由系统安全策略决定自动批准或等待用户确认；父目录必须存在。修改已有文件时应将 read_file 返回的 sha256 传入 expectedSha256；不匹配则拒绝生成修改预览。",json!({"path":{"type":"string"},"content":{"type":"string"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path","content"])),
+ ("write_file","创建或覆盖项目内 UTF-8 文件。由系统安全策略决定自动批准或等待用户确认；父目录必须存在。新建文件使用 createOnly=true，同名文件存在时拒绝覆盖；不能与 expectedSha256 同时使用。修改已有文件时应将 read_file 返回的 sha256 传入 expectedSha256；不匹配则拒绝生成修改预览。",json!({"path":{"type":"string"},"content":{"type":"string"},"createOnly":{"type":"boolean"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path","content"])),
  ("apply_patch","精确替换同一文件：使用 oldText/newText 单组参数，或 edits 数组（1–20组），不能混用。各组按顺序基于上一步结果唯一匹配，oldText 不能为空；任何一组失败均不写入，全部成功后只生成一份审批差异并写入一次。由系统安全策略决定自动批准或等待用户确认；应传入 read_file 的 sha256 作为 expectedSha256，拒绝基于旧版本修改。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"},"edits":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"oldText":{"type":"string","minLength":1},"newText":{"type":"string"}},"required":["oldText","newText"],"additionalProperties":false}},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path"])),
  ("run_command","提出本机 shell 命令，默认在当前项目根目录运行。系统按安全模式决定自动批准或等待用户确认完整命令和执行目录。以 Keeper 用户权限执行，不是文件沙箱。timeoutSeconds 默认 60，最多 120。",json!({"command":{"type":"string"},"cwd":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!(["command"])),
 ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).collect()
@@ -252,7 +252,13 @@ fn prepare_with_limit(
         .open_dir(&parent_path)
         .map_err(|_| "父目录必须已存在")?;
     let filename = PathBuf::from(relative.file_name().ok_or("无效文件名")?);
+    let create_only = match args.get("createOnly") {
+        None => false,
+        Some(value) => value.as_bool().ok_or("createOnly 必须为布尔值")?,
+    };
+    if create_only && args.get("expectedSha256").is_some() {return Err("只创建文件不能同时指定已有文件版本 expectedSha256".into());}
     let old = snapshot(&parent, &filename)?;
+    if create_only && old.is_some() {return Err("只创建模式：同名文件已存在，未生成预览或覆盖；请使用其他名称，或读取后明确修改已有文件。".into());}
     let before = old.as_ref().map(|(s, _)| s.as_str()).unwrap_or("");
     if let Some(value)=args.get("expectedSha256") {
         let expected=value.as_str().filter(|s|s.len()==64 && s.bytes().all(|c|c.is_ascii_hexdigit())).ok_or("expectedSha256 须为64位十六进制校验值")?;
@@ -298,7 +304,7 @@ fn prepare_with_limit(
         .header(if old.is_some() { raw } else { "/dev/null" }, raw)
         .to_string();
     check(cancel)?;
-    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"bytes":after.len(),"sourceHashVerified":args.get("expectedSha256").is_some()});
+    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"createOnly":create_only,"bytes":after.len(),"sourceHashVerified":args.get("expectedSha256").is_some()});
     Ok(Prepared {
         review,
         action: Action::File {
@@ -683,6 +689,23 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path.join("multi.txt")).unwrap(),"ONE\nTWO\n");
         let invalid=json!({"path":"multi.txt","edits":[{"oldText":"ONE","newText":"changed"},{"oldText":"missing","newText":"bad"}]});assert!(prepare(root.clone(),path.to_str().unwrap(),"apply_patch",&invalid,&flag()).is_err());assert_eq!(std::fs::read_to_string(path.join("multi.txt")).unwrap(),"ONE\nTWO\n");
         for args in [json!({"path":"multi.txt","edits":[]}),json!({"path":"multi.txt","edits":[{"oldText":"ONE","newText":"x"}],"oldText":"ONE","newText":"x"})]{assert!(prepare(root.clone(),path.to_str().unwrap(),"apply_patch",&args,&flag()).is_err());}
+        drop(root);std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn create_only_never_overwrites_existing_or_newly_appearing_file() {
+        let (path,root)=fixture();
+        let args=json!({"path":"new.txt","content":"new content","createOnly":true});
+        let plan=prepare(root.clone(),path.to_str().unwrap(),"write_file",&args,&flag()).unwrap();
+        assert_eq!(plan.review["createOnly"],true);assert_eq!(plan.review["newFile"],true);
+        std::fs::write(path.join("new.txt"),"another writer").unwrap();
+        assert!(plan.execute(flag(), |_|{}).is_err());
+        assert_eq!(std::fs::read_to_string(path.join("new.txt")).unwrap(),"another writer");
+        assert!(prepare(root.clone(),path.to_str().unwrap(),"write_file",&args,&flag()).is_err());
+        let mut invalid=args.clone();invalid["createOnly"]=json!("true");assert!(prepare(root.clone(),path.to_str().unwrap(),"write_file",&invalid,&flag()).is_err());
+        invalid=args.clone();invalid["expectedSha256"]=json!(hash(b"another writer"));assert!(prepare(root.clone(),path.to_str().unwrap(),"write_file",&invalid,&flag()).is_err());
+        std::fs::remove_file(path.join("new.txt")).unwrap();
+        let plan=prepare(root.clone(),path.to_str().unwrap(),"write_file",&args,&flag()).unwrap();plan.execute(flag(), |_|{}).unwrap();
+        assert_eq!(std::fs::read_to_string(path.join("new.txt")).unwrap(),"new content");
         drop(root);std::fs::remove_dir_all(path).unwrap();
     }
     #[test]
