@@ -28,6 +28,13 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if 'located search fixture' in user:
+    if not results:tools([('search_files',{'query':'target-word','path':'late.txt','mode':'content'})]);return
+    if len(results)==1:
+     hit=json.loads(results[-1]['content'])['matches'][0];assert 'target-word' in hit['text'];assert hit['column']>1000
+     tools([('read_file',hit['readArgs'])]);return
+    assert 'target-word' in json.loads(results[-1]['content'])['lines'][0]['text']
+    event({'content':'Located and read match'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'filtered search fixture' in user:
     if not results:tools([('search_files',{'query':'needle','mode':'content','extensions':['rs']})]);return
     matches=json.loads(results[-1]['content'])['matches'];assert len(matches)==1 and matches[0]['path'].endswith('main.rs')
@@ -148,6 +155,8 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   (root/'late.txt').write_text('中'*1200+'target-word'+'后'*100)
+   located=session('located search fixture');located_detail=wait_for(located,lambda d:not d['modelPending']);assert located_detail['tasks'][-1]['status']=='complete';assert len(located_detail['runs'])==2
    filtered=session('filtered search fixture');filtered_detail=wait_for(filtered,lambda d:not d['modelPending']);assert filtered_detail['tasks'][-1]['status']=='complete';assert len(filtered_detail['runs'])==1
    (root/'many').mkdir()
    for index in range(205):(root/'many'/f'{index:03}.txt').write_text('')

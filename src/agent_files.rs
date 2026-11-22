@@ -15,7 +15,7 @@ pub(crate) fn definitions() -> Vec<Value> {
     [
         ("list_directory", "分页列出当前项目目录，返回名称、类型和大小。path 默认为 .；有 nextList 时使用其完整参数续读。offset 从0开始，expectedSha256 校验目录列表，变化时须从首页重新读取。", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":0},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}), json!([])),
         ("read_file", "读取项目 UTF-8 文本文件，返回带行号内容；每页最多200行，每行片段最多1000字节。结果有 nextRead 时使用其完整参数续读，避免遗漏长行；startColumn 为首行从1开始的Unicode字符列，expectedSha256 用于拒绝跨文件版本续读。", json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"startColumn":{"type":"integer","minimum":1},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
-        ("search_files", "在项目相对文件路径和 UTF-8 内容中搜索字面字符串；mode 为 all（默认）、filename 或 content；extensions 可限制后缀，如 [rs,py]，不带点，不区分大小写。递归搜索 path（默认 .），跳过链接、私密文件及构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"},"mode":{"type":"string","enum":["all","filename","content"]},"extensions":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string","minLength":1,"maxLength":16}}}), json!(["query"])),
+        ("search_files", "在项目相对文件路径和 UTF-8 内容中搜索字面字符串；mode 为 all（默认）、filename 或 content；extensions 可限制后缀，如 [rs,py]，不带点，不区分大小写。内容结果包含命中行/字符列、附近片段及可直接调用 read_file 的 readArgs。递归搜索 path（默认 .），跳过链接、私密文件及构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"},"mode":{"type":"string","enum":["all","filename","content"]},"extensions":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string","minLength":1,"maxLength":16}}}), json!(["query"])),
     ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect()
 }
 pub(crate) fn title(name: &str) -> &str {
@@ -179,6 +179,19 @@ impl Scope {
         Ok(result)
     }
 }
+// Convert a match in lowercased text back to original UTF-8 boundaries.
+fn match_range(line: &str, needle: &str, sensitive: bool) -> Option<(usize,usize)> {
+    if sensitive {return line.find(needle).map(|start|(start,start+needle.len()));}
+    let lower=line.to_lowercase();let start=lower.find(needle)?;let end=start+needle.len();
+    let mut lowered=0;let mut original_start=None;
+    for (offset,ch) in line.char_indices(){
+        let length=ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        if original_start.is_none() && lowered+length>start{original_start=Some(offset);}
+        lowered+=length;
+        if lowered>=end{return Some((original_start.unwrap_or(offset),offset+ch.len_utf8()));}
+    }
+    None
+}
 pub(crate) fn execute(
     root: &Dir,
     name: &str,
@@ -295,6 +308,7 @@ pub(crate) fn execute(
             };
             let mut stack = vec![(path, 0)];
             let mut found = Vec::new();
+            let mut output_bytes=0;
             let mut skipped = 0;
             let mut files = 0;
             let mut truncated = false;
@@ -324,16 +338,20 @@ pub(crate) fn execute(
                 }
                 let label = path.to_string_lossy().trim_start_matches("./").to_owned();
                 if mode!="content" && matches(&label) {
-                    found.push(json!({"path":label,"kind":"filename"}));
+                    let hit=json!({"path":label,"kind":"filename"});let bytes=hit.to_string().len();if output_bytes+bytes>16000{truncated=true;break;}output_bytes+=bytes;found.push(hit);
                 }
                 if found.len()>=50 {truncated=true;break;}
                 if mode=="filename" {continue;}
                 match scope.text(&path) {
                     Ok(text) => {
+                        let hash=crate::agent_actions::hash(text.as_bytes());
                         for (i, line) in text.lines().enumerate() {
                             scope.check()?;
-                            if matches(line) {
-                                found.push(json!({"path":label,"line":i+1,"text":&line[..line.floor_char_boundary(300)]}));
+                            if let Some((start,end))=match_range(line,&needle,sensitive) {
+                                let from=line.floor_char_boundary(start.saturating_sub(80));let to=line.floor_char_boundary((end+80).min(line.len()));
+                                let column=line[..start].chars().count()+1;let snippet_column=line[..from].chars().count()+1;
+                                let hit=json!({"path":label,"line":i+1,"column":column,"snippetStartColumn":snippet_column,"lineTruncated":from>0 || to<line.len(),"text":&line[from..to],"readArgs":{"path":label,"startLine":i+1,"startColumn":snippet_column,"lineCount":1,"expectedSha256":hash}});
+                                let bytes=hit.to_string().len();if output_bytes+bytes>16000{truncated=true;break 'scan;}output_bytes+=bytes;found.push(hit);
                                 if found.len() >= 50 {
                                     truncated = true;
                                     break 'scan;
@@ -487,6 +505,18 @@ mod tests {
         let content=run(&dir,"search_files",json!({"query":"needle","mode":"content","extensions":["RS"]})).unwrap();assert_eq!(content["matches"].as_array().unwrap().len(),1);assert!(content["matches"][0]["path"].as_str().unwrap().ends_with("main.rs"));assert_eq!(content["scannedFiles"],1);
         let python=run(&dir,"search_files",json!({"query":"needle","mode":"filename","extensions":["py"]})).unwrap();assert_eq!(python["matches"][0]["path"],"needle.PY");
         for args in [json!({"query":"x","mode":"bad"}),json!({"query":"x","extensions":["../rs"]}),json!({"query":"x","extensions":[]})]{assert!(run(&dir,"search_files",args).is_err());}
+        drop(dir);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn search_locates_late_unicode_match_and_reads_same_revision(){
+        let (root,dir)=fixture();let prefix="中文İ".repeat(300);let content=format!("{prefix}NEEDLE{}", "后".repeat(100));std::fs::write(root.join("late.txt"),&content).unwrap();
+        let result=run(&dir,"search_files",json!({"path":"late.txt","query":"needle","mode":"content"})).unwrap();let hit=&result["matches"][0];
+        assert_eq!(hit["column"],901);assert!(hit["text"].as_str().unwrap().contains("NEEDLE"));assert_eq!(hit["lineTruncated"],true);
+        let read=run(&dir,"read_file",hit["readArgs"].clone()).unwrap();assert!(read["lines"][0]["text"].as_str().unwrap().contains("NEEDLE"));
+        std::fs::write(root.join("bounded.txt"),(0..100).map(|_|format!("{}needle{}\n","前".repeat(200),"后".repeat(200))).collect::<String>()).unwrap();
+        let bounded=run(&dir,"search_files",json!({"path":"bounded.txt","query":"needle","mode":"content"})).unwrap();assert_eq!(bounded["truncated"],true);assert!(bounded.to_string().len()<20000);assert!(bounded["matches"].as_array().unwrap().iter().all(|v|v["text"].as_str().unwrap().contains("needle")));
+        assert_eq!(match_range("İx","x",false),Some((2,3)));assert_eq!(match_range("İx","i",false),Some((0,2)));assert_eq!(match_range("ABC","a",true),None);
+        std::fs::write(root.join("late.txt"),"changed").unwrap();assert!(run(&dir,"read_file",hit["readArgs"].clone()).is_err());
         drop(dir);std::fs::remove_dir_all(root).unwrap();
     }
     #[cfg(unix)]
