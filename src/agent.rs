@@ -56,7 +56,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
     let message_columns=store.conn.prepare("PRAGMA table_info(agent_messages)").map_err(|e|e.to_string())?.query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
     if !message_columns.iter().any(|c|c=="model_metadata"){store.conn.execute_batch("ALTER TABLE agent_messages ADD COLUMN model_metadata TEXT NOT NULL DEFAULT '{}';").map_err(|e|e.to_string())?;}
     if !columns.iter().any(|c|c=="stop_requested"){store.conn.execute_batch("ALTER TABLE agent_model_pending ADD COLUMN stop_requested INTEGER NOT NULL DEFAULT 0;").map_err(|e|e.to_string())?;}
-    store.conn.execute_batch("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus','interrupted','$.context.status','interrupted') WHERE id IN (SELECT message_id FROM agent_model_pending); INSERT INTO agent_messages(id,session_id,role,content,created_at) SELECT lower(hex(randomblob(16))),session_id,'error','Keeper 已重启，模型请求已中断；已生成的回复已保留，请重新发送消息。',CAST(strftime('%s','now') AS INTEGER)*1000 FROM agent_model_pending; DELETE FROM agent_model_pending;").map_err(|e|e.to_string())?;
+    store.conn.execute_batch("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus','interrupted','$.context.status','interrupted','$.taskReasonCode','interrupted','$.taskReason','服务重启导致任务中断；请核实实际状态后继续。') WHERE id IN (SELECT message_id FROM agent_model_pending); INSERT INTO agent_messages(id,session_id,role,content,created_at) SELECT lower(hex(randomblob(16))),session_id,'error','Keeper 已重启，模型请求已中断；已生成的回复已保留，请重新发送消息。',CAST(strftime('%s','now') AS INTEGER)*1000 FROM agent_model_pending; DELETE FROM agent_model_pending;").map_err(|e|e.to_string())?;
     store.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_reply_versions (session_id TEXT NOT NULL,root_id TEXT NOT NULL,selected_id TEXT NOT NULL,PRIMARY KEY(session_id,root_id)); CREATE TABLE IF NOT EXISTS agent_model_contexts (message_id TEXT PRIMARY KEY,messages TEXT NOT NULL);").map_err(|e|e.to_string())?;
     crate::agent_runtime::initialize(store)?;
     crate::agent_mcp::initialize(store)?;
@@ -372,6 +372,8 @@ fn launch_model(core:Arc<AppState>,session:String,response_id:String,cancel_rx:t
                             let _=store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.generationStatus',?2) WHERE id=?1",params![response_id,status]);
                             let reason=match &response{Ok(crate::model::ReplyFinish::Complete)=>"模型已完成回复".to_string(),Ok(crate::model::ReplyFinish::Stopped)=>"用户停止生成，已保留现有内容和执行记录".to_string(),Err(error)=>error.chars().take(2000).collect::<String>()};
                             let _=store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.taskReason',?2) WHERE id=?1",params![response_id,reason]);
+                            let reason_code=match &response{Ok(crate::model::ReplyFinish::Complete)=>"complete",Ok(crate::model::ReplyFinish::Stopped)=>"user_stopped",Err(_)=>"error"};
+                            let _=store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.taskReasonCode',CASE WHEN ?2='error' THEN COALESCE(json_extract(model_metadata,'$.taskReasonCode'),'error') ELSE ?2 END) WHERE id=?1",params![response_id,reason_code]);
                             let _=crate::agent_runtime::finish(&store,&model_session,&response_id,status);
                             let result=match response{Ok(_)=>Ok(()),Err(error)=>message(&store,&model_session,"error",&error)};
                             if result.is_ok(){let _=store.conn.execute("DELETE FROM agent_model_pending WHERE session_id=?1",[&model_session]);let _=tx.commit();}
@@ -658,6 +660,7 @@ pub(crate) async fn dispatch(
 
                 let root=groups.iter().find(|g|g["versionIds"].as_array().unwrap().iter().any(|id|id==&json!(original))).ok_or("原回复不存在")?["rootId"].as_str().unwrap().to_owned();
                 store.conn.execute("INSERT INTO agent_reply_versions(session_id,root_id,selected_id) VALUES (?1,?2,?3) ON CONFLICT(session_id,root_id) DO UPDATE SET selected_id=excluded.selected_id",params![session,root,response_id]).map_err(|e|e.to_string())?;
+                if let Some(object)=metadata.as_object_mut(){object.remove("taskReason");object.remove("taskReasonCode");}
                 metadata["generationStatus"]=json!("streaming");metadata["regenerateOf"]=json!(original);
                 if let Some(user)=edited_user{metadata["promptMessageId"]=json!(user);}
                 if let Some(context)=edited_context{store.conn.execute("INSERT INTO agent_model_contexts(message_id,messages) VALUES (?1,?2)",params![response_id,json!(context).to_string()]).map_err(|e|e.to_string())?;}

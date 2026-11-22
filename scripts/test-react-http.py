@@ -119,13 +119,17 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
    looping=session('loop');looped=wait_for(looping,lambda d:not d['modelPending']);assert looped['tasks'][-1]['status']=='failed' and len(looped['runs'])==3
-   assert any(m.get('modelMetadata',{}).get('taskReason') for m in looped['messages'] if m['role']=='assistant')
+   assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='no_progress' for m in looped['messages'] if m['role']=='assistant')
    assert '无进展' in json.dumps(looped,ensure_ascii=False)
    assert '无进展' in json.dumps(call('agent_session',{'sessionId':looping}),ensure_ascii=False)
    bounded=session('budget');bounded=wait_for(bounded,lambda d:not d['modelPending']);assert len(bounded['runs'])==8 and '8 轮' in json.dumps(bounded,ensure_ascii=False)
+   assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='round_limit' for m in bounded['messages'])
+   assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='complete' for m in complete_detail['messages'])
+   assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='user_stopped' for m in stopped['messages'])
    release.clear();broken=session('broken');partial=wait_for(broken,lambda d:bool(d['messages'][-1]['content']));call('agent_stop_generation',{'sessionId':broken,'messageId':partial['streamingMessageId']});assert wait_for(broken,lambda d:not d['modelPending'])['runs']==[]
    interrupted=session('阅读项目并总结 restart');persisted=wait_for(interrupted,lambda d:len(d['runs'])==3 and '正在整理' in d['messages'][-1]['content']);count=len(requests)
    process.terminate();process.wait(timeout=10);start();restored=call('agent_session',{'sessionId':interrupted});assert not restored['modelPending'] and restored['tasks'][-1]['status']=='interrupted';assert len(restored['runs'])==3
+   assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='interrupted' for m in restored['messages'])
    time.sleep(.1);assert len(requests)==count,'restart must not replay tools or model calls'
    with sqlite3.connect(Path(folder)/'data.sql') as db:assert db.execute('SELECT count(*) FROM agent_events WHERE response_id=?',(persisted['streamingMessageId'],)).fetchone()[0]>5
    print('ReAct checks passed: fragmented native tool calls, multi-round results, realtime events, reload snapshots, stop, regeneration isolation, denied paths/tools, round limit and restart without replay.')

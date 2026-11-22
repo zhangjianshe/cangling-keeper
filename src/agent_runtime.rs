@@ -509,3 +509,15 @@ fn finish_result(
         json!({"role":"tool","tool_call_id":call.id,"content":result.to_string()}),
     ))
 }
+
+/// Record a Keeper-owned termination category at the point of detection.
+/// Provider error text is never parsed to infer permissions or task outcomes.
+pub(crate) fn termination_error(core: &AppState, response: &str, code: &str, message: String) -> String {
+    if let Ok(store) = core.store.lock() {
+        let _ = store.conn.execute(
+            "UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.taskReasonCode',?2) WHERE id=?1",
+            params![response, code],
+        );
+    }
+    message
+}

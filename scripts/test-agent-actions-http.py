@@ -87,6 +87,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-action-http-') as folder:
    s,run,_=pending('repeat reject write');approve(s,run,False);blocked=done(s)
    assert len(blocked['runs'])==1 and blocked['tasks'][-1]['status']=='failed'
    assert '已被你拒绝' in json.dumps(blocked,ensure_ascii=False)
+   assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='rejected_repeat' for m in blocked['messages'])
    assert not (root/'rejected.txt').exists()
    assert call('agent_session',{'sessionId':s})['tasks']==blocked['tasks']
    s,run,_=pending('reject write');approve(s,run,False);assert done(s)['runs'][-1]['status']=='rejected';assert not (root/'rejected.txt').exists()

@@ -254,7 +254,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
     let mut visible=String::new();let mut total_calls=0;let mut loop_guard=loop_guard::LoopGuard::default();let mut refusals=loop_guard::RefusalGuard::default();
     for round in 1..=8 {
         if crate::agent_actions::is_shutting_down(){return Err("Keeper 正在关闭，任务不会自动重放。".into());}
-        if tokio::time::Instant::now()>=deadline{return Err("Agent 已达到 180 秒运行时限，执行记录已保存。".into());}
+        if tokio::time::Instant::now()>=deadline{return Err(crate::agent_runtime::termination_error(core,response_id,"time_limit","Agent 已达到 180 秒运行时限，执行记录已保存。".into()));}
         crate::agent_runtime::phase(core,session,response_id,"model",round,sink.as_ref())?;
         if round>1 {if let Err(e)=context::prepare(core,session,response_id,&url,&key,&model,&provider,supports_images,&mut messages,&tools,&mut cancel,deadline,sink.as_ref()).await {if e=="上下文压缩已停止，原始消息已保留。"{return Ok(ReplyFinish::Stopped);}return Err(e);}}
         let wire_messages={let store=core.store.lock().map_err(|e|e.to_string())?;request_messages(&store,session,&messages,supports_images)?};
@@ -271,33 +271,33 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
             if visible.trim().is_empty(){return Err("LLM Server 未返回文字内容".into());}
             progress(&visible)?;return Ok(ReplyFinish::Complete);
         }
-        total_calls+=turn.calls.len();if total_calls>32{return Err("Agent 已达到 32 次工具调用上限，执行记录已保存。".into());}
+        total_calls+=turn.calls.len();if total_calls>32{return Err(crate::agent_runtime::termination_error(core,response_id,"tool_limit","Agent 已达到 32 次工具调用上限，执行记录已保存。".into()));}
         let calls=turn.calls.iter().map(|c|json!({"id":c.id,"type":"function","function":{"name":c.name,"arguments":c.arguments}})).collect::<Vec<_>>();
         messages.push(json!({"role":"assistant","content":if turn.content.is_empty(){Value::Null}else{json!(turn.content)},"tool_calls":calls}));
         crate::agent_runtime::phase(core,session,response_id,"tool",round,sink.as_ref())?;
         let mut round_results=Vec::new();
         for call in &turn.calls {
-            refusals.check(&call.name,&call.arguments)?;
+            refusals.check(&call.name,&call.arguments).map_err(|error|crate::agent_runtime::termination_error(core,response_id,"rejected_repeat",error))?;
             let Some(result)=crate::agent_runtime::execute(core.clone(),session,response_id,root.clone(),call,round,&mut cancel,&mut deadline,sink.clone()).await? else{return Ok(ReplyFinish::Stopped)};
             refusals.observe(&call.name,&call.arguments,result["content"].as_str().unwrap_or(""));
             round_results.push(json!([call.name,loop_guard::canonical(&call.arguments),loop_guard::canonical(result["content"].as_str().unwrap_or(""))]));
             messages.push(result);
         }
-        loop_guard.observe(&json!(round_results))?;
+        loop_guard.observe(&json!(round_results)).map_err(|error|crate::agent_runtime::termination_error(core,response_id,"no_progress",error))?;
         if !visible.is_empty(){visible.push_str("\n\n");}
     }
-    Err("Agent 已达到 8 轮执行上限，执行记录已保存。".into())
+    Err(crate::agent_runtime::termination_error(core,response_id,"round_limit","Agent 已达到 8 轮执行上限，执行记录已保存。".into()))
 }
 struct Turn { content:String,calls:Vec<crate::agent_runtime::ToolCall> }
 async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&str,key:&str,body:Value,provider:&str,cancel:&mut tokio::sync::oneshot::Receiver<()>,deadline:tokio::time::Instant,sink:&dyn crate::EventSink,mut progress:impl FnMut(&str)->Result<(),String>)->Result<Option<Turn>,String>{
     let request=request_builder(url,key,provider)?.json(&body);
-    let response=tokio::select!{biased;_=&mut *cancel=>return Ok(None),_ = tokio::time::sleep_until(deadline)=>return Err("Agent 运行超时".into()),response=request.send()=>response.map_err(|_|"LLM Server 连接失败或等待超时；消息已保存在本机，请稍后重试。")?};
+    let response=tokio::select!{biased;_=&mut *cancel=>return Ok(None),_ = tokio::time::sleep_until(deadline)=>return Err(crate::agent_runtime::termination_error(core,response_id,"time_limit","Agent 运行超时".into())),response=request.send()=>response.map_err(|_|"LLM Server 连接失败或等待超时；消息已保存在本机，请稍后重试。")?};
     if !response.status().is_success(){return Err(status_error(response.status()));}
     use futures_util::StreamExt;
     let mut stream=response.bytes_stream();let mut pending=Vec::new();let mut event=String::new();let mut content=String::new();let mut last_flush=std::time::Instant::now();let mut done=false;let mut reported_model=String::new();
     let mut calls=std::collections::BTreeMap::<u64,crate::agent_runtime::ToolCall>::new();let mut finish_reason=None;
     loop{
-        let chunk=tokio::select!{biased;_=&mut *cancel=>{progress(&content)?;return Ok(None)},_ = tokio::time::sleep_until(deadline)=>{progress(&content)?;return Err("Agent 运行超时，已保存生成内容".into());},chunk=stream.next()=>chunk};
+        let chunk=tokio::select!{biased;_=&mut *cancel=>{progress(&content)?;return Ok(None)},_ = tokio::time::sleep_until(deadline)=>{progress(&content)?;return Err(crate::agent_runtime::termination_error(core,response_id,"time_limit","Agent 运行超时，已保存生成内容".into()));},chunk=stream.next()=>chunk};
         let Some(chunk)=chunk else{break};
         let chunk=match chunk{Ok(chunk)=>chunk,Err(_)=>{progress(&content)?;return Err("模型流连接中断，已生成内容已保存。".into());}};
         pending.extend_from_slice(&chunk);

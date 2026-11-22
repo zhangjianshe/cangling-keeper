@@ -484,6 +484,9 @@
             const terminal=['complete','failed','stopped','interrupted'].includes(task.status);
             const reason=metadata.taskReason || (task.status==='interrupted'?'服务中断，执行记录已保留；不会自动重放操作。':terminal?'历史任务未记录具体结束原因。':'任务进行中，可随时停止生成。');
             summary.append(caption,element('p','',reason));
+            const reasonCode=metadata.taskReasonCode || (task.status==='interrupted'?'interrupted':''),nextSteps={complete:'任务已结束，可检查结果或继续提出需求。',user_stopped:'已保留生成内容；继续前请核实已执行操作。',rejected_repeat:'模型重复提出了已拒绝的操作。若你改变决定，请明确发送新消息。',no_progress:'检查工具结果并调整目标或参数后，再发送新消息。',round_limit:'任务达到轮次上限；检查已完成步骤，将剩余工作拆分后继续。',tool_limit:'任务达到工具调用上限；缩小范围后继续。',time_limit:'任务达到运行时限；检查实际执行状态后再继续。',interrupted:'服务中断后不会自动重放操作；请先核实实际状态。',error:'查看上述错误并核实操作是否部分完成，再决定是否重试。'};
+            if(terminal && nextSteps[reasonCode])summary.append(element('p','agent-task-next-step',nextSteps[reasonCode]));
+
             const counts={succeeded:0,failed:0,rejected:0,stopped:0,interrupted:0};for(const run of runs)if(run.status in counts)counts[run.status]++;
             summary.append(element('p','',`工具结果：成功 ${counts.succeeded} · 失败 ${counts.failed} · 拒绝 ${counts.rejected} · 停止/中断 ${counts.stopped+counts.interrupted}`));
             summary.open=!!agent.taskSummaryOpen?.has(entry.id);summary.ontoggle=()=>{agent.taskSummaryOpen ||= new Set();if(summary.open)agent.taskSummaryOpen.add(entry.id);else agent.taskSummaryOpen.delete(entry.id);};message.append(summary);
