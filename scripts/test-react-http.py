@@ -28,6 +28,15 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   if user=='oversized event fixture':
+    event({'content':'Before oversized event'})
+    event({'tool_calls':[{'index':0,'id':'not-executed','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'oversized-event.txt','content':'must not write'})}}]})
+    for _ in range(40):self.wfile.write(b'data: '+b' '*32768+b'\n');self.wfile.flush()
+    self.wfile.write(b'\n');self.wfile.flush();return
+   if user=='multiline event fixture':
+    packet={'model':'fixture-agent','choices':[{'delta':{'content':'多行事件正常'},'finish_reason':'stop'}]}
+    for line in json.dumps(packet,ensure_ascii=False,indent=2).splitlines():self.wfile.write(('data: '+line+'\r\n').encode());self.wfile.flush()
+    self.wfile.write(b'\r\ndata: [DONE]\r\n\r\n');self.wfile.flush();return
    if user in ['malformed batch fixture','array batch fixture','duplicate batch fixture']:
     event({'content':'Batch preview preserved'})
     event({'tool_calls':[{'index':0,'id':'first','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'bad-batch.txt','content':'must not write'})}}]})
@@ -217,6 +226,11 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    # A regenerated answer owns a separate tool history and selects the new version.
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
+   multiline=session('multiline event fixture');multi=wait_for(multiline,lambda d:not d['modelPending']);assert multi['tasks'][-1]['status']=='complete';assert multi['messages'][-1]['content']=='多行事件正常'
+   oversized=session('oversized event fixture');over=wait_for(oversized,lambda d:not d['modelPending']);assert over['tasks'][-1]['status']=='failed' and not over['runs'];assert not (root/'oversized-event.txt').exists()
+   answer=next(m for m in reversed(over['messages']) if m['role']=='assistant');assert 'Before oversized event' in answer['content'];assert answer['modelMetadata']['taskReasonCode']=='stream_limit'
+   assert next(m for m in reversed(call('agent_session',{'sessionId':oversized})['messages']) if m['role']=='assistant')['modelMetadata']['taskReasonCode']=='stream_limit'
+   assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='oversized event fixture' for m in r['messages'])])==1
    for prompt in ['malformed batch fixture','array batch fixture','duplicate batch fixture']:
     bad=session(prompt);bad_detail=wait_for(bad,lambda d:not d['modelPending']);assert bad_detail['tasks'][-1]['status']=='failed'
     assert not bad_detail['runs'] and not (root/'bad-batch.txt').exists()

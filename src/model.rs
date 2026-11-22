@@ -289,6 +289,16 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
     }
     Err(crate::agent_runtime::termination_error(core,response_id,"round_limit",format!("Agent 已达到 {} 轮执行上限，执行记录已保存。",crate::agent_runtime::MAX_ROUNDS)))
 }
+const MAX_STREAM_EVENT_BYTES: usize = 1048576;
+fn append_stream_data(event: &mut String, data: &str) -> Result<(), String> {
+    let separator = usize::from(!event.is_empty());
+    if event.len().saturating_add(separator).saturating_add(data.len()) > MAX_STREAM_EVENT_BYTES {
+        return Err("模型流事件超过 1 MiB 上限，已保留生成内容；本轮工具未执行。请检查模型服务响应。".into());
+    }
+    if separator != 0 { event.push('\n'); }
+    event.push_str(data);
+    Ok(())
+}
 struct Turn { content:String,calls:Vec<crate::agent_runtime::ToolCall> }
 fn validate_tool_batch<'a>(calls: impl Iterator<Item=&'a crate::agent_runtime::ToolCall>) -> Result<(), String> {
     let mut ids=std::collections::HashSet::new();
@@ -315,7 +325,7 @@ async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&st
         let Some(chunk)=chunk else{break};
         let chunk=match chunk{Ok(chunk)=>chunk,Err(_)=>{progress(&content)?;return Err("模型流连接中断，已生成内容已保存。".into());}};
         pending.extend_from_slice(&chunk);
-        if pending.len()>1048576{progress(&content)?;return Err("模型流事件过大".into());}
+        if pending.len()>MAX_STREAM_EVENT_BYTES{progress(&content)?;return Err(crate::agent_runtime::termination_error(core,response_id,"stream_limit","模型流缓冲超过 1 MiB 上限，已保留生成内容；本轮工具未执行。".into()));}
         while let Some(end)=pending.iter().position(|b|*b==b'\n'){
             let line=String::from_utf8(pending.drain(..=end).collect()).map_err(|_|"模型流字符编码错误")?;
             let line=line.trim_end_matches(['\r','\n']);
@@ -349,7 +359,10 @@ async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&st
                     }}
                 }
             }else if let Some(data)=line.strip_prefix("data:"){
-                if !event.is_empty(){event.push('\n');}event.push_str(data.strip_prefix(' ').unwrap_or(data));
+                if let Err(error)=append_stream_data(&mut event,data.strip_prefix(' ').unwrap_or(data)) {
+                    progress(&content)?;
+                    return Err(crate::agent_runtime::termination_error(core,response_id,"stream_limit",error));
+                }
             }
         }
         if done{break;}
@@ -375,6 +388,14 @@ async fn stream_turn(core:&crate::AppState,session:&str,response_id:&str,url:&st
 #[cfg(test)]
 mod tests{
  use super::*;
+ #[test] fn stream_event_limit_counts_newlines_and_utf8_without_partial_append(){
+  let mut event=String::new();append_stream_data(&mut event,"{\"text\":").unwrap();append_stream_data(&mut event,"\"中文\"}").unwrap();
+  assert_eq!(serde_json::from_str::<Value>(&event).unwrap()["text"],"中文");
+  let mut event="x".repeat(MAX_STREAM_EVENT_BYTES-4);append_stream_data(&mut event,"中").unwrap();assert_eq!(event.len(),MAX_STREAM_EVENT_BYTES);
+  let before=event.clone();assert!(append_stream_data(&mut event,"").is_err());assert_eq!(event,before);
+  let mut event=String::new();assert!(append_stream_data(&mut event,&"x".repeat(MAX_STREAM_EVENT_BYTES+1)).is_err());assert!(event.is_empty());
+ }
+
  #[test] fn validates_entire_tool_batch_before_execution(){
   let call=|id:&str,args:&str|crate::agent_runtime::ToolCall{id:id.into(),name:"write_file".into(),arguments:args.into()};
   for invalid in ["{", "[]", "null", "1", "\"text\""] {
