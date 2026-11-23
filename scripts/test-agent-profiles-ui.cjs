@@ -1,5 +1,6 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
-const dom=new JSDOM('<aside id="sidebar"></aside><main id="agent-main"><div class="agent-header-tools"></div></main><section id="keeper-account" class="hidden"></section><section id="keeper-settings" class="hidden"></section>',{runScripts:'outside-only'}),w=dom.window,d=w.document;
+const dom=new JSDOM('<!doctype html><aside id="sidebar"></aside><main id="agent-main"><div class="agent-header-tools"></div></main><section id="keeper-account" class="hidden"></section><section id="keeper-settings" class="hidden"></section>',{runScripts:'outside-only'}),w=dom.window,d=w.document;
+for(const f of ['vendor/ace/ace.js','vendor/ace/theme-github.js','vendor/ace/mode-markdown.js','vendor/ace/mode-python.js','vendor/marked.js','vendor/purify.min.js','vendor/highlight.min.js','vendor/katex/katex.min.js','markdown.js'])w.eval(fs.readFileSync('ui/'+f,'utf8'));
 w.eval(fs.readFileSync('ui/agent-skill-library.js','utf8'));
 w.eval(fs.readFileSync('ui/agent-profiles.js','utf8'));
 const p={id:'p',name:'<b>Agent</b>',systemPrompt:'Be precise',modelId:'m',skills:['skill'],mcpTools:['mcp_one']};
