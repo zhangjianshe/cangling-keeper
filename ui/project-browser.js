@@ -50,9 +50,14 @@
   function hide(){panel.classList.add('hidden');seq++;closeMenu();}
   function reset(){hide();project=null;file=null;list.replaceChildren();original='';editor.setValue('',-1);editor.setReadOnly(true);editable=false;updateSave();location.textContent='';location.title='';}
   function clearPreview(){file=null;original='';hash='';editable=false;editor.setValue('',-1);editor.setReadOnly(true);updateSave();code.setAttribute('aria-label','文件编辑器');}
+  function renderBreadcrumbs(target){
+   location.replaceChildren();location.setAttribute('role','navigation');location.setAttribute('aria-label','目录路径');location.title=project.directory+(target==='.'?'':(project.directory.endsWith('/')?'':'/')+target);
+   const parts=target==='.'?[]:target.split('/');
+   for(let i=0;i<=parts.length;i++){const destination=i?parts.slice(0,i).join('/'):'.';if(i){const separator=node('span','project-path-separator',' / ');separator.setAttribute('aria-hidden','true');location.append(separator);}const crumb=node('button','project-path-segment',i?parts[i-1]:'根目录');crumb.type='button';crumb.dataset.path=destination;crumb.title=project.directory+(i?(project.directory.endsWith('/')?'':'/')+destination:'');if(i===parts.length)crumb.setAttribute('aria-current','location');crumb.onclick=()=>loadDirectory(destination);location.append(crumb);}
+  }
   async function loadDirectory(target){
    const before=seq,identity=agent.identityEpoch;if(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch)return;
-   const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';location.textContent=target==='.'?'根目录':'根目录 / '+target;location.title=selected.directory+(target==='.'?'':(selected.directory.endsWith('/')?'':'/')+target);
+   const version=++seq,epoch=agent.identityEpoch,selected=project;path=target;clearPreview();status.textContent='正在读取目录…';list.replaceChildren();up.disabled=target==='.';renderBreadcrumbs(target);
    try{const data=await invoke('agent_project_browse',{projectId:selected.id,path:target,action:'list'});if(version!==seq||epoch!==agent.identityEpoch)return;
     status.textContent=data.truncated?`目录条目较多，仅显示前 ${data.entries.length} 项。`:`${data.entries.length} 项 · 隐藏敏感文件、链接及构建缓存`;
     for(const entry of data.entries){const row=node('button','project-browser-entry');row.type='button';row.append(node('span','',entry.type==='directory'?'▱':'▤'),node('span','project-browser-name',entry.name),node('small','',entry.type==='directory'?'目录':entry.size+' B'));const child=target==='.'?entry.name:target+'/'+entry.name;row.dataset.path=child;row.onclick=()=>{if(entry.type==='directory')loadDirectory(child);else loadFile(child);};list.append(row);}

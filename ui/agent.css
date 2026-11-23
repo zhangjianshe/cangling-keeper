@@ -436,3 +436,6 @@
 .profiles-list-item{display:flex;align-items:center;gap:10px}.profile-list-details{min-width:0;flex:1}
 .profile-picker-wrap{display:inline-flex;align-items:center;gap:6px;flex:none;height:32px}.profile-picker-wrap .profile-avatar{width:24px;height:24px}.profile-picker-wrap #agent-profile-picker{height:32px;min-height:32px;box-sizing:border-box;padding:0 10px}
 .profile-avatar-reply{width:20px;height:20px;margin-right:7px;vertical-align:middle}
+
+.project-browser-location .project-path-segment{display:inline;padding:3px 4px;border:0;border-radius:4px;background:transparent;color:inherit;font:inherit;cursor:pointer;white-space:nowrap}
+.project-browser-location .project-path-segment:hover{background:#edf3fa;color:#2563eb}.project-browser-location .project-path-segment:focus-visible{outline:2px solid #93b4ef;outline-offset:-1px}.project-path-separator{color:#a0a7b2}
