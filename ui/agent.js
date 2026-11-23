@@ -73,12 +73,13 @@
     localStorage.setItem('keeper-agent-project',agent.project);
     const scroller=$('.agent-navigation-sections'),scrollTop=scroller?.scrollTop,list=$('#agent-projects');
     const owner=agent.ownerKey||'guest';if(list.dataset.owner!==owner){list.dataset.owner=owner;list.dataset.limit='10';}
-    const limit=Number(list.dataset.limit)||10,visible=agent.projects.slice(0,limit),current=agent.projects.find(p=>p.id===agent.project);
+    const selectedProject=agent.selected?(agent.detail.session?.id===agent.selected?agent.detail.session.projectId:agent.sessions.find(s=>s.id===agent.selected)?.projectId):null;
+    const limit=Number(list.dataset.limit)||10,visible=agent.projects.slice(0,limit),current=agent.projects.find(p=>p.id===(selectedProject||agent.project));
     if(current&&!visible.includes(current))visible.push(current);
     const focused=document.activeElement,focusProject=focused?.closest('.agent-project-group')?.dataset.projectId,focusSummary=focused?.tagName==='SUMMARY';
     list.replaceChildren();
     for(const project of visible){
-      const group=element('details','agent-project-group');group.dataset.projectId=project.id;group.open=agent.history?agent.history.projectOpen(project.id):project.id===agent.project;
+      const group=element('details','agent-project-group');group.dataset.projectId=project.id;group.classList.toggle('has-selected-session',project.id===selectedProject);group.open=agent.history?agent.history.projectOpen(project.id):project.id===agent.project;
       const summary=element('summary');summary.title=project.directory;
       const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','agent-project-icon');icon.setAttribute('aria-hidden','true');
       // Lucide folder-closed / folder-open (ISC), see ui/vendor/lucide-LICENSE.
