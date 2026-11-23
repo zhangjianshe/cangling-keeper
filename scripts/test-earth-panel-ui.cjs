@@ -7,7 +7,7 @@ const earth=w.createKeeperEarth({agent,showConversation(){},invoke:async(name,ar
 const flush=()=>new Promise(r=>setTimeout(r,0));
 function send(frame,data,origin='http://localhost',source=frame.contentWindow){w.dispatchEvent(new w.MessageEvent('message',{origin,source,data:{earth:true,...data}}));}
 (async()=>{
- await earth.open({id:'p',name:'Project'});const f=d.querySelector('iframe');assert(f);assert(d.querySelector('#agent-main').classList.contains('hidden'));
+ await earth.open({id:'p',name:'Project'});const f=d.querySelector('iframe');assert(f);assert.equal(d.querySelectorAll('.keeper-earth input,.keeper-earth select,.earth-controls,.earth-capture').length,0);assert.deepEqual([...d.querySelectorAll('.keeper-earth button')].map(b=>b.textContent),['对话分屏','返回会话']);assert(d.querySelector('#agent-main').classList.contains('hidden'));
  const commands=[];f.contentWindow.postMessage=msg=>{commands.push(msg);setTimeout(()=>send(f,{id:msg.id,result:msg.method==='get_view'?scene.camera:true}),0);};
  send(f,{event:'ready'},'https://attacker.invalid');await flush();assert.equal(commands.length,0);
  send(f,{event:'ready'},'http://localhost',w);await flush();assert.equal(commands.length,0);
