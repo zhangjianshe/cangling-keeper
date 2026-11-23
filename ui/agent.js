@@ -65,13 +65,11 @@
         for(const d of paths){const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);shape.append(path);}icon.append(shape);
       }
       summary.append(icon,element('span','agent-project-name',project.name));
-      const create=element('button','agent-project-chat','＋');create.type='button';create.title='在'+project.name+'中开始会话';create.setAttribute('aria-label',create.title);
-      create.onclick=event=>{event.preventDefault();event.stopPropagation();agent.project=project.id;newSession();};
       const manage=element('button','agent-project-manage','⋯');manage.type='button';manage.title='管理项目';manage.setAttribute('aria-label','管理项目 '+project.name);
       manage.setAttribute('aria-haspopup','menu');manage.title='项目操作';
-      const projectMenu=event=>{event.preventDefault();event.stopPropagation();agent.projectBrowser?.menu(manage,project,()=>window.keeperProjectDialog({project,invoke,notice,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id)await switchProject('general');}}));};
+      const projectMenu=event=>{event.preventDefault();event.stopPropagation();agent.projectBrowser?.menu(manage,project,()=>window.keeperProjectDialog({project,invoke,notice,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id)await switchProject('general');}}),()=>{agent.project=project.id;newSession();});};
       manage.onclick=projectMenu;manage.oncontextmenu=projectMenu;
-      summary.append(manage,create);group.append(summary);
+      summary.append(manage);group.append(summary);
       const sessions=agent.history?.projectSessions(project.id) || agent.sessions.filter(s=>s.projectId===project.id);
       for(const session of sessions)group.append(sessionRow(session));
       if(agent.history)agent.history.attachProject(group,project.id);else if(!sessions.length)group.append(element('div','agent-nav-empty','暂无会话'));

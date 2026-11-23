@@ -390,6 +390,12 @@ pub(crate) async fn dispatch(
     sink: Arc<dyn crate::EventSink>,
 ) -> Result<Value, String> {
     match command {
+        "agent_project_guidance_by_project" => {
+            let project=text(&args,"projectId")?;
+            let (owner,directory)={let store=core.store.lock().map_err(|e|e.to_string())?;let directory:String=store.conn.query_row("SELECT directory FROM agent_projects WHERE id=?1",[project],|r|r.get(0)).map_err(|_|"项目不存在")?;(crate::agent_account::owner(&store)?,directory)};
+            let result=tokio::task::spawn_blocking(move ||{let root=cap_std::fs::Dir::open_ambient_dir(directory,cap_std::ambient_authority()).map_err(|_|"无法打开项目目录")?;crate::agent_skills::snapshot(&root,std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))}).await.map_err(|_|"读取项目指南失败")??;
+            let store=core.store.lock().map_err(|e|e.to_string())?;if crate::agent_account::owner(&store)?!=owner{return Err("账号已切换，请重试".into());}Ok(result)
+        }
         "agent_project_guidance" | "agent_skill_content" => {
             let session=text(&args,"sessionId")?;
             let (owner,directory)={let store=core.store.lock().map_err(|e|e.to_string())?;if !crate::agent_account::owns(&store,&session){return Err("会话不存在或不属于当前账号".into());}let dir:String=store.conn.query_row("SELECT p.directory FROM agent_projects p JOIN agent_sessions s ON p.id=s.project_id WHERE s.id=?1",[&session],|r|r.get(0)).map_err(|_|"会话项目不存在")?;(crate::agent_account::owner(&store)?,dir)};

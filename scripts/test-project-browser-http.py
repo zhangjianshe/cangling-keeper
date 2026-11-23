@@ -23,6 +23,8 @@ with tempfile.TemporaryDirectory(prefix='keeper-browser-') as tmp:
   data=call('agent_project_browse',{**args,'action':'read','path':'sub/readme.txt','startLine':201});assert data['totalLines']==450 and data['lines'][0]['line']==201
   call('agent_project_entry_create',{**args,'parent':'.','name':'AGENTS.md','kind':'file'})
   guide=call('agent_project_browse',{**args,'action':'edit','path':'AGENTS.md'})
+  snapshot=call('agent_project_guidance_by_project',args)
+  assert '## 操作边界' in snapshot['rules']['content']
   assert guide['editable'] and '## 操作边界' in guide['content'] and '提交消息使用中文' in guide['content']
   (root/'AGENTS.md').write_text('user custom guide')
   try:
