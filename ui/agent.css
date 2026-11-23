@@ -365,7 +365,7 @@
 .profiles-list-item strong,.profiles-list-item small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.profiles-list-item strong{font-weight:500}.profiles-list-item small{font-size:12px;color:#64748b;margin-top:4px}
 .profiles-content{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
 .profiles-form{display:flex;flex-direction:column;flex:1;min-height:0;margin:0}.profiles-form[hidden]{display:none}
-.profiles-fields{padding:24px;overflow:auto;flex:1;min-height:0}.profiles-section{max-width:960px;margin:0 auto 28px;display:flex;flex-direction:column;gap:14px}.profiles-section+.profiles-section{border-top:1px solid #ececf0;padding-top:24px}
+.profiles-fields{padding:24px;overflow:auto;flex:1;min-height:0}.profiles-section{max-width:960px;margin:0 auto 28px;display:flex;flex-direction:column;gap:14px}.profiles-section[hidden]{display:none}
 .profiles-page .hint{font-size:12px;color:#64748b;margin:0;line-height:1.7}
 .profiles-section>label,.skill-library-editor label{display:flex;flex-direction:column;gap:6px;font-size:14px}
 .profiles-page input:not([type=checkbox]),.profiles-page select,.profiles-page textarea{box-sizing:border-box;width:100%;padding:9px 11px;border:1px solid #d9d9e0;border-radius:7px;background:#fff;color:inherit;font:inherit}
@@ -380,3 +380,9 @@
 @media(max-width:700px){.profiles-layout{flex-direction:column}.profiles-navigation{width:100%;max-height:210px;border-right:0;border-bottom:1px solid #e5e7eb;padding:12px}.profiles-list{flex-direction:row;overflow:auto}.profiles-list-item{width:170px;flex:none}.profiles-page>.keeper-settings-header{padding:12px}.profiles-fields,.skill-library-editor .llm-dialog-fields{padding:16px}}
 
 .profiles-actions .btn{white-space:nowrap}
+
+.profiles-tabs{display:flex;flex:none;gap:8px;padding:0 24px;background:#f7f8fa;border-bottom:1px solid #e1e6ee;overflow-x:auto}
+.profiles-tab{border:0;border-bottom:2px solid transparent;background:none;padding:14px 12px;color:#64748b;font:inherit;white-space:nowrap;cursor:pointer}
+.profiles-tab:hover{color:#2563eb;background:#eef3fa}.profiles-tab[aria-selected=true]{color:#2563eb;border-bottom-color:#2563eb}
+.profiles-tab:focus-visible{outline:2px solid #93b4ef;outline-offset:-4px;border-radius:4px}
+@media(max-width:700px){.profiles-tabs{padding:0 12px;gap:2px}.profiles-tab{padding:12px 9px}}
