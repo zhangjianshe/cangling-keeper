@@ -812,7 +812,7 @@ Agent 的 `write_file` 支持可选 `createOnly: true`：同名文件已存在�
 
 “管理智能体”中勾选已有技能进行关联，也可以新建共享/专属技能并编辑 SKILL.md、scripts、references、assets 下的文本文件。保存技能后，再保存智能体完成关联。专属技能不会出现在其他智能体的可选列表。账户以现有“登录服务器 + 账户”身份划分；本机访客单独保存。
 
-共享和专属技能以 SQLite `agent_skill_library`（归属与当前版本）和 `agent_skill_versions`（不可变文本文件包）保存，不依赖项目目录，也不会上传登录服务器。每个技能最多64个文本文件、每文件64 KiB、合计1 MiB；支持嵌套资源路径和空目录，最多128个目录，不支持二进制文件。技能编辑页左侧显示目录树，右侧编辑选中文件；新建技能自动准备 `SKILL.md`、`scripts/`、`references/` 和 `assets/`。目录结构通过 `agent_skill_directories` 随文件版本保存在 SQLite 中，保存技能后生效。旧项目智能体ID和内容不变，读取时将原技能名称转换为带原项目ID的关联。
+共享和专属技能以 SQLite `agent_skill_library`（归属与当前版本）和 `agent_skill_versions`（不可变文本文件包）保存，不依赖项目目录，也不会上传登录服务器。每个技能最多64个文本文件、每文件64 KiB、合计1 MiB；支持嵌套资源路径和空目录，最多128个目录，不支持二进制文件。技能编辑采用对话框，分为“基础信息”和“资源编辑”两个标签页；资源编辑左侧显示目录树，右侧编辑选中文件，切换标签页保留未保存内容；新建技能自动准备 `SKILL.md`、`scripts/`、`references/` 和 `assets/`。目录结构通过 `agent_skill_directories` 随文件版本保存在 SQLite 中，保存技能后生效。旧项目智能体ID和内容不变，读取时将原技能名称转换为带原项目ID的关联。
 
 技能引用分别为 `account:<id>`、`agent:<id>`、`project:<projectId>:<name>`。模型先接收受上下文预算约束的元数据目录，通过 `load_skill` 读取正文；共享/专属技能的资源通过 `read_skill_file` 分页读取，返回的路径是文件包内路径，不是本机路径。脚本不会自动执行，需要先写入项目，再通过原有命令工具及审批执行。
 

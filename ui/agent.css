@@ -399,3 +399,14 @@
 .profiles-page .skill-file-editor textarea{flex:1;min-height:280px;border:0;border-radius:0;resize:vertical;font:14px/1.7 monospace;outline-offset:-2px}
 @media(max-width:900px){.skill-metadata{grid-template-columns:1fr}.skill-file-tree{width:160px}.skill-file-workspace{min-height:360px}}
 @media(max-width:520px){.skill-file-workspace{flex-direction:column}.skill-file-tree{width:100%;max-height:180px;border-right:0;border-bottom:1px solid #e1e5eb}}
+
+/* Skill editing uses the shared modal shell, with independent basic/resource tabs. */
+#agent-skill-library-editor{position:fixed;inset:0;z-index:1600;background:#0006;display:flex;align-items:center;justify-content:center;padding:20px;box-sizing:border-box}
+#agent-skill-library-editor.hidden{display:none}
+#agent-skill-library-editor .skill-library-box{flex:none;width:min(1040px,100%);max-width:1040px;height:min(760px,90vh);max-height:calc(100dvh - 40px);padding:0;background:var(--card,#fff);overflow:hidden}
+#agent-skill-library-editor .llm-dialog-head{flex:none}#agent-skill-library-editor .llm-dialog-head h2{margin:0}
+#agent-skill-library-editor .skill-tab-panel{display:flex;flex-direction:column;gap:16px;flex:1;min-height:0}
+#agent-skill-library-editor .skill-tab-panel[hidden]{display:none}
+#agent-skill-library-editor .modal-actions{background:#f7f8fa;border-top:1px solid #e1e6ee;display:flex;align-items:center;gap:10px}
+#agent-skill-library-editor .modal-actions .hint{margin:0 auto 0 0;overflow-wrap:anywhere}
+@media(max-width:600px){#agent-skill-library-editor{padding:10px}#agent-skill-library-editor .skill-library-box{max-height:calc(100dvh - 20px);height:90dvh}#agent-skill-library-editor .modal-actions{flex-wrap:wrap}#agent-skill-library-editor .modal-actions .hint{flex-basis:100%}}
