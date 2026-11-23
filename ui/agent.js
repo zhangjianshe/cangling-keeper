@@ -722,7 +722,7 @@
     $('#agent-settings-menu').hidden=false;$('#agent-settings-toggle').setAttribute('aria-expanded','true');
     $('#agent-menu-account').focus();
   }
-  function showConversation(keepEarth=false){if(!keepEarth && (!agent.earth?.isSplit()||agent.earth?.projectId()!==(agent.detail.session?.projectId||agent.project)))agent.earth?.hide();agent.profiles?.hide();agent.projectBrowser?.hide();$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
+  function showConversation(keepEarth=false){if(!keepEarth && !agent.earth?.showWithConversation(agent.project||agent.detail.session?.projectId))agent.earth?.hide();agent.profiles?.hide();agent.projectBrowser?.hide();$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
   function openSettings(page){agent.earth?.hide();
     agent.profiles?.hide();agent.projectBrowser?.hide();closeAccountMenu();$('#agent-main').classList.add('hidden');
     $('#keeper-account').classList.toggle('hidden',page!=='profile');
@@ -740,7 +740,7 @@
     agent.taskSummaryOpen?.clear();agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
     ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.earth?.reset();agent.guidance?.reset();agent.profiles?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
-    try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}
+    try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved)){await agent.earth?.restore();return;}const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }
   // Re-read persisted state after missed events; never replay a model/tool request.
@@ -811,8 +811,9 @@
   agent.attachments=window.createKeeperAttachments?.({agent,invoke,element,notice,ensureSession,select,renderPending});
   bootstrap().then(async()=>{
     const saved=(localStorage.getItem(sessionStorageKey()) || localStorage.getItem('keeper-agent-session'));
-    if(saved && await select(saved))return;
+    if(saved && await select(saved)){await agent.earth?.restore();return;}
     const selected=agent.sessions.find(s=>s.projectId===agent.project)?.id;
     if(selected)await select(selected);
+    await agent.earth?.restore();
   }).catch(error=>notice(String(error)));
 })();
