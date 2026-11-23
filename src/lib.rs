@@ -1,3 +1,4 @@
+mod agent_earth;
 mod cis_models;
 mod agent;
 mod agent_profiles;

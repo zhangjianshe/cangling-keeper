@@ -16,10 +16,15 @@ pub(crate) fn definitions() -> Vec<Value> {
         ("list_directory", "分页列出当前项目目录，返回名称、类型和大小。path 默认为 .；有 nextList 时使用其完整参数续读。offset 从0开始，expectedSha256 校验目录列表，变化时须从首页重新读取。", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":0},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}), json!([])),
         ("read_file", "读取项目 UTF-8 文本文件，返回带行号内容；每页最多200行，每行片段最多1000字节。结果有 nextRead 时使用其完整参数续读，避免遗漏长行；startColumn 为首行从1开始的Unicode字符列，expectedSha256 用于拒绝跨文件版本续读。", json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"startColumn":{"type":"integer","minimum":1},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
         ("search_files", "在项目相对文件路径和 UTF-8 内容中搜索字面字符串；mode 为 all（默认）、filename 或 content；extensions 可限制后缀，如 [rs,py]，不带点，不区分大小写。内容结果包含命中行/字符列、附近片段及可直接调用 read_file 的 readArgs。maxResults 可选1–50（默认50）；truncationReasons 说明截断原因，可缩小范围继续搜索。contextLines 可选0–5（默认0），返回前后相邻行；contextReadArgs 用于读取同一版本的完整上下文。递归搜索 path（默认 .），跳过链接、私密文件及构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"},"contextLines":{"type":"integer","minimum":0,"maximum":5},"maxResults":{"type":"integer","minimum":1,"maximum":50},"mode":{"type":"string","enum":["all","filename","content"]},"extensions":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string","minLength":1,"maxLength":16}}}), json!(["query"])),
-    ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect()
+    ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_earth::definitions()).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect()
 }
 pub(crate) fn title(name: &str) -> &str {
     match name {
+        "earth_get_view"=>"读取地球视图",
+        "earth_fly_to"=>"地球定位",
+        "earth_set_layer_visibility"=>"切换地球图层",
+        "earth_get_selection"=>"读取地球选择",
+        "earth_add_geojson_layer"=>"加载GeoJSON图层",
         "list_directory" => "列出项目目录",
         "read_file" => "读取项目文件",
         "search_files" => "搜索项目文件",

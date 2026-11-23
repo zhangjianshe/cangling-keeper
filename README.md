@@ -821,3 +821,7 @@ Agent 的 `write_file` 支持可选 `createOnly: true`：同名文件已存在�
 每条回复保留 `skillBindings` 版本快照，更新技能不改变正在执行的回复；重新生成使用原共享/专属版本。项目技能保留内容哈希，文件已变化时拒绝混合版本。历史版本目前不自动清理。当前对话备份保留绑定元数据，但**不导出技能库、技能文件或可复用智能体配置**；迁移到缺少对应技能库的机器后，旧回复仍可查看，重新生成需重新配置。MCP 仍遵守原账户和项目作用域；跨项目后不可用的 MCP 会报错，不扩大权限。
 
 验证：`python3 scripts/test-skill-library-http.py` 使用隔离数据库和模拟模型验证三类来源、跨项目使用、旧版本、资源分页入口、并发修改冲突、路径及账户隔离、重启恢复；`NODE_PATH=<jsdom目录>/node_modules node scripts/test-skill-library-ui.cjs` 验证新建、关联、编辑和账户切换状态。
+
+### 项目三维地球
+
+已内嵌 cangling-desktop Web/WASM 产物，支持项目地球、对话分屏、智能体地球工具、GeoJSON 和测量/截图。编译、测试及能力边界见 [三维地球接入](docs/earth-integration.md)。

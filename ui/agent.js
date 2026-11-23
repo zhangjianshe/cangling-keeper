@@ -5,6 +5,8 @@
   const agent = {projects:[], project:localStorage.getItem('keeper-agent-project') || 'general', sessions:[], tools:[], hosts:[], selected:null, detail:{messages:[],runs:[]}, generation:0, timer:null, sending:false};
   agent.projectBrowser=window.createKeeperProjectBrowser?.({invoke,agent,showConversation});
   const projectDirectoryButton=document.createElement('button');projectDirectoryButton.type='button';projectDirectoryButton.className='guidance-trigger';projectDirectoryButton.textContent='项目目录';projectDirectoryButton.onclick=()=>{const project=agent.projects.find(p=>p.id===(agent.detail.session?.projectId || agent.project));if(project)agent.projectBrowser?.open(project);};document.querySelector('.agent-header-tools').prepend(projectDirectoryButton);
+  agent.earth=window.createKeeperEarth?.({agent,invoke,showConversation});
+  const earthButton=document.createElement('button');earthButton.type='button';earthButton.className='guidance-trigger';earthButton.textContent='三维地球';earthButton.onclick=()=>{const p=agent.projects.find(p=>p.id===(agent.detail.session?.projectId||agent.project));if(p)agent.earth.open(p);};document.querySelector('.agent-header-tools').append(earthButton);
   window.keeperThreadNav=window.createKeeperThreadNav?.();
   const statusNames = {running:'正在执行',pending_approval:'等待确认',succeeded:'已完成',failed:'执行失败',rejected:'已取消',interrupted:'执行中断',stopped:'已停止',approved:'已确认'};
   function element(tag, cls, text) { const node=document.createElement(tag); if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node; }
@@ -720,8 +722,8 @@
     $('#agent-settings-menu').hidden=false;$('#agent-settings-toggle').setAttribute('aria-expanded','true');
     $('#agent-menu-account').focus();
   }
-  function showConversation(){agent.profiles?.hide();agent.projectBrowser?.hide();$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
-  function openSettings(page){
+  function showConversation(keepEarth=false){if(!keepEarth && (!agent.earth?.isSplit()||agent.earth?.projectId()!==(agent.detail.session?.projectId||agent.project)))agent.earth?.hide();agent.profiles?.hide();agent.projectBrowser?.hide();$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
+  function openSettings(page){agent.earth?.hide();
     agent.profiles?.hide();agent.projectBrowser?.hide();closeAccountMenu();$('#agent-main').classList.add('hidden');
     $('#keeper-account').classList.toggle('hidden',page!=='profile');
     $('#keeper-settings').classList.toggle('hidden',page!=='security');
@@ -737,7 +739,7 @@
   async function refreshAccountSessions(){
     agent.taskSummaryOpen?.clear();agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
-    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.profiles?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
+    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.earth?.reset();agent.guidance?.reset();agent.profiles?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }

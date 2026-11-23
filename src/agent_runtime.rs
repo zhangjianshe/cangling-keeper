@@ -267,6 +267,7 @@ pub(crate) async fn execute(
     }
     let validation=parsed.as_ref().map_err(|_|"工具参数不是有效 JSON，未执行".to_string()).and_then(|args|crate::agent_tool_args::validate(&call.name,args));
     if let Err(error)=validation{return finish_result(&core,session,response,&run,call,Err(error),false,sink.as_ref());}
+    if call.name.starts_with("earth_"){let result={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_earth::execute(&store,session,&call.name,parsed.as_ref().unwrap(),&root)};return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());}
     if call.name == "update_plan" {
         let result=parsed.map_err(|_|"计划参数不是有效 JSON".to_string()).and_then(crate::agent_plan::update);
         return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());

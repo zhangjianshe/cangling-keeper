@@ -7,13 +7,13 @@ pub(crate) fn validate(name: &str, args: &Value) -> Result<(),String> {
 }
 fn check(schema: &Value, value: &Value, field: &str) -> Result<(),String> {
  let fail=|message:&str|format!("工具参数错误：{field} {message}；请修正参数后再调用，未执行操作。");
- let valid=match schema["type"].as_str(){Some("object")=>value.is_object(),Some("array")=>value.is_array(),Some("string")=>value.is_string(),Some("boolean")=>value.is_boolean(),Some("integer")=>value.as_i64().is_some()||value.as_u64().is_some(),_=>false};
+ let valid=match schema["type"].as_str(){Some("object")=>value.is_object(),Some("array")=>value.is_array(),Some("string")=>value.is_string(),Some("boolean")=>value.is_boolean(),Some("number")=>value.as_f64().is_some_and(|n|n.is_finite()),Some("integer")=>value.as_i64().is_some()||value.as_u64().is_some(),_=>false};
  if !valid{return Err(fail(&format!("须为 {}",schema["type"].as_str().unwrap_or("有效类型"))));}
  if let Some(values)=schema["enum"].as_array(){if !values.contains(value){return Err(fail(&format!("须为以下值之一：{}",schema["enum"])));}}
  if let Some(text)=value.as_str(){let count=text.chars().count() as u64;
   if schema["minLength"].as_u64().is_some_and(|min|count<min)||schema["maxLength"].as_u64().is_some_and(|max|count>max){return Err(fail(&format!("字符长度须在 {} 到 {} 之间",schema["minLength"].as_u64().unwrap_or(0),schema["maxLength"].as_u64().map(|v|v.to_string()).unwrap_or("不限".into()))));}
  }
- if let Some(number)=value.as_f64(){if schema["minimum"].as_f64().is_some_and(|min|number<min)||schema["maximum"].as_f64().is_some_and(|max|number>max){return Err(fail(&format!("数值须在 {} 到 {} 之间",schema["minimum"].as_i64().map(|v|v.to_string()).unwrap_or("不限".into()),schema["maximum"].as_i64().map(|v|v.to_string()).unwrap_or("不限".into()))));}}
+ if let Some(number)=value.as_f64(){if schema["minimum"].as_f64().is_some_and(|min|number<min)||schema["maximum"].as_f64().is_some_and(|max|number>max){return Err(fail(&format!("数值须在 {} 到 {} 之间",schema["minimum"].as_f64().map(|v|v.to_string()).unwrap_or("不限".into()),schema["maximum"].as_f64().map(|v|v.to_string()).unwrap_or("不限".into()))));}}
  if let Some(items)=value.as_array(){let count=items.len() as u64;
   if schema["minItems"].as_u64().is_some_and(|min|count<min)||schema["maxItems"].as_u64().is_some_and(|max|count>max){return Err(fail(&format!("条目数量须在 {} 到 {} 之间",schema["minItems"].as_u64().unwrap_or(0),schema["maxItems"].as_u64().map(|v|v.to_string()).unwrap_or("不限".into()))));}
   for (index,item) in items.iter().enumerate(){check(&schema["items"],item,&format!("{field}[{index}]"))?;}
