@@ -29,7 +29,7 @@
   form.addEventListener('invalid',e=>{const index=panels.findIndex(panel=>panel.contains(e.target));if(index>=0)activateTab(index);},true);
   fields.append(basic,skillSection,mcpSection);actions.prepend(remove,status);form.append(tabs,fields,actions);box.append(form);layout.append(nav,box);modal.append(head,layout);document.querySelector('#agent-main').after(modal);
   const skillActions=element('div','profile-skill-actions');
-  const shared=element('button','btn','＋ 共享技能'),privateSkill=element('button','btn','＋ 专属技能');shared.type=privateSkill.type='button';skillActions.append(shared,privateSkill);skills.after(skillActions);
+  const shared=element('button','btn','＋ 共享技能'),privateSkill=element('button','btn','＋ 专属技能');shared.type=privateSkill.type='button';skillActions.append(shared,privateSkill);const skillHeading=element('div','profile-section-heading');skillHeading.append(skillSection.querySelector('h2'),skillActions);skillSection.prepend(skillHeading);
   let current='',options=null,session='',epoch=0,sequence=0;
   const library=window.createKeeperSkillLibrary({invoke,element,host:box,visibility:visible=>{form.hidden=visible;nav.inert=visible;},valid:()=>valid(),saved:async entry=>{
    const selected=[...skills.querySelectorAll('input:checked')].map(x=>x.value);if(!selected.includes(entry.ref))selected.push(entry.ref);

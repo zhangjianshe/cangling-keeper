@@ -5,7 +5,7 @@ use rusqlite::params;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 pub(crate) fn init(s: &Store) -> Result<(), String> {
-    s.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_skill_library(id TEXT PRIMARY KEY,owner TEXT NOT NULL,profile_id TEXT NOT NULL,name TEXT NOT NULL,description TEXT NOT NULL,revision TEXT NOT NULL); CREATE TABLE IF NOT EXISTS agent_skill_versions(skill_id TEXT NOT NULL,revision TEXT NOT NULL,files TEXT NOT NULL,PRIMARY KEY(skill_id,revision)); CREATE INDEX IF NOT EXISTS agent_skill_owner ON agent_skill_library(owner,profile_id);").map_err(|e|e.to_string())
+    s.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_skill_library(id TEXT PRIMARY KEY,owner TEXT NOT NULL,profile_id TEXT NOT NULL,name TEXT NOT NULL,description TEXT NOT NULL,revision TEXT NOT NULL); CREATE TABLE IF NOT EXISTS agent_skill_versions(skill_id TEXT NOT NULL,revision TEXT NOT NULL,files TEXT NOT NULL,PRIMARY KEY(skill_id,revision)); CREATE TABLE IF NOT EXISTS agent_skill_directories(skill_id TEXT NOT NULL,revision TEXT NOT NULL,directories TEXT NOT NULL,PRIMARY KEY(skill_id,revision)); CREATE INDEX IF NOT EXISTS agent_skill_owner ON agent_skill_library(owner,profile_id);").map_err(|e|e.to_string())
 }
 pub(crate) fn project(s: &Store, session: &str) -> Result<String, String> {
     crate::agent_history::require_active(s, session)?;
@@ -107,6 +107,7 @@ pub(crate) fn save(s: &Store, a: &Value) -> Result<Value, String> {
     if size > 1048576 {
         return Err("技能内容不能超过1 MiB".into());
     }
+    let directories = validate_directories(a.get("directories"), files)?;
     let body = files
         .get("SKILL.md")
         .and_then(Value::as_str)
@@ -155,6 +156,7 @@ pub(crate) fn save(s: &Store, a: &Value) -> Result<Value, String> {
         )
         .map_err(|e| e.to_string())?;
     s.conn.execute("INSERT INTO agent_skill_library VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(id) DO UPDATE SET name=excluded.name,description=excluded.description,revision=excluded.revision",params![id,owner,profile,name,description,revision]).map_err(|e|e.to_string())?;
+    s.conn.execute("INSERT INTO agent_skill_directories VALUES (?1,?2,?3)",params![id,revision,json!(directories).to_string()]).map_err(|e|e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     managed(s)?
         .into_iter()
@@ -192,6 +194,27 @@ fn files(s: &Store, entry: &Value, revision: &str) -> Result<Value, String> {
         .map_err(|_| "技能版本不存在")?;
     serde_json::from_str(&raw).map_err(|e| e.to_string())
 }
+// Directory metadata is versioned with files, including empty directories.
+fn validate_directories(value: Option<&Value>, files: &serde_json::Map<String, Value>) -> Result<Vec<String>, String> {
+    let mut dirs = std::collections::BTreeSet::from(["scripts".to_owned(), "references".to_owned(), "assets".to_owned()]);
+    if let Some(value) = value {
+        let input = value.as_array().filter(|a| a.len() <= 128).ok_or("技能目录最多128个")?;
+        for path in input {
+            let path = path.as_str().ok_or("目录路径必须是文本")?;
+            if path.len()>200 {return Err("目录路径过长".into());}
+            if !["scripts", "references", "assets"].contains(&path) { check_path(path)?; }
+            if path == "SKILL.md" { return Err("SKILL.md 必须是文件".into()); }
+            dirs.insert(path.to_owned());
+        }
+    }
+    for path in files.keys().chain(dirs.clone().iter()) {
+        let mut parent = path.as_str();
+        while let Some((head,_))=parent.rsplit_once('/') {dirs.insert(head.to_owned());parent=head;}
+    }
+    if dirs.len()>128 {return Err("技能目录最多128个".into());}
+    if dirs.iter().any(|dir| files.contains_key(dir)) {return Err("文件与目录不能使用相同路径".into());}
+    Ok(dirs.into_iter().collect())
+}
 pub(crate) fn read(s: &Store, a: &Value) -> Result<Value, String> {
     project(s, a["sessionId"].as_str().ok_or("缺少会话")?)?;
     let id = a["id"].as_str().ok_or("缺少技能")?;
@@ -200,6 +223,10 @@ pub(crate) fn read(s: &Store, a: &Value) -> Result<Value, String> {
         .find(|x| x["id"] == id)
         .ok_or("技能不存在或无权读取")?;
     e["files"] = files(s, &e, e["revision"].as_str().unwrap())?;
+    use rusqlite::OptionalExtension;
+    let raw: Option<String> = s.conn.query_row("SELECT directories FROM agent_skill_directories WHERE skill_id=?1 AND revision=?2",params![e["id"].as_str().unwrap(),e["revision"].as_str().unwrap()],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+    let stored = raw.map(|v|serde_json::from_str::<Value>(&v)).transpose().map_err(|e|e.to_string())?;
+    e["directories"] = json!(validate_directories(stored.as_ref(),e["files"].as_object().ok_or("技能文件无效")?)?);
     Ok(e)
 }
 pub(crate) fn prepare(

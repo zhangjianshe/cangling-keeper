@@ -57,9 +57,12 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   assert call('agent_profile_options',{'sessionId':other})['profiles'][0]['skills']==['project:general:same']
   p2=call('agent_profile_save',{**preset,'id':'','name':'Other agent','skills':[]})
   def skill_payload(scope='account',body='VERSION-ONE'):
-   return {'sessionId':s,'scope':scope,'profileId':p['id'],'name':'same','description':'Shared guide','files':{'SKILL.md':'---\nname: same\ndescription: Shared guide\n---\n'+body,'references/example.md':'RESOURCE-ONE','scripts/demo.py':'print("demo")'}}
+   return {'sessionId':s,'scope':scope,'profileId':p['id'],'name':'same','description':'Shared guide','directories':['references/empty/nested'],'files':{'SKILL.md':'---\nname: same\ndescription: Shared guide\n---\n'+body,'references/example.md':'RESOURCE-ONE','scripts/demo.py':'print("demo")'}}
   shared=call('agent_library_skill_save',skill_payload());private=call('agent_library_skill_save',skill_payload('agent','PRIVATE'))
   assert shared['ref']!=private['ref']
+  read=call('agent_library_skill_read',{'sessionId':s,'id':shared['id']});assert set(read['directories'])=={'scripts','references','assets','references/empty','references/empty/nested'}
+  for paths in [['references/../escape'],['scripts/demo.py'],['SKILL.md'],['/tmp/x']]:
+   call('agent_library_skill_save',{**skill_payload(),'directories':paths},400)
   call('agent_library_skill_save',{**skill_payload(),'files':{'SKILL.md':'invalid'}},400)
   call('agent_library_skill_save',{**skill_payload(),'files':{**skill_payload()['files'],'references/../../escape':'x'}},400)
   call('agent_library_skill_save',{**skill_payload('agent'),'profileId':'foreign'},400)
@@ -105,6 +108,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   assert gd['runs'][-1]['status']=='failed'
   proc.terminate();proc.wait(10);start()
   read=call('agent_library_skill_read',{'sessionId':other,'id':shared['id']});assert read['revision']==newer['revision'] and 'VERSION-TWO' in read['files']['SKILL.md']
+  assert 'references/empty/nested' in read['directories']
   assert call('agent_session',{'sessionId':other})['agentProfile']['id']==p['id']
   print('PASS skill scopes: migration, cross-project profiles, shared/private/project isolation, immutable generation/regeneration, lazy resources, conflicts, path guards and restart')
  finally:

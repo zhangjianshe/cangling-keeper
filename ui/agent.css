@@ -386,3 +386,16 @@
 .profiles-tab:hover{color:#2563eb;background:#eef3fa}.profiles-tab[aria-selected=true]{color:#2563eb;border-bottom-color:#2563eb}
 .profiles-tab:focus-visible{outline:2px solid #93b4ef;outline-offset:-4px;border-radius:4px}
 @media(max-width:700px){.profiles-tabs{padding:0 12px;gap:2px}.profiles-tab{padding:12px 9px}}
+.profile-section-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.profile-section-heading .profile-skill-actions{margin-left:auto}
+.skill-metadata{display:grid;grid-template-columns:minmax(160px,1fr) minmax(180px,2fr);gap:16px}
+.skill-file-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.skill-file-actions input{flex:1;min-width:160px}.skill-file-actions .btn{white-space:nowrap}
+.skill-file-workspace{display:flex;flex:1;min-height:320px;border:1px solid #e1e5eb;overflow:hidden}
+.skill-file-tree{width:220px;min-width:140px;flex:none;overflow:auto;background:#fafbfc;border-right:1px solid #e1e5eb;padding:8px;box-sizing:border-box}
+.skill-file-tree svg{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.4;stroke-linecap:round;stroke-linejoin:round}
+.skill-directory>summary,.skill-tree-file{display:flex;align-items:center;gap:6px;min-height:34px;padding:4px 8px;border:0;border-radius:5px;background:none;font:inherit;color:#52525b;cursor:pointer;white-space:nowrap;text-align:left;box-sizing:border-box}
+.skill-directory>summary:before{content:'›';width:9px;flex:none}.skill-directory[open]>summary:before{transform:rotate(90deg)}.skill-directory>summary::marker,.skill-directory>summary::-webkit-details-marker{display:none;content:''}
+.skill-directory>.skill-directory,.skill-directory>.skill-tree-file{margin-left:16px}.skill-tree-file{width:calc(100% - 16px)}.skill-tree-file:hover,.skill-directory>summary:hover{background:#eef1f5}.skill-tree-file[aria-current=true]{background:#e8eef9;color:#2563eb}
+.skill-tree-empty{display:block;padding:4px 24px;color:#94a3b8;font-size:12px}.skill-file-editor{display:flex;flex-direction:column;flex:1;min-width:0}.skill-file-title{padding:8px 12px;border-bottom:1px solid #e1e5eb;color:#64748b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profiles-page .skill-file-editor textarea{flex:1;min-height:280px;border:0;border-radius:0;resize:vertical;font:14px/1.7 monospace;outline-offset:-2px}
+@media(max-width:900px){.skill-metadata{grid-template-columns:1fr}.skill-file-tree{width:160px}.skill-file-workspace{min-height:360px}}
+@media(max-width:520px){.skill-file-workspace{flex-direction:column}.skill-file-tree{width:100%;max-height:180px;border-right:0;border-bottom:1px solid #e1e5eb}}
