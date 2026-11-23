@@ -418,5 +418,8 @@
 #agent-skill-library-editor .project-markdown-preview{padding:16px;overflow-wrap:anywhere}
 
 #agent-skill-library-editor .skill-file-actions .project-markdown-modes{margin-left:auto;padding:0;border:0;flex:none;gap:4px}
-#agent-skill-library-editor .skill-file-actions .skill-mode-icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:7px}
+#agent-skill-library-editor .skill-file-actions{--skill-control-height:40px}
+#agent-skill-library-editor .skill-file-actions input,#agent-skill-library-editor .skill-file-actions .btn{box-sizing:border-box;height:var(--skill-control-height);min-height:var(--skill-control-height);padding:0 12px;line-height:1.4}
+#agent-skill-library-editor .skill-file-actions .btn{display:inline-flex;align-items:center;justify-content:center}
+#agent-skill-library-editor .skill-file-actions .skill-mode-icon{width:var(--skill-control-height);padding:0;flex:none}
 .skill-mode-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
