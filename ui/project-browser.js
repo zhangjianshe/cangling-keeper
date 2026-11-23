@@ -11,7 +11,7 @@
   const location=node('p','project-browser-location'),bar=node('div','project-browser-bar'),up=iconButton('上级目录','m6 10 6-6 6 6M12 4v16'),refresh=iconButton('刷新','M20 7v5h-5M4 17v-5h5M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9'),status=node('p','project-browser-status');status.setAttribute('role','status');bar.append(up,location,status,refresh);
   const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(code);layout.append(list,preview);panel.append(header,bar,layout);document.querySelector('#agent-main').after(panel);
   const save=iconButton('保存文件','M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2ZM7 3v6h10V3M7 21v-8h10v8',true);bar.append(save);save.disabled=true;
-  const editor=window.ace.edit(code);window.ace.config.set('basePath','/vendor/ace');editor.setTheme('ace/theme/github');editor.session.setUseWorker(false);editor.setOptions({fontSize:15,showPrintMargin:false});editor.setReadOnly(true);
+  const editor=window.ace.edit(code);window.ace.config.set('basePath','/vendor/ace');editor.setTheme('ace/theme/github');editor.session.setUseWorker(false);editor.setOptions({fontSize:'var(--agent-list-font-size, 14px)',showPrintMargin:false});editor.setReadOnly(true);
   const modes=node('div','project-markdown-modes'),workspace=node('div','project-document-workspace'),rendered=node('article','project-markdown-preview');
   modes.setAttribute('role','group');modes.setAttribute('aria-label','Markdown 显示模式');modes.hidden=true;rendered.hidden=true;
   preview.replaceChildren(modes,workspace);workspace.append(code,rendered);
