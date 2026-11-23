@@ -344,41 +344,39 @@
 .agent-task-changes{margin:12px 0;padding:12px;border:1px solid #e5e7eb;border-radius:6px}.agent-task-changes details{margin:8px 0}.agent-task-changes pre{max-height:320px;overflow:auto;white-space:pre-wrap}.agent-task-changes .hint{font-size:12px;color:#64748b}
 
 /* Agent preset editor uses the shared modal and footer. */
-#agent-profiles-modal .modal-box{width:min(720px,calc(100vw - 32px));max-height:90vh;overflow:auto}
-#agent-profiles-modal .profile-choices{border:1px solid #dbe4f0;border-radius:6px;padding:12px;max-height:180px;overflow:auto}
-#agent-profiles-modal .profile-choice{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:14px;margin:4px 0}
-#agent-profiles-modal .profile-choice input{width:16px;height:16px;flex:none;order:-1}
 #profile-prompt{width:100%;resize:vertical;min-height:120px}
-#agent-profiles-modal .modal-box{display:flex;flex-direction:column;padding:0;overflow:hidden}
-#agent-profiles-modal .llm-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--keeper-dialog-border);flex:none}
-#agent-profiles-modal .llm-dialog-head h2{margin:0}
-#agent-profiles-modal .modal-close{position:static;width:28px;height:28px}
-#agent-profiles-modal form{display:flex;flex-direction:column;min-height:0;overflow:hidden;margin:0}
-#agent-profiles-modal .llm-dialog-fields{display:flex;flex-direction:column;gap:14px;padding:20px 24px;overflow:auto;min-height:0}
-#agent-profiles-modal .llm-dialog-fields>label{display:flex;flex-direction:column;gap:6px;font-size:14px}
-#agent-profiles-modal input:not([type=checkbox]),#agent-profiles-modal textarea,#agent-profiles-modal select{box-sizing:border-box;width:100%;padding:9px 11px;border:1px solid #d9d9e0;border-radius:7px;background:#fff;color:inherit;font:inherit}
-#agent-profiles-modal .hint{margin:0;font-size:12px;color:#64748b}
-#agent-profiles-modal .profile-choices{flex:none}
-#agent-profiles-modal .modal-actions{flex:none;margin:0;border-radius:0;padding:14px 24px}
 .agent-header{height:auto;min-height:64px;gap:12px;padding-top:8px;padding-bottom:8px}
 .agent-header-tools{flex-wrap:wrap;justify-content:flex-end}
 .agent-header-tools>button,.agent-header-tools>select{flex-shrink:0}
 #agent-profile-picker{max-width:170px;text-overflow:ellipsis}
 
-#agent-profiles-modal .modal-box{max-width:min(720px,calc(100vw - 32px))}
 /* Shared skill editor uses the same dialog structure as agent profiles. */
-#agent-skill-library-modal{z-index:1100}
-#agent-skill-library-modal .modal-box{width:min(800px,calc(100vw - 32px));max-width:800px;max-height:90vh;display:flex;flex-direction:column;padding:0;overflow:hidden}
-#agent-skill-library-modal .llm-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--keeper-dialog-border)}
-#agent-skill-library-modal h2{margin:0}
-#agent-skill-library-modal .modal-close{position:static}
-#agent-skill-library-modal form{display:flex;flex-direction:column;min-height:0;overflow:hidden;margin:0}
-#agent-skill-library-modal .llm-dialog-fields{display:flex;flex-direction:column;gap:12px;padding:20px 24px;overflow:auto;min-height:0}
-#agent-skill-library-modal label{display:flex;flex-direction:column;gap:6px;font-size:14px}
-#agent-skill-library-modal input,#agent-skill-library-modal select,#agent-skill-library-modal textarea{box-sizing:border-box;width:100%;padding:9px 11px;border:1px solid #d9d9e0;border-radius:7px;background:#fff;color:inherit;font:inherit}
-#agent-skill-library-modal textarea{min-height:220px;flex-shrink:0;font-family:monospace;line-height:1.6}
-#agent-skill-library-modal .hint{margin:0;font-size:12px;color:#64748b}
-#agent-skill-library-modal .modal-actions{flex:none;margin:0;padding:14px 24px}
 .profile-skill-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .profile-skill-actions input{flex:1;min-width:180px}
-#agent-profiles-modal .profile-choice .btn{margin-left:auto;padding:2px 8px;font-size:12px}
+/* Account agent management is a workspace page, preserving the main sidebar. */
+.profiles-page{flex:1;min-width:0;height:100%;display:flex;flex-direction:column;background:#fff}
+.profiles-page>.keeper-settings-header{display:flex;justify-content:space-between;align-items:center;padding:16px 24px;flex:none;border-bottom:1px solid #e5e7eb}
+.profiles-page h1,.profiles-page h2{font-size:18px;font-weight:600;margin:0}
+.profiles-layout{display:flex;flex:1;min-height:0;min-width:0}
+.profiles-navigation{width:220px;flex:none;background:#fafafa;border-right:1px solid #e5e7eb;display:flex;flex-direction:column;gap:12px;padding:16px;box-sizing:border-box}
+.profiles-list{overflow:auto;min-height:0;display:flex;flex-direction:column;gap:2px}
+.profiles-list-item{border:0;background:transparent;text-align:left;padding:10px 12px;border-radius:8px;color:inherit;font:inherit;cursor:pointer;width:100%}
+.profiles-list-item:hover{background:#f0f1f3}.profiles-list-item.active{background:#e9eef7;color:#2656a4}
+.profiles-list-item strong,.profiles-list-item small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.profiles-list-item strong{font-weight:500}.profiles-list-item small{font-size:12px;color:#64748b;margin-top:4px}
+.profiles-content{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}
+.profiles-form{display:flex;flex-direction:column;flex:1;min-height:0;margin:0}.profiles-form[hidden]{display:none}
+.profiles-fields{padding:24px;overflow:auto;flex:1;min-height:0}.profiles-section{max-width:960px;margin:0 auto 28px;display:flex;flex-direction:column;gap:14px}.profiles-section+.profiles-section{border-top:1px solid #ececf0;padding-top:24px}
+.profiles-page .hint{font-size:12px;color:#64748b;margin:0;line-height:1.7}
+.profiles-section>label,.skill-library-editor label{display:flex;flex-direction:column;gap:6px;font-size:14px}
+.profiles-page input:not([type=checkbox]),.profiles-page select,.profiles-page textarea{box-sizing:border-box;width:100%;padding:9px 11px;border:1px solid #d9d9e0;border-radius:7px;background:#fff;color:inherit;font:inherit}
+.profiles-page textarea{resize:vertical;line-height:1.6;min-height:160px}
+.profiles-page .profile-choices{border:0;padding:0;margin:0;min-width:0;display:flex;flex-direction:column;gap:2px}
+.profiles-page .profile-choices legend{font-size:12px;color:#64748b;margin-bottom:8px}
+.profiles-page .profile-choice{display:flex;align-items:center;gap:10px;padding:8px;border-radius:6px;font-size:14px;overflow-wrap:anywhere}.profiles-page .profile-choice:hover{background:#f5f6f8}
+.profiles-page .profile-choice input{width:16px;height:16px;flex:none;order:-1}.profiles-page .profile-choice .btn{margin-left:auto;flex:none;padding:3px 10px;font-size:12px}
+.profiles-actions{flex:none;display:flex;align-items:center;gap:10px;padding:14px 24px;border-top:1px solid #e5e7eb;background:#f7f8fa}.profiles-actions [role=status]{flex:1}.profiles-actions .danger{color:#b42318}
+.skill-library-editor{flex:1;min-height:0;display:flex;flex-direction:column}.skill-library-box{display:flex;flex-direction:column;min-height:0;flex:1}.skill-library-editor .llm-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid #e5e7eb;gap:12px}.skill-library-editor form{display:flex;flex-direction:column;flex:1;min-height:0;margin:0}.skill-library-editor .llm-dialog-fields{overflow:auto;display:flex;flex-direction:column;gap:14px;padding:24px;min-height:0;flex:1}.skill-library-editor textarea{min-height:260px;font-family:monospace}.skill-library-editor .modal-actions{margin:0;border-radius:0;padding:14px 24px;flex:none}
+@media(max-width:1000px){.profiles-navigation{width:175px;padding:12px}.profiles-fields{padding:18px}.profiles-actions{flex-wrap:wrap}.profiles-actions [role=status]{min-width:0}}
+@media(max-width:700px){.profiles-layout{flex-direction:column}.profiles-navigation{width:100%;max-height:210px;border-right:0;border-bottom:1px solid #e5e7eb;padding:12px}.profiles-list{flex-direction:row;overflow:auto}.profiles-list-item{width:170px;flex:none}.profiles-page>.keeper-settings-header{padding:12px}.profiles-fields,.skill-library-editor .llm-dialog-fields{padding:16px}}
+
+.profiles-actions .btn{white-space:nowrap}

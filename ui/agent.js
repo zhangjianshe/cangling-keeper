@@ -710,9 +710,9 @@
     $('#agent-settings-menu').hidden=false;$('#agent-settings-toggle').setAttribute('aria-expanded','true');
     $('#agent-menu-account').focus();
   }
-  function showConversation(){agent.projectBrowser?.hide();$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
+  function showConversation(){agent.profiles?.hide();agent.projectBrowser?.hide();$('#keeper-account').classList.add('hidden');$('#keeper-settings').classList.add('hidden');$('#agent-main').classList.remove('hidden');}
   function openSettings(page){
-    agent.projectBrowser?.hide();closeAccountMenu();$('#agent-main').classList.add('hidden');
+    agent.profiles?.hide();agent.projectBrowser?.hide();closeAccountMenu();$('#agent-main').classList.add('hidden');
     $('#keeper-account').classList.toggle('hidden',page!=='profile');
     $('#keeper-settings').classList.toggle('hidden',page!=='security');
     $(page==='profile'?'#account-page-title':'#settings-page-title').focus();if(page==='profile')loadMcp();
@@ -794,7 +794,7 @@
   agent.runExperience=window.createKeeperRunExperience?.({agent,notice});
   agent.drafts=window.createKeeperDrafts?.({agent,invoke,notice,ensureSession});
   agent.history=window.createKeeperHistory?.({agent,invoke,element,notice,bootstrap,select,showConversation,renderProjects,renderSessions,renderConversation,clearSelected});
-  agent.profiles=window.createKeeperProfiles?.({agent,invoke,element,notice,select,ensureSession});
+  agent.profiles=window.createKeeperProfiles?.({agent,invoke,element,notice,select,ensureSession,showConversation});
   agent.guidance=window.createKeeperGuidance?.({agent,invoke,element,notice});
   agent.attachments=window.createKeeperAttachments?.({agent,invoke,element,notice,ensureSession,select,renderPending});
   bootstrap().then(async()=>{
