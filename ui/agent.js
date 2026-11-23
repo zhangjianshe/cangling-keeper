@@ -51,6 +51,23 @@
     form.onsubmit=event=>{event.preventDefault();save();};input.onkeydown=event=>{if(event.isComposing)return;if(event.key==='Escape'){event.preventDefault();event.stopPropagation();cancel();}else if(event.key==='Enter'){event.preventDefault();save();}};
     input.onblur=()=>{if(!cancelled && agent.selected===session)save();};form.append(input,count);button.hidden=true;button.after(form);input.focus();input.select();
   };
+  function renderTaskChanges(message,runs){
+    const files=runs.filter(r=>r.review?.kind==='file'),commands=runs.filter(r=>r.tool==='run_command');
+    if(!files.length&&!commands.length)return;
+    const box=element('details','agent-task-changes'),title=element('summary','',`本轮变更 · ${new Set(files.map(r=>r.review.path)).size} 个文件 · ${commands.length} 次命令`);box.append(title);
+    box.append(element('p','hint','仅追踪内置文件工具；命令和 MCP 的文件变更未自动追踪。撤销按修改倒序进行，仅恢复该操作前内容，文件已变化时拒绝覆盖。'));
+    for(const run of [...files].reverse()){
+      let result={};try{result=JSON.parse(run.output||'{}');}catch{}
+      const row=element('details'),v=run.review;row.append(element('summary','',`${v.path} · ${v.undoneAt?'已撤销':result.applied?'已写入':run.status}`));row.append(element('pre','agent-tool-output',v.diff||'无差异记录'));
+      const undo=element('button','btn','撤销此修改');undo.type='button';undo.disabled=!!v.undoneAt||v.rollbackVersion!==1||result.applied!==true||agent.detail.modelPending;
+      undo.title=v.rollbackVersion!==1?'历史记录没有完整撤销快照':'';
+      undo.onclick=async()=>{const session=agent.selected,epoch=agent.identityEpoch;if(!await window.uiConfirm('仅撤销此项修改；文件已有后续变化时将拒绝操作。继续？','撤销文件修改'))return;if(session!==agent.selected||epoch!==agent.identityEpoch)return;undo.disabled=true;try{await invoke('agent_undo_file_change',{runId:run.id});if(session===agent.selected&&epoch===agent.identityEpoch)await select(session);}catch(e){notice(String(e));undo.disabled=false;}};
+      row.append(undo);box.append(row);
+    }
+    if(commands.length)box.append(element('h4','','命令与验证记录（退出码不等同于测试断言通过）'));
+    for(const run of commands){let result={};try{result=JSON.parse(run.output||'{}');}catch{}const row=element('details');row.append(element('summary','',`${run.review?.command||run.arguments?.command||'命令'} · ${result.timedOut?'超时':result.stopped?'已停止':result.exitCode!=null?'退出码 '+result.exitCode:run.status}`),element('pre','agent-tool-output',run.output||'尚无执行结果'));box.append(row);}
+    message.append(box);
+  }
   function renderProjects(){
     if(!agent.projects.some(p=>p.id===agent.project))agent.project='general';
     localStorage.setItem('keeper-agent-project',agent.project);
@@ -475,6 +492,7 @@
         }
         if(entry.role==='assistant'){
           const runs=agent.detail.runs.filter(run=>run.responseId===entry.id);
+          renderTaskChanges(message,runs);
           const planned=[...runs].reverse().find(run=>run.tool==='update_plan' && run.status==='succeeded');
           if(planned){try{const plan=JSON.parse(planned.output);if(Array.isArray(plan.plan)){
             const box=element('section','agent-task-plan');box.setAttribute('aria-label','任务计划');box.append(element('strong','','任务计划'),element('small','','模型报告的进度，以实际执行结果为准'));

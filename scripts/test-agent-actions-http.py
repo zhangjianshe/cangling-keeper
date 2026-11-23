@@ -98,6 +98,15 @@ with tempfile.TemporaryDirectory(prefix='keeper-action-http-') as folder:
    stale=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':stale,'content':'stale revision'});stale_detail=done(stale)
    assert stale_detail['runs'][0]['status']=='failed' and not stale_detail['runs'][0].get('review');assert (root/'version.txt').read_text()=='current'
    s,run,_=pending('valid revision');assert run['review']['sourceHashVerified'];approve(s,run);done(s);assert (root/'version.txt').read_text()=='updated'
+   # Undo keeps pre-task user content and refuses later edits.
+   undo_run=multi_detail['runs'][0]['id']
+   (root/'multi.txt').write_text('later user changes')
+   call('agent_undo_file_change',{'runId':undo_run},400)
+   assert (root/'multi.txt').read_text()=='later user changes'
+   (root/'multi.txt').write_text('ONE\nTWO\n')
+   call('agent_undo_file_change',{'runId':undo_run})
+   assert (root/'multi.txt').read_text()=='first\nsecond\n'
+   call('agent_undo_file_change',{'runId':undo_run},400)
    s,run,_=pending('apply patch');assert '-hello v1' in run['review']['diff'] and '+hello v2' in run['review']['diff'];approve(s,run);done(s);assert (root/'hello.txt').read_text()=='hello v2\n'
    (root/'hello.txt').write_text('hello v1\n');s,run,_=pending('conflict patch');(root/'hello.txt').write_text('user edit\n');approve(s,run);d=done(s);assert d['runs'][-1]['status']=='failed';assert (root/'hello.txt').read_text()=='user edit\n'
    s,run,_=pending('parent changed');(root/'sub').rename(root/'moved');(root/'sub').mkdir();approve(s,run);assert done(s)['runs'][-1]['status']=='failed';assert not (root/'sub/child.txt').exists() and not (root/'moved/child.txt').exists()

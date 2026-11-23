@@ -390,6 +390,22 @@ pub(crate) async fn dispatch(
     sink: Arc<dyn crate::EventSink>,
 ) -> Result<Value, String> {
     match command {
+        "agent_undo_file_change" => {
+            let run=text(&args,"runId")?;
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            let (session,response,status,output):(String,String,String,String)=store.conn.query_row("SELECT session_id,response_id,status,output FROM agent_runs WHERE id=?1",[&run],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(|_|"记录不存在")?;
+            require_session(&store,&session)?;
+            let active:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending)",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if active{return Err("有任务正在运行，请停止或等待完成后撤销".into());}
+            let output:Value=serde_json::from_str(&output).map_err(|_|"执行结果不可核对")?;
+            if status!="succeeded" || output["applied"]!=true{return Err("只能撤销已确认写入成功的文件修改".into());}
+            let directory:String=store.conn.query_row("SELECT project_directory FROM agent_tasks WHERE response_id=?1 AND session_id=?2",params![response,session],|r|r.get(0)).map_err(|_|"任务目录不可核对")?;
+            let review=crate::agent_runtime::review(&store,&run)?;
+            let root=std::sync::Arc::new(cap_std::fs::Dir::open_ambient_dir(&directory,cap_std::ambient_authority()).map_err(|_|"任务目录不可访问")?);
+            let result=crate::agent_actions::undo_file(root,&directory,&review)?;
+            store.conn.execute("UPDATE agent_reviews SET review=json_set(review,'$.undoneAt',?2) WHERE run_id=?1",params![run,now()]).map_err(|e|e.to_string())?;
+            Ok(result)
+        }
         "agent_project_guidance_by_project" => {
             let project=text(&args,"projectId")?;
             let (owner,directory)={let store=core.store.lock().map_err(|e|e.to_string())?;let directory:String=store.conn.query_row("SELECT directory FROM agent_projects WHERE id=?1",[project],|r|r.get(0)).map_err(|_|"项目不存在")?;(crate::agent_account::owner(&store)?,directory)};

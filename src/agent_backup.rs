@@ -733,6 +733,8 @@ pub(crate) fn restore(core: &AppState, args: &Value) -> Result<Value, String> {
                 if let Some(review) = &run.review {
                     let mut review = review.clone();
                     review.as_object_mut().unwrap().remove("hash");
+                    // Imported history is not proof of writes in the current filesystem.
+                    review.as_object_mut().unwrap().remove("rollbackVersion");
                     let raw = review.to_string();
                     let hash = crate::agent_actions::hash(raw.as_bytes());
                     sql(store.conn.execute(

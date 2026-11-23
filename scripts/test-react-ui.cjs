@@ -4,6 +4,7 @@ const vm=require('node:vm');
 const {JSDOM}=require('jsdom');
 const dom=new JSDOM(fs.readFileSync('ui/index.html','utf8'),{runScripts:'outside-only'}),context=dom.getInternalVMContext(),document=dom.window.document;
 const source=fs.readFileSync('ui/agent.js','utf8');
+vm.runInContext(source.slice(source.indexOf('  function renderTaskChanges('),source.indexOf('  function renderProjects()')),context);
 const messages=[{id:'question',role:'user',content:'读取项目',createdAt:1},{id:'old',role:'assistant',content:'旧回复',createdAt:2,modelMetadata:{source:'llm',model:'fixture',serverId:'fixture',requestedModel:'fixture'}},{id:'new',role:'assistant',content:'新回复',createdAt:3,modelMetadata:{source:'llm',model:'fixture',serverId:'fixture',requestedModel:'fixture',regenerateOf:'old'}}];
 const run=(id,responseId)=>({id,responseId,tool:'read_file',arguments:{path:'README.md'},status:'succeeded',output:'file content',createdAt:3,updatedAt:1});
 Object.assign(context,{$:s=>document.querySelector(s),agent:{selected:'session',detail:{sessionId:'session',messages,replyGroups:[{rootId:'old',versionIds:['old','new'],selectedId:'new'}],runs:[run('old-run','old'),run('new-run','new')],modelPending:true,streamingMessageId:'new',tasks:[{responseId:'new',status:'tool',step:2}]}},titleFor:()=> '读取项目文件',statusNames:{succeeded:'已完成',running:'正在执行'},closeModelMenu(){},regenerateReply(){},chooseReplyVersion(){},notice(){}});

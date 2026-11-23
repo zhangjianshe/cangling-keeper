@@ -155,6 +155,7 @@ fn same_directory(a: &Dir, b: &Dir) -> Result<bool, String> {
         Err("此平台尚不支持写操作".into())
     }
 }
+static WRITES: Mutex<()> = Mutex::new(());
 pub(crate) struct Prepared {
     pub review: Value,
     action: Action,
@@ -314,7 +315,7 @@ fn prepare_with_limit(
         .header(if old.is_some() { raw } else { "/dev/null" }, raw)
         .to_string();
     check(cancel)?;
-    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"createOnly":create_only,"changeSummary":change_summary,"bytes":after.len(),"sourceHashVerified":args.get("expectedSha256").is_some()});
+    let review = json!({"kind":"file","path":relative,"operation":name,"diff":diff,"beforeHash":old.as_ref().map(|(s,_)|hash(s.as_bytes())),"afterHash":hash(after.as_bytes()),"newFile":old.is_none(),"createOnly":create_only,"changeSummary":change_summary,"bytes":after.len(),"sourceHashVerified":args.get("expectedSha256").is_some(),"rollbackVersion":1,"beforeContent":old.as_ref().map(|(text,_)|text)});
     Ok(Prepared {
         review,
         action: Action::File {
@@ -354,7 +355,7 @@ impl Prepared {
                 after,
                 permissions,
             } => {
-                static WRITES: Mutex<()> = Mutex::new(());
+
                 let _guard = loop {
                     check(&cancel)?;
                     match WRITES.try_lock() {
@@ -692,6 +693,19 @@ mod tests {
         Arc::new(AtomicBool::new(false))
     }
     #[test]
+    fn undo_restores_preexisting_content_and_guards_new_file(){
+        let (path,root)=fixture();
+        std::fs::write(path.join("original.txt"),"user uncommitted content").unwrap();
+        for (file,old) in [("original.txt",Some("user uncommitted content")),("new.txt",None)] {
+            let p=prepare(root.clone(),path.to_str().unwrap(),"write_file",&json!({"path":file,"content":"agent result"}),&flag()).unwrap();let review=p.review.clone();p.execute(flag(),|_|{}).unwrap();
+            std::fs::write(path.join(file),"later change").unwrap();assert!(undo_file(root.clone(),path.to_str().unwrap(),&review).is_err());
+            assert_eq!(std::fs::read_to_string(path.join(file)).unwrap(),"later change");
+            std::fs::write(path.join(file),"agent result").unwrap();undo_file(root.clone(),path.to_str().unwrap(),&review).unwrap();
+            if let Some(old)=old{assert_eq!(std::fs::read_to_string(path.join(file)).unwrap(),old);}else{assert!(!path.join(file).exists());}
+        }
+        drop(root);std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
     fn multiple_edits_prepare_once_and_never_partially_write(){
         let (path,root)=fixture();std::fs::write(path.join("multi.txt"),"first\nsecond\n").unwrap();
         let args=json!({"path":"multi.txt","edits":[{"oldText":"first","newText":"ONE"},{"oldText":"second","newText":"TWO"}],"expectedSha256":hash(b"first\nsecond\n")});
@@ -994,4 +1008,27 @@ pub(crate) fn create_entry(root:&Dir,parent:&str,name:&str,directory:bool)->Resu
         })
     };
     result.map_err(|e|if e.kind()==std::io::ErrorKind::AlreadyExists{"同名文件或目录已存在，未覆盖".into()}else{format!("创建失败：{e}")})
+}
+
+/// Undo only the exact recorded post-image. Never use Git reset or a repository baseline.
+pub(crate) fn undo_file(root:Arc<Dir>, directory:&str, review:&Value)->Result<Value,String>{
+    if review["rollbackVersion"]!=1 || review.get("undoneAt").is_some(){return Err("此记录无撤销快照或已撤销".into());}
+    let relative=review["path"].as_str().ok_or("缺少文件路径")?;
+    let expected=review["afterHash"].as_str().ok_or("缺少修改后哈希")?;
+    let flag=Arc::new(AtomicBool::new(false));
+    if let Some(content)=review["beforeContent"].as_str(){
+        if Some(hash(content.as_bytes()).as_str())!=review["beforeHash"].as_str(){return Err("撤销快照校验失败".into());}
+        let plan=prepare_editor(root,directory,&json!({"path":relative,"content":content,"expectedSha256":expected}),&flag)?;
+        return plan.execute(flag,|_|{});
+    }
+    if review["newFile"]!=true{return Err("缺少原始文件内容".into());}
+    let _guard=WRITES.lock().map_err(|_|"文件写入锁异常")?;
+    let target=path(relative,false)?;
+    no_links(&root,&target,false)?;
+    let parent=root.open_dir(target.parent().filter(|p|!p.as_os_str().is_empty()).unwrap_or(Path::new("."))).map_err(|_|"父目录不可访问")?;
+    let name=PathBuf::from(target.file_name().ok_or("文件名无效")?);
+    let current=snapshot(&parent,&name)?.ok_or("文件已不存在")?;
+    if hash(current.0.as_bytes())!=expected{return Err("文件已有后续修改，拒绝撤销".into());}
+    parent.remove_file(name).map_err(|_|"无法撤销新建文件")?;
+    Ok(json!({"removed":true}))
 }
