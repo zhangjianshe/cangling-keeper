@@ -12,7 +12,7 @@
 地球页使用精简布局，只显示项目标题、状态、分屏和返回入口。定位、图层切换及 GeoJSON 加载通过智能体工具进行，不再显示功能操作面板。
 通过 `earth_add_geojson_layer` 输入项目相对路径（如 `keeper-earth-demo.geojson`）加载 WGS84 GeoJSON。
 支持 Point/MultiPoint、LineString/MultiLineString、Polygon/MultiPolygon 的点和线框展示。
-点击点/轮廓查看属性；属性作为纯文本显示，不执行 HTML。
+点击点/轮廓保存选择信息，智能体通过 earth_get_selection 读取；地球画面不再显示属性或测量结果消息框。
 每层最多 500 个要素、5000 个坐标，整个场景约 1 MiB、最多 8 层。拒绝路径穿越、链接、受保护文件和自定义 CRS。
 底层桥接保留测量和截图能力，当前页面不提供操作入口。两点测量使用拾取位置计算近似球面距离，不计地形起伏；不是工程精密测量。
 截图在 GPU 提交画面时复制 canvas，再叠加业务图层，显示预览后可下载 PNG。
