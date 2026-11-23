@@ -1,18 +1,18 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
-const dom=new JSDOM('<!doctype html><aside id="sidebar"></aside><main id="agent-main"><div class="agent-header-tools"></div></main><section id="keeper-account" class="hidden"></section><section id="keeper-settings" class="hidden"></section>',{runScripts:'outside-only'}),w=dom.window,d=w.document;
+const dom=new JSDOM('<!doctype html><aside id="sidebar"><button id="agent-settings-toggle"></button><div id="agent-settings-menu"><button id="agent-menu-settings">设置</button></div></aside><main id="agent-main"><div class="agent-header-tools"></div></main><section id="keeper-account" class="hidden"></section><section id="keeper-settings" class="hidden"></section>',{runScripts:'outside-only'}),w=dom.window,d=w.document;
 for(const f of ['vendor/ace/ace.js','vendor/ace/theme-github.js','vendor/ace/mode-markdown.js','vendor/ace/mode-python.js','vendor/marked.js','vendor/purify.min.js','vendor/highlight.min.js','vendor/katex/katex.min.js','markdown.js'])w.eval(fs.readFileSync('ui/'+f,'utf8'));
 w.eval(fs.readFileSync('ui/agent-skill-library.js','utf8'));
 w.eval(fs.readFileSync('ui/agent-profiles.js','utf8'));
 const p={id:'p',name:'<b>Agent</b>',systemPrompt:'Be precise',modelId:'m',skills:['skill'],mcpTools:['mcp_one']};
 const agent={selected:'s',identityEpoch:0,detail:{agentProfiles:[p],agentProfile:p}},calls=[];
-let deferred=null,selected='';
+let deferred=null,selected='',menuClosed=false;
 const invoke=async(n,a)=>{calls.push([n,a]);if(deferred)return new Promise(r=>deferred=r);if(n==='agent_profile_options')return {profiles:[p],selected:p,models:[{id:'m',name:'Model',model:'fixture',enabled:true,hasApiKey:true}],skills:[{name:'skill',description:'guide'}],mcpTools:[{function:{name:'mcp_one',description:'MCP fixture'}}]};return {};};
 const element=(t,c,text)=>{const e=d.createElement(t);e.className=c||'';if(text!==undefined)e.textContent=text;return e;};
-const ui=w.createKeeperProfiles({agent,invoke,element,notice:()=>{},select:async s=>selected=s,ensureSession:async()=>{},showConversation:()=>d.querySelector('#agent-main').classList.remove('hidden')});
+const ui=w.createKeeperProfiles({agent,invoke,element,notice:()=>{},select:async s=>selected=s,ensureSession:async()=>{},closeAccountMenu:()=>{menuClosed=true;},showConversation:()=>d.querySelector('#agent-main').classList.remove('hidden')});
 (async()=>{
  ui.update();const picker=d.querySelector('#agent-profile-picker');assert.equal(picker.value,'p');assert.equal(d.querySelector('b'),null);
  agent.detail.modelPending=true;ui.update();assert(picker.disabled);agent.detail.modelPending=false;ui.update();
- await ui.open();assert(d.querySelector('#agent-main').classList.contains('hidden'));assert(!d.querySelector('#agent-profiles-page').classList.contains('modal'));assert(d.querySelector('#agent-skill-library-editor').classList.contains('hidden'));assert.equal(d.querySelector('#profile-name').value,p.name);assert.equal(d.querySelector('#profile-model').value,'m');assert.equal(d.querySelectorAll('input:checked').length,2);
+ assert(d.querySelector('#agent-settings-menu #agent-menu-profiles'));assert(!d.querySelector('.agent-header-tools #agent-menu-profiles'));d.querySelector('#agent-menu-profiles').click();await new Promise(setImmediate);assert(menuClosed);assert(d.querySelector('#agent-main').classList.contains('hidden'));assert(!d.querySelector('#agent-profiles-page').classList.contains('modal'));assert(d.querySelector('#agent-skill-library-editor').classList.contains('hidden'));assert.equal(d.querySelector('#profile-name').value,p.name);assert.equal(d.querySelector('#profile-model').value,'m');assert.equal(d.querySelectorAll('input:checked').length,2);
  const tabs=[...d.querySelectorAll('.profiles-form > .profiles-tabs [role=tab]')],panels=[...d.querySelectorAll('.profiles-form [role=tabpanel]')];assert.equal(tabs.length,3);assert(!panels[0].hidden&&panels[1].hidden&&panels[2].hidden);
  tabs[1].click();assert(panels[0].hidden&&!panels[1].hidden);d.querySelector('#profile-name').value='Preserved';tabs[2].click();assert.equal(d.querySelector('#profile-name').value,'Preserved');tabs[2].dispatchEvent(new w.KeyboardEvent('keydown',{key:'Home',bubbles:true}));assert.equal(tabs[0].getAttribute('aria-selected'),'true');
  tabs[1].click();d.querySelector('#profile-name').dispatchEvent(new w.Event('invalid'));assert(!panels[0].hidden);tabs[2].click();

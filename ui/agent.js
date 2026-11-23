@@ -794,7 +794,7 @@
   agent.runExperience=window.createKeeperRunExperience?.({agent,notice});
   agent.drafts=window.createKeeperDrafts?.({agent,invoke,notice,ensureSession});
   agent.history=window.createKeeperHistory?.({agent,invoke,element,notice,bootstrap,select,showConversation,renderProjects,renderSessions,renderConversation,clearSelected});
-  agent.profiles=window.createKeeperProfiles?.({agent,invoke,element,notice,select,ensureSession,showConversation});
+  agent.profiles=window.createKeeperProfiles?.({agent,invoke,element,notice,select,ensureSession,showConversation,closeAccountMenu});
   agent.guidance=window.createKeeperGuidance?.({agent,invoke,element,notice});
   agent.attachments=window.createKeeperAttachments?.({agent,invoke,element,notice,ensureSession,select,renderPending});
   bootstrap().then(async()=>{
