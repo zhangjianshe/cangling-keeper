@@ -30,7 +30,7 @@
     creating=false;clearPreview();await loadDirectory(parent);if(seq===version+1&&project===selected&&epoch===agent.identityEpoch&&!panel.classList.contains('hidden')){if(kind==='file')await loadFile(parent==='.'?name:parent+'/'+name);status.textContent=kind==='file'?'文件已创建':'目录已创建';}
    }catch(e){if(version===seq&&epoch===agent.identityEpoch)status.textContent=String(e);}finally{creating=false;newFile.disabled=newDirectory.disabled=false;}
   }
-  newFile.onclick=()=>create('file');newDirectory.onclick=()=>create('directory');
+  newFile.onclick=()=>guidanceMode?createSkillEntry('file'):create('file');newDirectory.onclick=()=>guidanceMode?createSkillEntry('directory'):create('directory');
   editor.commands.addCommand({name:'saveProjectFile',bindKey:{win:'Ctrl-S',mac:'Command-S'},exec:()=>save.click()});
 
   function closeMenu(focus=false){popup?.remove();popup=null;if(trigger){trigger.setAttribute('aria-expanded','false');if(focus)trigger.focus();}trigger=null;}
@@ -56,7 +56,7 @@
    }catch(e){if(version===seq)status.textContent='不可预览：'+String(e);}
   }
   up.onclick=()=>loadDirectory(path.includes('/')?path.slice(0,path.lastIndexOf('/')):'.');refresh.onclick=()=>guidanceMode?loadGuidance():loadDirectory(path);
-  async function open(value){guidanceMode=false;up.hidden=newFile.hidden=newDirectory.hidden=false;addSkill.hidden=true;closeMenu();const before=seq,identity=agent.identityEpoch;const changed=project?.id!==value.id;if(changed&&(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch))return;const resume=!changed&&dirty();if(changed)clearPreview();project=value;for(const id of ['agent-main','keeper-account','keeper-settings'])document.getElementById(id).classList.add('hidden');panel.classList.remove('hidden');title.textContent=value.name+' · 项目目录';if(resume)editor.resize();else await loadDirectory('.');}
+  async function open(value){guidanceMode=false;newFile.disabled=newDirectory.disabled=false;up.hidden=newFile.hidden=newDirectory.hidden=false;addSkill.hidden=true;closeMenu();const before=seq,identity=agent.identityEpoch;const changed=project?.id!==value.id;if(changed&&(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch))return;const resume=!changed&&dirty();if(changed)clearPreview();project=value;for(const id of ['agent-main','keeper-account','keeper-settings'])document.getElementById(id).classList.add('hidden');panel.classList.remove('hidden');title.textContent=value.name+' · 项目目录';if(resume)editor.resize();else await loadDirectory('.');}
   async function openFile(value,target){const epoch=agent.identityEpoch;await open(value);if(epoch!==agent.identityEpoch||project?.id!==value.id||panel.classList.contains('hidden'))return;await loadFile(target);}
   const addSkill=iconButton('添加技能','M12 5v14M5 12h14');addSkill.type='button';addSkill.hidden=true;bar.insertBefore(addSkill,refresh);
   function validGuidance(version,epoch){return guidanceMode&&version===seq&&epoch===agent.identityEpoch&&guidanceSession===agent.selected;}
@@ -66,15 +66,46 @@
    try{const data=await invoke('agent_project_guidance',{sessionId:guidanceSession});if(!validGuidance(version,epoch))return;
     const row=(label,target,missing=false)=>{const b=node('button','project-browser-entry',label);b.type='button';b.dataset.path=target;b.onclick=async()=>{if(missing){try{await invoke('agent_project_entry_create',{projectId:project.id,parent:'.',name:'AGENTS.md',kind:'file'});missing=false;}catch(e){status.textContent=String(e);return;}}await loadFile(target);};list.append(b);return b;};
     row('项目指南 · AGENTS.md','AGENTS.md',data.rules?.status==='missing');list.append(node('h3','guidance-list-heading','技能列表'));
-    for(const skill of data.skills||[]){const b=row(skill.name,skill.path);b.title=skill.description||skill.path;}
+    path='.';newFile.disabled=newDirectory.disabled=true;
+    for(const skill of data.skills||[])skillTree(list,skill.name,skill.path.slice(0,skill.path.lastIndexOf('/')),0);
     if(!data.skills?.length)list.append(node('p','guidance-list-empty','暂无技能，点击“添加技能”创建。'));
     status.textContent=(data.warnings||[]).join(' · ')||(data.catalogTruncated?'技能目录超出扫描上限':'');
     if(data.rules?.status!=='missing')await loadFile('AGENTS.md');
    }catch(e){if(validGuidance(version,epoch))status.textContent=String(e);}
   }
+  function skillTree(container,label,target,depth){
+   const row=node('button','project-browser-entry','▸ '+label),children=node('div','skill-tree-children');row.type='button';row.dataset.path=target;row.style.paddingLeft=(10+depth*16)+'px';row.setAttribute('aria-expanded','false');row.title=target;children.hidden=true;container.append(row,children);
+   let loading=false;
+   row.onclick=async()=>{
+    if(loading)return;path=target;newFile.disabled=newDirectory.disabled=false;location.textContent=target;location.title=project.directory+'/'+target;
+    list.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b===row));
+    if(!children.hidden){children.hidden=true;row.setAttribute('aria-expanded','false');row.textContent='▸ '+label;return;}
+    const epoch=agent.identityEpoch,owner=project,session=agent.selected;loading=true;row.disabled=true;
+    try{const data=await invoke('agent_project_browse',{projectId:owner.id,path:target,action:'list'});
+     if(epoch!==agent.identityEpoch||project!==owner||agent.selected!==session||!list.contains(row)||!guidanceMode)return;
+     children.replaceChildren();
+     for(const entry of data.entries){const child=target+'/'+entry.name;if(entry.type==='directory')skillTree(children,entry.name,child,depth+1);else{const b=node('button','project-browser-entry','▤ '+entry.name);b.type='button';b.dataset.path=child;b.title=child;b.style.paddingLeft=(26+depth*16)+'px';b.onclick=()=>{path=target;newFile.disabled=newDirectory.disabled=false;loadFile(child);};children.append(b);}}
+     if(data.truncated)children.append(node('p','guidance-list-empty','目录内容过多，仅显示部分条目。'));
+     children.hidden=false;row.setAttribute('aria-expanded','true');row.textContent='▾ '+label;
+    }catch(e){if(list.contains(row))status.textContent=String(e);}finally{loading=false;row.disabled=false;}
+   };
+  }
+  async function createSkillEntry(kind){
+   if(creating||saving||!path.startsWith('.agents/skills/')||!await discard())return;
+   const owner=project,parent=path,epoch=agent.identityEpoch,session=agent.selected;
+   const name=await window.uiPrompt(kind==='file'?'文件名称':'目录名称','',kind==='file'?'新建文件':'新建目录');
+   if(name==null||owner!==project||epoch!==agent.identityEpoch||session!==agent.selected||!guidanceMode)return;
+   if(!name||name.trim()!==name||/[\\/:\x00-\x1f]/.test(name)||name==='.'||name==='..'){status.textContent='请输入有效名称。';return;}
+   creating=true;
+   try{await invoke('agent_project_entry_create',{projectId:owner.id,parent,name,kind});if(owner!==project||epoch!==agent.identityEpoch||session!==agent.selected||!guidanceMode)return;
+    creating=false;await loadGuidance();if(owner!==project||epoch!==agent.identityEpoch||session!==agent.selected||!guidanceMode)return;
+    const parts=parent.split('/');for(let n=3;n<=parts.length;n++){const target=parts.slice(0,n).join('/');const b=[...list.querySelectorAll('button')].find(b=>b.dataset.path===target);if(b)await b.onclick();}
+    if(kind==='file')await loadFile(parent+'/'+name);
+   }catch(e){if(owner===project&&epoch===agent.identityEpoch)status.textContent=String(e);}finally{creating=false;}
+  }
   async function openGuidance(value){
    if(saving||creating||!await discard())return;
-   await open(value);guidanceMode=true;guidanceSession=agent.selected;up.hidden=newFile.hidden=newDirectory.hidden=true;addSkill.hidden=false;
+   await open(value);guidanceMode=true;guidanceSession=agent.selected;up.hidden=true;newFile.hidden=newDirectory.hidden=false;addSkill.hidden=false;
    title.textContent=value.name+' · 项目指南';location.textContent='项目指南与技能';location.title=value.directory;await loadGuidance();
   }
   addSkill.onclick=async()=>{
