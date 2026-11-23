@@ -224,6 +224,7 @@ pub(super) async fn prepare(
             compacted = true;
         }
     }
+    let mut recent_to_keep=RECENT;
     while cost(messages,tools,supports_images) > budget {
         if tokio::time::Instant::now() >= deadline {
             return Err("上下文压缩达到任务时限，原始历史已保留。".into());
@@ -232,7 +233,7 @@ pub(super) async fn prepare(
             return Err("单条消息或工具结果超过上下文预算，请缩短输入；原始记录已保留。".into());
         }
         // Keep recent messages, never split an assistant tool-call and its tool results.
-        let mut end = messages.len().saturating_sub(RECENT).max(3);
+        let mut end = messages.len().saturating_sub(recent_to_keep).max(3).min(messages.len()-1);
         while end > 2 && messages[end]["role"] == "tool" {
             end -= 1;
         }
@@ -336,9 +337,14 @@ pub(super) async fn prepare(
             }
         };
         let before = cost(messages,tools,supports_images);
+        let original=messages.clone();
         replace_prefix(messages, end, &summary);
         compacted = true;
         if cost(messages,tools,supports_images) >= before && cost(messages,tools,supports_images) > budget {
+            // A short prefix may grow after summarization. Retry a larger complete prefix
+            // while preserving the current user request and latest tool-call group.
+            *messages=original;
+            if recent_to_keep>2 {recent_to_keep=recent_to_keep.saturating_sub(2);continue;}
             return Err("压缩后仍超过上下文预算，原始历史已保留。".into());
         }
     }
