@@ -416,3 +416,7 @@
 #agent-skill-library-editor .skill-code-editor{font-size:var(--agent-list-font-size,14px);line-height:1.6}
 #agent-skill-library-editor .project-document-workspace{min-height:220px}
 #agent-skill-library-editor .project-markdown-preview{padding:16px;overflow-wrap:anywhere}
+
+#agent-skill-library-editor .skill-file-actions .project-markdown-modes{margin-left:auto;padding:0;border:0;flex:none;gap:4px}
+#agent-skill-library-editor .skill-file-actions .skill-mode-icon{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:7px}
+.skill-mode-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
