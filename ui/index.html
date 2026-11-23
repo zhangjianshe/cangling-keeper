@@ -469,7 +469,7 @@
             <label>服务名称<input id="llm-server-name" type="text" required maxlength="80" placeholder="例如 DeepSeek、现场模型服务" /></label>
             <label>API 类型<select id="llm-provider"><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI 兼容</option></select></label>
             <label class="llm-field-wide">API 地址<input id="deepseek-url" type="url" required placeholder="https://api.deepseek.com" /></label>
-            <label class="llm-field-wide">模型<input id="deepseek-model" type="text" list="deepseek-models" required /><datalist id="deepseek-models"><option value="deepseek-flash"></option><option value="deepseek-v4-pro"></option></datalist></label>
+            <label class="llm-field-wide">模型<input id="deepseek-model" type="text" autocomplete="off" list="deepseek-models" required /><datalist id="deepseek-models"><option value="deepseek-flash"></option><option value="deepseek-v4-pro"></option></datalist></label>
             <label class="llm-field-wide">服务上下文上限（token）<input id="llm-context-limit" type="number" min="16384" max="131072" step="1" value="32768" required /><small>填写服务允许的上限，不应超过上游模型限制。每个会话可单独设置更低的工作预算。</small></label>
             <label class="llm-field-wide">API Key<input id="deepseek-key" type="password" autocomplete="new-password" /><small>留空保留现有密钥；更换 API 地址时需重新输入。</small></label>
           </div>
@@ -494,7 +494,7 @@
           <label>Port <input name="port" type="number" min="1" max="65535" value="22" /></label>
           <label>更新端口 <input name="update_port" type="number" min="1" max="65535" value="5400" /></label>
           <p class="hint">该主机 cangling-update 服务的 HTTP 端口（缺省 5400）。</p>
-          <label>Username <input name="username" type="text" required placeholder="e.g. root" /></label>
+          <label>Username <input name="username" type="text" required autocomplete="username" placeholder="e.g. root" /></label>
           <label>远端代理端口 <input name="inject_remote_port" type="number" min="1" max="65535" value="7890" /></label>
           <p class="hint">连接时自动检测本地代理，并反向注入到该主机 127.0.0.1 的此端口（缺省 7890）。</p>
 
@@ -507,7 +507,7 @@
               <label class="radio"><input type="radio" name="auth_method" value="certificate" /> Certificate</label>
             </div>
             <div id="host-auth-password">
-              <label>Password <input name="password" type="password" placeholder="password (stored locally)" /></label>
+              <label>Password <input name="password" type="password" autocomplete="current-password" placeholder="password (stored locally)" /></label>
             </div>
             <div id="host-auth-cert" class="hidden">
               <label>Certificate <select name="certificate_id"></select></label>
@@ -588,7 +588,7 @@
           <div class="grid-2 tunnel-ssh-only">
             <label>SSH host <input name="ssh_host" type="text" required placeholder="123.12.3.1" /></label>
             <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" /></label>
-            <label>Username <input name="username" type="text" required placeholder="root" /></label>
+            <label>Username <input name="username" type="text" required autocomplete="username" placeholder="root" /></label>
             <div class="tunnel-command-check">
               <button id="check-tunnel-command-btn" class="btn" type="button">检查</button>
             </div>
@@ -602,7 +602,7 @@
               <label class="radio"><input type="radio" name="auth_method" value="certificate" /> Certificate</label>
             </div>
             <div id="tunnel-auth-password">
-              <label>Password <input name="password" type="password" placeholder="password (stored locally)" /></label>
+              <label>Password <input name="password" type="password" autocomplete="current-password" placeholder="password (stored locally)" /></label>
             </div>
             <div id="tunnel-auth-cert" class="hidden">
               <label>Certificate <select name="certificate_id"></select></label>
