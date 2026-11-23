@@ -103,8 +103,8 @@ fi
 git add "$CARGO_TOML"
 [[ -f "$CARGO_LOCK" ]] && git add "$CARGO_LOCK"
 
-git commit -m "release: $TAG"
-git tag -a "$TAG" -m "release $TAG"
+git commit -m "发布 $TAG"
+git tag -a "$TAG" -m "发布 $TAG"
 
 info "pushing $BRANCH and tag $TAG to $REMOTE ..."
 git push "$REMOTE" "$BRANCH"

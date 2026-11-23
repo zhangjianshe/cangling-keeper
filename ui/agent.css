@@ -333,3 +333,6 @@
 .project-browser-bar>.project-browser-icon-button{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;padding:6px}.project-browser-icon-button svg{width:20px;height:20px;flex:none}
 
 .agent-message.user.is-editing{width:100%;max-width:100%;box-sizing:border-box}.agent-message.user.is-editing .agent-message-edit{width:100%;min-width:0}.agent-message-edit textarea{min-height:min(180px,55vh);max-height:55vh;line-height:1.65;overflow-y:auto}.agent-edit-actions{flex-wrap:wrap}
+
+.guidance-list-heading{font-size:13px;font-weight:600;color:#64748b;margin:20px 10px 8px}.guidance-list-empty{font-size:12px;color:#64748b;padding:0 10px}
+.project-browser-bar>[hidden]{display:none}

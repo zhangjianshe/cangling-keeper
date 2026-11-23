@@ -12,6 +12,7 @@
   const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(code);layout.append(list,preview);panel.append(header,bar,layout);document.querySelector('#agent-main').after(panel);
   const save=iconButton('保存文件','M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2ZM7 3v6h10V3M7 21v-8h10v8',true);bar.append(save);save.disabled=true;
   const editor=window.ace.edit(code);window.ace.config.set('basePath','/vendor/ace');editor.setTheme('ace/theme/github');editor.session.setUseWorker(false);editor.setOptions({fontSize:15,showPrintMargin:false});editor.setReadOnly(true);
+  let guidanceMode=false,guidanceSession=null;
   let project=null,path='.',file=null,seq=0,popup=null,trigger=null,original='',hash='',editable=false,saving=false,creating=false;
   const dirty=()=>!!file&&editor.getValue()!==original;
   function updateSave(){save.disabled=!editable||!dirty()||saving;const label=saving?'正在保存…':dirty()?'保存文件（有未保存修改）':'保存文件';save.title=label;save.setAttribute('aria-label',label);save.setAttribute('aria-busy',String(saving));}
@@ -54,15 +55,59 @@
     status.textContent=editable?'':'文件超过128 KiB，只读预览';updateSave();
    }catch(e){if(version===seq)status.textContent='不可预览：'+String(e);}
   }
-  up.onclick=()=>loadDirectory(path.includes('/')?path.slice(0,path.lastIndexOf('/')):'.');refresh.onclick=()=>loadDirectory(path);
-  async function open(value){closeMenu();const before=seq,identity=agent.identityEpoch;const changed=project?.id!==value.id;if(changed&&(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch))return;const resume=!changed&&dirty();if(changed)clearPreview();project=value;for(const id of ['agent-main','keeper-account','keeper-settings'])document.getElementById(id).classList.add('hidden');panel.classList.remove('hidden');title.textContent=value.name+' · 项目目录';if(resume)editor.resize();else await loadDirectory('.');}
+  up.onclick=()=>loadDirectory(path.includes('/')?path.slice(0,path.lastIndexOf('/')):'.');refresh.onclick=()=>guidanceMode?loadGuidance():loadDirectory(path);
+  async function open(value){guidanceMode=false;up.hidden=newFile.hidden=newDirectory.hidden=false;addSkill.hidden=true;closeMenu();const before=seq,identity=agent.identityEpoch;const changed=project?.id!==value.id;if(changed&&(saving||creating||!await discard()||before!==seq||identity!==agent.identityEpoch))return;const resume=!changed&&dirty();if(changed)clearPreview();project=value;for(const id of ['agent-main','keeper-account','keeper-settings'])document.getElementById(id).classList.add('hidden');panel.classList.remove('hidden');title.textContent=value.name+' · 项目目录';if(resume)editor.resize();else await loadDirectory('.');}
   async function openFile(value,target){const epoch=agent.identityEpoch;await open(value);if(epoch!==agent.identityEpoch||project?.id!==value.id||panel.classList.contains('hidden'))return;await loadFile(target);}
+  const addSkill=iconButton('添加技能','M12 5v14M5 12h14');addSkill.type='button';addSkill.hidden=true;bar.insertBefore(addSkill,refresh);
+  function validGuidance(version,epoch){return guidanceMode&&version===seq&&epoch===agent.identityEpoch&&guidanceSession===agent.selected;}
+  async function loadGuidance(){
+   if(saving||creating||!await discard())return;
+   const version=++seq,epoch=agent.identityEpoch;clearPreview();list.replaceChildren();status.textContent='正在读取项目指南…';
+   try{const data=await invoke('agent_project_guidance',{sessionId:guidanceSession});if(!validGuidance(version,epoch))return;
+    const row=(label,target,missing=false)=>{const b=node('button','project-browser-entry',label);b.type='button';b.dataset.path=target;b.onclick=async()=>{if(missing){try{await invoke('agent_project_entry_create',{projectId:project.id,parent:'.',name:'AGENTS.md',kind:'file'});missing=false;}catch(e){status.textContent=String(e);return;}}await loadFile(target);};list.append(b);return b;};
+    row('项目指南 · AGENTS.md','AGENTS.md',data.rules?.status==='missing');list.append(node('h3','guidance-list-heading','技能列表'));
+    for(const skill of data.skills||[]){const b=row(skill.name,skill.path);b.title=skill.description||skill.path;}
+    if(!data.skills?.length)list.append(node('p','guidance-list-empty','暂无技能，点击“添加技能”创建。'));
+    status.textContent=(data.warnings||[]).join(' · ')||(data.catalogTruncated?'技能目录超出扫描上限':'');
+    if(data.rules?.status!=='missing')await loadFile('AGENTS.md');
+   }catch(e){if(validGuidance(version,epoch))status.textContent=String(e);}
+  }
+  async function openGuidance(value){
+   if(saving||creating||!await discard())return;
+   await open(value);guidanceMode=true;guidanceSession=agent.selected;up.hidden=newFile.hidden=newDirectory.hidden=true;addSkill.hidden=false;
+   title.textContent=value.name+' · 项目指南';location.textContent='项目指南与技能';location.title=value.directory;await loadGuidance();
+  }
+  addSkill.onclick=async()=>{
+   if(creating||saving||!await discard())return;
+   const version=seq,epoch=agent.identityEpoch,owner=project;
+   const name=await window.uiPrompt('技能名称（小写字母、数字和连字符，最多64字符）','','添加技能');
+   if(name==null||!validGuidance(version,epoch))return;
+   if(!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name)||name.length>64){status.textContent='请输入有效的技能名称。';return;}
+   creating=true;addSkill.disabled=true;
+   try{
+    for(const [parent,leaf] of [['.','.agents'],['.agents','skills']]){
+     try{await invoke('agent_project_browse',{projectId:owner.id,path:parent==='.'?leaf:parent+'/'+leaf,action:'list'});}
+     catch{await invoke('agent_project_entry_create',{projectId:owner.id,parent,name:leaf,kind:'directory'});}
+     if(!validGuidance(version,epoch))return;
+    }
+    await invoke('agent_project_entry_create',{projectId:owner.id,parent:'.agents/skills',name,kind:'directory'});
+    if(!validGuidance(version,epoch))return;
+    const target='.agents/skills/'+name+'/SKILL.md';await invoke('agent_project_entry_create',{projectId:owner.id,parent:'.agents/skills/'+name,name:'SKILL.md',kind:'file'});
+    if(!validGuidance(version,epoch))return;
+    const data=await invoke('agent_project_browse',{projectId:owner.id,path:target,action:'edit'});
+    if(!validGuidance(version,epoch))return;
+    await invoke('agent_project_file_save',{projectId:owner.id,path:target,sha256:data.sha256,content:'---\nname: '+name+'\ndescription: 请填写技能的用途和适用场景\n---\n\n# '+name+'\n\n请填写执行步骤。\n'});
+    if(!validGuidance(version,epoch))return;
+    creating=false;await loadGuidance();if(guidanceMode&&epoch===agent.identityEpoch&&project===owner)await loadFile(target);
+   }catch(e){if(validGuidance(version,epoch))status.textContent='创建失败：'+String(e);}
+   finally{creating=false;addSkill.disabled=false;}
+  };
   function menu(button,value,manage){closeMenu();trigger=button;button.setAttribute('aria-expanded','true');popup=node('div','project-context-menu');popup.setAttribute('role','menu');
    for(const [label,action] of [['管理项目',manage],['项目目录',()=>open(value)]]){const item=node('button');const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');for(const [key,val] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))icon.setAttribute(key,val);const shape=document.createElementNS(icon.namespaceURI,'path');shape.setAttribute('d',label==='管理项目'?'m9 3-.6 2-2 .9-1.9-.5-2 3.4L4 10.5v3l-1.5 1.7 2 3.4 1.9-.5 2 .9.6 2h6l.6-2 2-.9 1.9.5 2-3.4-1.5-1.7v-3l1.5-1.7-2-3.4-1.9.5-2-.9-.6-2ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0':'M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v2M3 7v12a2 2 0 0 0 2 2h14l3-11H8l-3 7');icon.append(shape);item.append(icon,node('span','',label));item.type='button';item.setAttribute('role','menuitem');item.onclick=()=>{closeMenu();action();};popup.append(item);}
    document.body.append(popup);const rect=button.getBoundingClientRect();popup.style.left=Math.max(8,Math.min(rect.right-popup.offsetWidth,innerWidth-popup.offsetWidth-8))+'px';popup.style.top=Math.max(8,Math.min(rect.bottom+4,innerHeight-popup.offsetHeight-8))+'px';popup.firstChild.focus();
    popup.onkeydown=e=>{const items=[...popup.children],i=items.indexOf(document.activeElement);if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closeMenu(true);}else if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();items[(i+(e.key==='ArrowDown'?1:items.length-1))%items.length].focus();}};
   }
   document.addEventListener('click',e=>{if(popup&&!popup.contains(e.target)&&!trigger?.contains(e.target))closeMenu();});window.addEventListener('resize',()=>closeMenu());
-  return {menu,open,openFile,hide,reset};
+  return {menu,open,openFile,openGuidance,hide,reset};
  };
 })();
