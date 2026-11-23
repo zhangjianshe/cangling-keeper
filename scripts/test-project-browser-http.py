@@ -21,6 +21,15 @@ with tempfile.TemporaryDirectory(prefix='keeper-browser-') as tmp:
   p=start();args={'projectId':'general'}
   data=call('agent_project_browse',args);names=[e['name'] for e in data['entries']];assert 'sub' in names and '.env' not in names and 'link' not in names
   data=call('agent_project_browse',{**args,'action':'read','path':'sub/readme.txt','startLine':201});assert data['totalLines']==450 and data['lines'][0]['line']==201
+  call('agent_project_entry_create',{**args,'parent':'.','name':'AGENTS.md','kind':'file'})
+  guide=call('agent_project_browse',{**args,'action':'edit','path':'AGENTS.md'})
+  assert guide['editable'] and '## 操作边界' in guide['content'] and '提交消息使用中文' in guide['content']
+  (root/'AGENTS.md').write_text('user custom guide')
+  try:
+   call('agent_project_entry_create',{**args,'parent':'.','name':'AGENTS.md','kind':'file'})
+   raise AssertionError('must refuse overwriting guide')
+  except urllib.error.HTTPError:pass
+  assert (root/'AGENTS.md').read_text()=='user custom guide'
   (root/'.agents/skills/demo').mkdir(parents=True)
   for doc in ['AGENTS.md','.agents/skills/demo/SKILL.md']:
    (root/doc).write_text('original guide')

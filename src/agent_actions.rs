@@ -984,7 +984,14 @@ pub(crate) fn create_entry(root:&Dir,parent:&str,name:&str,directory:bool)->Resu
     let result=if directory {parent.create_dir(&leaf)}else{
         let mut options=cap_std::fs::OpenOptions::new();options.write(true).create_new(true);
         #[cfg(unix)] {use cap_std::fs::OpenOptionsExt;options.mode(0o600);}
-        parent.open_with(&leaf,&options).map(|_|())
+        parent.open_with(&leaf,&options).and_then(|mut file| {
+            // Only a newly created root guide receives the template; create_new refuses existing files.
+            if parent_path == Path::new(".") && name == "AGENTS.md" {
+                file.write_all(include_bytes!("../resources/AGENTS.template.md"))?;
+                file.sync_all()?;
+            }
+            Ok(())
+        })
     };
     result.map_err(|e|if e.kind()==std::io::ErrorKind::AlreadyExists{"同名文件或目录已存在，未覆盖".into()}else{format!("创建失败：{e}")})
 }
