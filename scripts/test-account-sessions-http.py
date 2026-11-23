@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-account-') as folder:
   start();guest=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':guest,'content':'guest history'})
   login('alice');assert guest not in ids();a=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':a,'content':'Alice original history'});key=call('agent_bootstrap')['accountKey']
   login('bob');assert a not in ids();b=call('agent_new_session')['id']
-  for name,args in [('agent_session',{}),('agent_send_message',{'content':'bad'}),('agent_rename_session',{'title':'bad'}),('agent_pin_session',{'pinned':True}),('agent_security_mode',{'mode':'full','confirmFullAccess':True}),('agent_run_tool',{'tool':'proxy_status','arguments':{}})]:call(name,{'sessionId':a,**args},400)
+  for name,args in [('agent_execution_budget',{'maxRounds':24}),('agent_session',{}),('agent_send_message',{'content':'bad'}),('agent_rename_session',{'title':'bad'}),('agent_pin_session',{'pinned':True}),('agent_security_mode',{'mode':'full','confirmFullAccess':True}),('agent_run_tool',{'tool':'proxy_status','arguments':{}})]:call(name,{'sessionId':a,**args},400)
   login('alice','other');assert a not in ids();login('alice');assert a in ids() and b not in ids();assert call('agent_bootstrap')['accountKey']==key
   call('agent_rename_session',{'sessionId':a,'title':'Alice private title'});config=call('agent_model_save',{'enabled':True,'baseUrl':f'http://127.0.0.1:{api.server_port}','model':'fixture','apiKey':'fixture'})
   call('agent_session_model',{'sessionId':a,'id':config['activeServerId']})

@@ -194,6 +194,9 @@
   document.addEventListener('click',event=>{if(!event.target.closest('.agent-security-control'))closeSecurityMenu();});
   let llmConfig={servers:[],activeServerId:''},llmReturnFocus=null,llmRemote=false,llmIdentityEpoch=0;
   function renderModel(config){
+    let rounds=$('#agent-max-rounds');if(!rounds){rounds=document.createElement('select');rounds.id='agent-max-rounds';rounds.className='btn';rounds.setAttribute('aria-label','会话执行轮数上限');$('.agent-header-tools').append(rounds);rounds.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const data=await invoke('agent_execution_budget',{sessionId:session,maxRounds:Number(rounds.value)});if(session===agent.selected&&epoch===agent.identityEpoch){agent.detail=data;renderModel(data.model);}}catch(e){if(session===agent.selected&&epoch===agent.identityEpoch){renderModel(agent.detail.model);notice(String(e));}}};}
+    const maxRounds=agent.detail.executionBudget?.maxRounds||16;rounds.replaceChildren();for(const n of [...new Set([8,16,24,32,maxRounds])].sort((a,b)=>a-b)){const option=document.createElement('option');option.value=String(n);option.textContent=n+' 轮';rounds.append(option);}rounds.value=String(maxRounds);rounds.disabled=!agent.selected||agent.detail.modelPending;rounds.title='每个会话单独保存；任务开始后固定预算。工具调用数和运行时间限制仍有效。';
+
     let budgetSelect=$('#agent-context-budget');if(!budgetSelect){budgetSelect=document.createElement('select');budgetSelect.id='agent-context-budget';budgetSelect.className='btn';budgetSelect.setAttribute('aria-label','会话上下文工作预算');$('.agent-header-tools').append(budgetSelect);budgetSelect.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const detail=await invoke('agent_context_budget',{sessionId:session,workingBudget:Number(budgetSelect.value)});if(agent.selected===session&&epoch===agent.identityEpoch){agent.detail=detail;renderModel(agent.detail.model);renderConversation();}}catch(e){notice(String(e));}};}
     const policy=agent.detail.contextPolicy;budgetSelect.replaceChildren();for(const size of [...new Set([16384,32768,65536,131072,policy?.workingBudget].filter(Boolean))].sort((a,b)=>a-b)){if(size>(policy?.modelLimit||32768))continue;const option=document.createElement('option');option.value=String(size);option.textContent='上下文 '+Math.round(size/1024)+'K';budgetSelect.append(option);}budgetSelect.value=String(policy?.workingBudget||32768);budgetSelect.disabled=!agent.selected||agent.detail.modelPending;budgetSelect.title='服务配置上限 '+(policy?.modelLimit||32768)+' token；工作预算包含预留输出，按启发式估算提前压缩。';
 
@@ -459,6 +462,7 @@
     catch(error){notice(String(error));}finally{agent.switchingVersion=false;}
   }
   function renderConversation(){
+    if($('#agent-max-rounds'))$('#agent-max-rounds').disabled=!agent.selected||agent.detail.modelPending;
     if($('#agent-context-budget'))$('#agent-context-budget').disabled=!agent.selected||agent.detail.modelPending;
     const container=$('#agent-messages'),timeline=$('#agent-timeline');
     window.keeperThreadNav?.begin({account:agent.ownerKey || 'guest',session:agent.selected});

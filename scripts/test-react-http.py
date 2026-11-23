@@ -168,8 +168,9 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
   threading.Thread(target=lambda:asyncio.run(collect(False)),daemon=True).start();assert untrusted_ready.wait(5)
   normal=session('阅读项目并总结 normal')
   detail=wait_for(normal,lambda d:len(d['runs'])==3 and all(r['status']=='succeeded' for r in d['runs']) and '正在整理' in d['messages'][-1]['content'])
+  call('agent_execution_budget',{'sessionId':normal,'maxRounds':24},expected=400)
   assert detail['modelPending'] and detail['tasks'][-1]['status']=='model'
-  assert detail['messages'][-1]['modelMetadata']['taskBudget']=={'maxRounds':8,'maxToolCalls':32,'activeSeconds':180}
+  assert detail['messages'][-1]['modelMetadata']['taskBudget']=={'maxRounds':16,'maxToolCalls':32,'activeSeconds':180}
   assert len({r['toolCallId'] for r in detail['runs']})==3
   assert all(r['responseId']==detail['streamingMessageId'] for r in detail['runs'])
   fresh=call('agent_session',{'sessionId':normal});assert fresh['runs']==detail['runs'];assert fresh['messages'][-1]['modelMetadata']['taskBudget']==detail['messages'][-1]['modelMetadata']['taskBudget']
@@ -259,7 +260,14 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='no_progress' for m in looped['messages'] if m['role']=='assistant')
    assert '无进展' in json.dumps(looped,ensure_ascii=False)
    assert '无进展' in json.dumps(call('agent_session',{'sessionId':looping}),ensure_ascii=False)
-   bounded=session('budget');bounded=wait_for(bounded,lambda d:not d['modelPending']);assert len(bounded['runs'])==8 and '8 轮' in json.dumps(bounded,ensure_ascii=False)
+   custom=call('agent_new_session')['id']
+   for invalid in [0,33,1.5,'16']:
+    call('agent_execution_budget',{'sessionId':custom,'maxRounds':invalid},expected=400)
+   assert call('agent_execution_budget',{'sessionId':custom,'maxRounds':2})['executionBudget']['maxRounds']==2
+   call('agent_send_message',{'sessionId':custom,'content':'budget custom'})
+   limited=wait_for(custom,lambda d:not d['modelPending']);assert len(limited['runs'])==2
+   assert next(m for m in limited['messages'] if m['role']=='assistant')['modelMetadata']['taskBudget']['maxRounds']==2
+   bounded=session('budget');bounded=wait_for(bounded,lambda d:not d['modelPending']);assert len(bounded['runs'])==16 and '16 轮' in json.dumps(bounded,ensure_ascii=False)
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='round_limit' for m in bounded['messages'])
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='complete' for m in complete_detail['messages'])
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='user_stopped' for m in stopped['messages'])
@@ -267,6 +275,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    interrupted=session('阅读项目并总结 restart');persisted=wait_for(interrupted,lambda d:len(d['runs'])==3 and '正在整理' in d['messages'][-1]['content']);count=len(requests)
    process.terminate();process.wait(timeout=10);start();restored=call('agent_session',{'sessionId':interrupted});assert not restored['modelPending'] and restored['tasks'][-1]['status']=='interrupted';assert len(restored['runs'])==3
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='interrupted' for m in restored['messages'])
+   assert call('agent_session',{'sessionId':custom})['executionBudget']['maxRounds']==2
    time.sleep(.1);assert len(requests)==count,'restart must not replay tools or model calls'
    with sqlite3.connect(Path(folder)/'data.sql') as db:assert db.execute('SELECT count(*) FROM agent_events WHERE response_id=?',(persisted['streamingMessageId'],)).fetchone()[0]>5
    print('ReAct checks passed: fragmented native tool calls, multi-round results, realtime events, reload snapshots, stop, regeneration isolation, denied paths/tools, round limit and restart without replay.')

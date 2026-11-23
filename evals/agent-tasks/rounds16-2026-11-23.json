@@ -1,0 +1,83 @@
+[
+  {
+    "id": "sum-empty",
+    "model": "deepseek-flash",
+    "seconds": 53.97,
+    "rounds": 10,
+    "taskBudget": {
+      "activeSeconds": 180,
+      "maxRounds": 16,
+      "maxToolCalls": 32
+    },
+    "passed": true,
+    "preserved": true,
+    "usage": {
+      "cachedTokens": 55680,
+      "completionTokens": 1261,
+      "promptTokens": 62358
+    },
+    "taskStatus": "complete",
+    "errors": [],
+    "workingBudget": 131072,
+    "modelLimit": 131072,
+    "summaryRequests": 0,
+    "toolCalls": 10,
+    "fileChanges": 2,
+    "denied": [],
+    "undoVerified": true
+  },
+  {
+    "id": "cross-file",
+    "model": "deepseek-flash",
+    "seconds": 28.65,
+    "rounds": 10,
+    "taskBudget": {
+      "activeSeconds": 180,
+      "maxRounds": 16,
+      "maxToolCalls": 32
+    },
+    "passed": true,
+    "preserved": true,
+    "usage": {
+      "cachedTokens": 59904,
+      "completionTokens": 1907,
+      "promptTokens": 66915
+    },
+    "taskStatus": "complete",
+    "errors": [],
+    "workingBudget": 131072,
+    "modelLimit": 131072,
+    "summaryRequests": 0,
+    "toolCalls": 11,
+    "fileChanges": 3,
+    "denied": [],
+    "undoVerified": true
+  },
+  {
+    "id": "retry-after-test-failure",
+    "model": "deepseek-flash",
+    "seconds": 15.4,
+    "rounds": 6,
+    "taskBudget": {
+      "activeSeconds": 180,
+      "maxRounds": 16,
+      "maxToolCalls": 32
+    },
+    "passed": true,
+    "preserved": true,
+    "usage": {
+      "cachedTokens": 29440,
+      "completionTokens": 1125,
+      "promptTokens": 35386
+    },
+    "taskStatus": "complete",
+    "errors": [],
+    "workingBudget": 131072,
+    "modelLimit": 131072,
+    "summaryRequests": 0,
+    "toolCalls": 6,
+    "fileChanges": 2,
+    "denied": [],
+    "undoVerified": true
+  }
+]

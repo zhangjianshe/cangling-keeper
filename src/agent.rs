@@ -213,7 +213,7 @@ fn detail(store: &Store, session: &str) -> Result<Value, String> {
     let mut runs=runs;for run in &mut runs {run["review"]=crate::agent_runtime::review(store,run["id"].as_str().unwrap())?;}
     let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[session],|r|r.get(0)).map_err(|e|e.to_string())?;
     let model=crate::model::session_config(store,session)?;
-    Ok(json!({"sessionId":session,"contextPolicy":crate::model::context_policy(store,session)?,"session":session_info,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"draftAttachments":crate::agent_attachments::draft(store,session)?,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
+    Ok(json!({"sessionId":session,"contextPolicy":crate::model::context_policy(store,session)?,"executionBudget":crate::agent_runtime::session_budget(store,session)?,"session":session_info,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"draftAttachments":crate::agent_attachments::draft(store,session)?,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
 }
 fn host_snapshot(store: &Store, host_id: &str) -> Result<Value, String> {
     let h = store.get_host(host_id)?;
@@ -455,6 +455,13 @@ pub(crate) async fn dispatch(
         "agent_model_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::save(&store,&args)}
         "agent_model_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::delete(&store,&text(&args,"id")?)}
         "agent_model_test" => crate::model::test(&core,args["id"].as_str()).await,
+        "agent_execution_budget" => {
+            let session=text(&args,"sessionId")?;let rounds=args["maxRounds"].as_u64().filter(|v|(1..=32).contains(v)).ok_or("执行轮数必须为1–32的整数")?;
+            let store=core.store.lock().map_err(|e|e.to_string())?;require_session(&store,&session)?;
+            let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[&session],|r|r.get(0)).map_err(|e|e.to_string())?;
+            if pending{return Err("任务运行中不能修改执行轮数".into());}
+            store.set_setting(&format!("agent_max_rounds:{session}"),&rounds.to_string())?;detail(&store,&session)
+        }
         "agent_context_budget" => {
             let session=text(&args,"sessionId")?;let budget=args["workingBudget"].as_u64().ok_or("工作预算必须为整数")?;
             let store=core.store.lock().map_err(|e|e.to_string())?;require_session(&store,&session)?;

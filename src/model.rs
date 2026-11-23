@@ -205,7 +205,7 @@ fn request_messages(store:&Store,session:&str,messages:&[Value],supports_images:
 #[derive(Debug,PartialEq)]
 pub(crate) enum ReplyFinish { Complete, Stopped }
 pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,response_id:&str,mut cancel:tokio::sync::oneshot::Receiver<()>,sink:std::sync::Arc<dyn crate::EventSink>,mut progress:impl FnMut(&str)->Result<(),String>+Send)->Result<ReplyFinish,String>{
-    let (url,model,key,provider,mut messages,root,revision,supports_images)={
+    let (url,model,key,provider,mut messages,root,revision,supports_images,max_rounds)={
         let store=core.store.lock().map_err(|e|e.to_string())?;
         let raw:String=store.conn.query_row("SELECT model_metadata FROM agent_messages WHERE id=?1 AND session_id=?2",rusqlite::params![response_id,session],|r|r.get(0)).map_err(|e|e.to_string())?;
         let mut metadata:Value=serde_json::from_str(&raw).map_err(|_|"模型信息读取失败")?;
@@ -219,7 +219,8 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
             text_field(&metadata,"requestedModel")?
         }else{current_model};
         if original.is_none(){metadata=json!({"source":"llm","generationStatus":"streaming","serverId":selected,"serverName":server["name"],"baseUrl":url,"provider":provider,"requestedModel":model,"model":model,"cisRevision":server["revision"]});}
-        metadata["taskBudget"]=crate::agent_runtime::budget();
+        metadata["taskBudget"]=crate::agent_runtime::session_budget(&store,session)?;
+        let max_rounds=metadata["taskBudget"]["maxRounds"].as_u64().unwrap() as usize;
         metadata.as_object_mut().unwrap().remove("usage");metadata.as_object_mut().unwrap().remove("context");
         store.conn.execute("UPDATE agent_messages SET model_metadata=?2 WHERE id=?1",rusqlite::params![response_id,metadata.to_string()]).map_err(|e|e.to_string())?;
         let saved_context=store.conn.query_row("SELECT messages FROM agent_model_contexts WHERE message_id=?1",[response_id],|r|r.get::<_,String>(0)).ok().or_else(||original.as_ref().and_then(|id|store.conn.query_row("SELECT messages FROM agent_model_contexts WHERE message_id=?1",[id],|r|r.get::<_,String>(0)).ok()));
@@ -236,7 +237,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         if server["supportsImages"]!=true && current_prompt(&messages).is_some_and(|i|messages[i]["keeperAttachments"].as_array().is_some_and(|a|a.iter().any(|v|v["kind"]=="image"))){return Err("当前模型未声明支持图片，无法发送或重新生成该图片问题。".into());}
         let root=crate::agent_runtime::begin(&store,session,response_id)?;
         store.conn.execute("INSERT OR REPLACE INTO agent_model_contexts(message_id,messages) VALUES (?1,?2)",rusqlite::params![response_id,serde_json::to_string(&messages).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
-        (url,model,key,provider,messages,root,server["revision"].as_str().unwrap_or("").to_owned(),server["supportsImages"]==true)
+        (url,model,key,provider,messages,root,server["revision"].as_str().unwrap_or("").to_owned(),server["supportsImages"]==true,max_rounds)
     };
     let facts=crate::agent_environment::for_project(core,&root).await?;
     let security_mode={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_security::mode(&store,session)};
@@ -253,7 +254,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
     // Keep the saved canonical snapshot intact; compaction is local to this generation.
     let root=project_root;
     let mut visible=String::new();let mut total_calls=0;let mut loop_guard=loop_guard::LoopGuard::default();let mut refusals=loop_guard::RefusalGuard::default();
-    for round in 1..=crate::agent_runtime::MAX_ROUNDS {
+    for round in 1..=max_rounds {
         if crate::agent_actions::is_shutting_down(){return Err("Keeper 正在关闭，任务不会自动重放。".into());}
         if tokio::time::Instant::now()>=deadline{return Err(crate::agent_runtime::termination_error(core,response_id,"time_limit",format!("Agent 已达到 {} 秒运行时限，执行记录已保存。",crate::agent_runtime::ACTIVE_SECONDS)));}
         crate::agent_runtime::phase(core,session,response_id,"model",round,sink.as_ref())?;
@@ -287,7 +288,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         loop_guard.observe(&json!(round_results)).map_err(|error|crate::agent_runtime::termination_error(core,response_id,"no_progress",error))?;
         if !visible.is_empty(){visible.push_str("\n\n");}
     }
-    Err(crate::agent_runtime::termination_error(core,response_id,"round_limit",format!("Agent 已达到 {} 轮执行上限，执行记录已保存。",crate::agent_runtime::MAX_ROUNDS)))
+    Err(crate::agent_runtime::termination_error(core,response_id,"round_limit",format!("Agent 已达到 {} 轮执行上限，执行记录已保存。",max_rounds)))
 }
 const MAX_STREAM_EVENT_BYTES: usize = 1048576;
 fn append_stream_data(event: &mut String, data: &str) -> Result<(), String> {

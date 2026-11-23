@@ -7,6 +7,6 @@ for(const path of process.argv.slice(2)){
  w.renderTaskChanges(d.body,detail.runs);
  const files=detail.runs.filter(r=>r.review?.kind==='file');assert.equal(d.querySelectorAll('button').length,files.length);
  for(const r of files){assert(d.body.textContent.includes(r.review.path));assert(d.body.textContent.includes(r.review.diff));}
- for(const r of detail.runs.filter(r=>r.tool==='run_command')){assert(d.body.textContent.includes(r.review.command));const result=JSON.parse(r.output);if(result.exitCode!=null)assert(d.body.textContent.includes('退出码 '+result.exitCode));}
+ for(const r of detail.runs.filter(r=>r.tool==='run_command')){assert(d.body.textContent.includes(r.review?.command||r.arguments?.command));const result=JSON.parse(r.output);if(result.exitCode!=null)assert(d.body.textContent.includes('退出码 '+result.exitCode));}
  assert(!d.querySelector('script'));dom.window.close();console.log('PASS real task change panel:',path);
 }

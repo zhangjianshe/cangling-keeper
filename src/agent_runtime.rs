@@ -9,11 +9,15 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-pub(crate) const MAX_ROUNDS: usize = 8;
+pub(crate) const MAX_ROUNDS: usize = 16;
 pub(crate) const MAX_TOOL_CALLS: usize = 32;
 pub(crate) const ACTIVE_SECONDS: u64 = 180;
 pub(crate) fn budget() -> Value {
     json!({"maxRounds":MAX_ROUNDS,"maxToolCalls":MAX_TOOL_CALLS,"activeSeconds":ACTIVE_SECONDS})
+}
+pub(crate) fn session_budget(store:&Store,session:&str)->Result<Value,String>{
+    let rounds=store.get_setting(&format!("agent_max_rounds:{session}"))?.and_then(|v|v.parse::<usize>().ok()).filter(|v|(1..=32).contains(v)).unwrap_or(MAX_ROUNDS);
+    let mut value=budget();value["maxRounds"]=json!(rounds);Ok(value)
 }
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -118,7 +122,8 @@ pub(crate) fn phase(
     step: usize,
     sink: &dyn EventSink,
 ) -> Result<(), String> {
-    let payload = json!({"sessionId":session,"responseId":response,"status":status,"step":step,"budget":budget(),"updatedAt":now()});
+    let frozen_budget={let store=core.store.lock().map_err(|e|e.to_string())?;let raw:String=store.conn.query_row("SELECT model_metadata FROM agent_messages WHERE id=?1",[response],|r|r.get(0)).map_err(|e|e.to_string())?;serde_json::from_str::<Value>(&raw).ok().and_then(|v|v.get("taskBudget").cloned()).unwrap_or(budget())};
+    let payload = json!({"sessionId":session,"responseId":response,"status":status,"step":step,"budget":frozen_budget,"updatedAt":now()});
     {
         let store = core.store.lock().map_err(|e| e.to_string())?;
         store
