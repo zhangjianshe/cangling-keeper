@@ -103,6 +103,22 @@ pub(crate) fn options(s: &Store, session: &str) -> Result<Value, String> {
         json!({"profiles":list(s,session)?,"selected":selected(s,session)?,"models":crate::model::config(s)?["servers"],"skills":crate::agent_skill_library::catalog(s,session,&guidance)?,"mcpTools":crate::agent_mcp::definitions_for(s,session)?}),
     )
 }
+// Icons are normalized by the client, then validated independently before storage.
+fn validate_icon(value: &Value) -> Result<String, String> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    if value.is_null() { return Ok(String::new()); }
+    let icon = value.as_str().ok_or("图标必须为图片数据")?;
+    if icon.is_empty() { return Ok(String::new()); }
+    if icon.len() > 90_000 { return Err("图标不能超过64 KiB".into()); }
+    let data = icon.strip_prefix("data:image/png;base64,").ok_or("图标须为 PNG 图片")?;
+    let bytes = STANDARD.decode(data).map_err(|_| "图标数据无效")?;
+    if bytes.len() > 65536 { return Err("图标不能超过64 KiB".into()); }
+    let info = crate::agent_attachments::validate("icon.png", "image/png", &bytes)?;
+    if info["width"].as_u64().unwrap_or(0) > 128 || info["height"].as_u64().unwrap_or(0) > 128 {
+        return Err("图标尺寸不能超过128×128".into());
+    }
+    Ok(format!("data:image/png;base64,{}", STANDARD.encode(bytes)))
+}
 pub(crate) fn save(s: &Store, args: &Value) -> Result<Value, String> {
     let session = args["sessionId"].as_str().ok_or("缺少会话")?;
     let all = list(s, session)?;
@@ -138,6 +154,7 @@ pub(crate) fn save(s: &Store, args: &Value) -> Result<Value, String> {
     let skills = strings(&args["skills"])?;
     let mcp = strings(&args["mcpTools"])?;
     let previous = all.as_array().unwrap().iter().find(|p| p["id"] == supplied);
+    let icon = validate_icon(args.get("icon").or_else(|| previous.and_then(|p|p.get("icon"))).unwrap_or(&Value::Null))?;
     let mut normalized = json!({"projectId":project,"skills":skills});
     crate::agent_skill_library::normalize(&mut normalized);
     let skills = normalized["skills"].clone();
@@ -173,7 +190,7 @@ pub(crate) fn save(s: &Store, args: &Value) -> Result<Value, String> {
     } else {
         supplied.into()
     };
-    let value = json!({"id":id,"name":name,"systemPrompt":prompt,"modelId":model,"skills":skills,"mcpTools":mcp,"scope":"account","projectId":project,"revision":uuid::Uuid::new_v4().to_string()});
+    let value = json!({"id":id,"name":name,"icon":icon,"systemPrompt":prompt,"modelId":model,"skills":skills,"mcpTools":mcp,"scope":"account","projectId":project,"revision":uuid::Uuid::new_v4().to_string()});
     s.conn.execute("INSERT INTO agent_profiles(id,owner,project_id,config) VALUES (?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET config=excluded.config",params![id,owner,project,value.to_string()]).map_err(|e|e.to_string())?;
     Ok(value)
 }
@@ -248,6 +265,7 @@ pub(crate) fn validate_snapshot(p: &Value) -> Result<(), String> {
     {
         return Err("智能体快照无效".into());
     }
+    validate_icon(&p["icon"])?;
     strings(&p["skills"])?;
     strings(&p["mcpTools"])?;
     Ok(())

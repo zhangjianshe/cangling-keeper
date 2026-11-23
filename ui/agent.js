@@ -486,7 +486,7 @@
           if(entry.role==='assistant'){const number=element('span','agent-reply-number',String(++replyNumber));number.setAttribute('aria-label','回复 '+replyNumber);message.append(number);}
           const metadata=entry.modelMetadata || {};
           const label=(metadata.agentProfile?.name?metadata.agentProfile.name+' · ':'')+(entry.role==='error'?'模型调用失败':metadata.source==='local'?'苍灵智能 · 本地工具':metadata.model?(metadata.serverName?metadata.serverName+' · ':'')+metadata.model:'苍灵智能 · 模型未记录');
-          const heading=element('span','agent-message-label agent-reply-model',label);
+          const heading=element('span','agent-message-label agent-reply-model',label);if(metadata.agentProfile&&window.createKeeperProfileIcon)heading.prepend(window.createKeeperProfileIcon(metadata.agentProfile.icon,'profile-avatar-reply'));
           if(metadata.requestedModel && metadata.requestedModel!==metadata.model)heading.title='请求模型：'+metadata.requestedModel+'；服务端返回模型：'+metadata.model;
           const replyHeader=element('div','agent-reply-header');replyHeader.append(heading);
           if(metadata.context || metadata.usage){

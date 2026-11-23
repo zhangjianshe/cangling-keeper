@@ -53,8 +53,12 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
    db.execute("INSERT INTO agent_mcp_servers(id,owner_key,name,command,args,enabled,tools) VALUES ('preset-fixture','guest','Fixture','never-launch','[]',1,?)",(json.dumps([{'name':'allowed','description':'allowed MCP fixture','inputSchema':{'type':'object'},'enabled':True},{'name':'excluded','description':'excluded MCP fixture','inputSchema':{'type':'object'},'enabled':True}]),))
   opts=call('agent_profile_options',{'sessionId':s});assert len(opts['skills'])==2 and len(opts['mcpTools'])==2
   allowed=opts['mcpTools'][0]['function']['name'];excluded=opts['mcpTools'][1]['function']['name']
-  payload={'sessionId':s,'name':'编码助手','systemPrompt':'PRESET-ORIGINAL','modelId':model,'skills':['chosen'],'mcpTools':[allowed]}
-  preset=call('agent_profile_save',payload);pid=preset['id'];payload['id']=pid
+  icon='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAAFUlEQVR4nGP8//8/AwMDEwMDA4ICADkbAwP+wj6MAAAAAElFTkSuQmCC'
+  payload={'icon':icon,'sessionId':s,'name':'编码助手','systemPrompt':'PRESET-ORIGINAL','modelId':model,'skills':['chosen'],'mcpTools':[allowed]}
+  preset=call('agent_profile_save',payload);assert preset['icon']==icon;pid=preset['id'];payload['id']=pid
+  for invalid in ['https://example.com/icon.png','data:image/svg+xml;base64,PHN2Zz4=','data:image/png;base64,AAAA','data:image/png;base64,'+'A'*90000,123]:
+   call('agent_profile_save',{**payload,'icon':invalid},400)
+  legacy={k:v for k,v in payload.items() if k!='icon'};assert call('agent_profile_save',legacy)['icon']==icon
   call('agent_profile_save',{**payload,'skills':['missing']},400)
   call('agent_profile_save',{**payload,'mcpTools':['missing']},400)
   d=call('agent_profile_select',{'sessionId':s,'id':pid});assert d['model']['activeServerId']==model
@@ -63,15 +67,17 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   call('agent_profile_delete',{'sessionId':s,'id':pid},400)
   call('agent_send_message',{'sessionId':s,'content':'profile test'});assert started.wait(5)
   call('agent_profile_select',{'sessionId':s,'id':''},400)
-  call('agent_profile_save',{**payload,'systemPrompt':'PRESET-EDITED'})
+  call('agent_profile_save',{**payload,'systemPrompt':'PRESET-EDITED','icon':''})
   hold.set();d=wait(s);assert d['tasks'][-1]['status']=='complete'
-  answer=next(m for m in d['messages'] if m['role']=='assistant');assert answer['modelMetadata']['agentProfile']['systemPrompt']=='PRESET-ORIGINAL'
+  answer=next(m for m in d['messages'] if m['role']=='assistant');assert answer['modelMetadata']['agentProfile']['systemPrompt']=='PRESET-ORIGINAL';assert answer['modelMetadata']['agentProfile']['icon']==icon;assert d['agentProfile']['icon']==''
   assert [r['status'] for r in d['runs']]==['succeeded','failed','failed']
   for req in requests:
+   assert icon not in json.dumps(req)
    assert req['model']=='profile-fixture'
    text=req['messages'][0]['content'];assert 'PRESET-ORIGINAL' in text and 'PRESET-EDITED' not in text and 'chosen-description' in text and 'other-description' not in text
    names=[t['function']['name'] for t in req['tools']];assert allowed in names and excluded not in names
   requests.clear();call('agent_regenerate',{'sessionId':s,'messageId':answer['id']});d=wait(s)
+  assert all(m['modelMetadata']['agentProfile']['icon']==icon for m in d['messages'] if m['role']=='assistant')
   assert requests and all('PRESET-ORIGINAL' in r['messages'][0]['content'] for r in requests)
   hold.clear();started.clear();stopping=call('agent_new_session')['id'];call('agent_profile_select',{'sessionId':stopping,'id':pid})
   call('agent_send_message',{'sessionId':stopping,'content':'stop profile'});assert started.wait(5)
@@ -83,6 +89,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   call('agent_profile_select',{'sessionId':other,'id':pid},400)
   with sqlite3.connect(Path(tmp)/'data.sql') as db:db.execute("UPDATE agent_profiles SET owner='guest' WHERE id=?",(pid,))
   proc.terminate();proc.wait(10);start();assert call('agent_session',{'sessionId':s})['agentProfile']['id']==pid
+  assert call('agent_session',{'sessionId':s})['agentProfile']['icon']==''
   # Different local account cannot list or mutate the original owner's presets by session or ID.
   with sqlite3.connect(Path(tmp)/'data.sql') as db:db.execute("UPDATE agent_sessions SET owner_key='foreign' WHERE id=?",(s,))
   call('agent_profile_options',{'sessionId':s},400)
