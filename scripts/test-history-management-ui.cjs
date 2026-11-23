@@ -43,8 +43,8 @@ async function switchState(state){document.querySelector('.history-tabs [data-st
 (async()=>{
  accept();assert.equal(history.recent().length,30);assert.equal(history.pinned().at(0).id,'s34','pins beyond recent page stay available');
  const moreHost=document.createElement('div');history.appendRecent(moreHost);assert.equal(moreHost.querySelectorAll('button').length,1);moreHost.querySelector('button').click();await tick();assert.equal(history.recent().length,35);assert.equal(new Set(history.recent().map(r=>r.id)).size,35);
- const group=document.createElement('details');group.open=true;history.attachProject(group,'p');await tick();await tick();assert.equal(history.projectSessions('p').length,30);assert.ok(calls.some(c=>c.name==='agent_sessions'&&c.args.projectId==='p'));
- const group2=document.createElement('details');group2.open=true;history.attachProject(group2,'p');group2.querySelector('button').click();await tick();assert.equal(history.projectSessions('p').length,35);
+ const group=document.createElement('details');group.open=true;document.body.append(group);history.attachProject(group,'p');await tick();await tick();assert.equal(history.projectSessions('p').length,30);assert.ok(calls.some(c=>c.name==='agent_sessions'&&c.args.projectId==='p'));
+ const group2=document.createElement('details');group2.open=true;document.body.append(group2);history.attachProject(group2,'p');group2.querySelector('button').click();await tick();assert.equal(history.projectSessions('p').length,35);
  history.open();await tick();assert.equal(document.querySelector('#agent-history-modal').hidden,false);assert.equal(document.querySelectorAll('.history-result').length,30);
  assert.equal(document.querySelector('.history-snippet').textContent,'<img src=x onerror=alert(1)> historical answer');assert.equal(document.querySelector('#history-results img'),null,'message snippets must render as text');
  document.querySelector('#history-results .history-load-more').click();await tick();assert.equal(document.querySelectorAll('.history-result').length,35);

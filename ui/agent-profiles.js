@@ -64,7 +64,7 @@
    privateSkill.disabled=!current;privateSkill.title=current?'为此智能体创建专属技能':'先保存智能体，再创建专属技能';
   }
   const valid=()=>session===agent.selected&&epoch===(agent.identityEpoch||0)&&!modal.classList.contains('hidden');
-  function hide(){sequence++;iconTicket++;iconBusy=false;draftIcon='';showIcon();iconFile.value='';library.hide();nav.inert=fields.inert=false;modal.classList.add('hidden');options=null;current='';name.value='';prompt.value='';model.replaceChildren();list.replaceChildren();skills.replaceChildren();mcp.replaceChildren();document.querySelector('#agent-settings-toggle')?.focus();}
+  function hide(){const wasVisible=!modal.classList.contains('hidden');sequence++;iconTicket++;iconBusy=false;draftIcon='';showIcon();iconFile.value='';library.hide();nav.inert=fields.inert=false;modal.classList.add('hidden');options=null;current='';name.value='';prompt.value='';model.replaceChildren();list.replaceChildren();skills.replaceChildren();mcp.replaceChildren();if(wasVisible)document.querySelector('#agent-settings-toggle')?.focus({preventScroll:true});}
   close.onclick=()=>{hide();showConversation?.();};
   cancel.onclick=()=>{if(options)edit(options.profiles.find(p=>p.id===current)||{});};
   search.oninput=()=>rows();

@@ -27,12 +27,12 @@
     row.append(button);agent.history?.decorateRow(row,session);return row;
   }
   function renderSessions(){
-    const list=$('#agent-sessions'),pinned=$('#agent-pinned');list.replaceChildren();pinned.replaceChildren();
+    const scroller=$('.agent-navigation-sections'),scrollTop=scroller?.scrollTop;const list=$('#agent-sessions'),pinned=$('#agent-pinned');list.replaceChildren();pinned.replaceChildren();
     const recent=agent.history?.recent() || agent.sessions,pins=agent.history?.pinned() || agent.sessions.filter(s=>s.pinned);
     for(const session of recent)list.append(sessionRow(session));for(const session of pins)pinned.append(sessionRow(session));
     if(!recent.length)list.append(element('div','agent-nav-empty','暂无会话'));
     if(!pins.length)pinned.append(element('div','agent-nav-empty','暂无置顶'));
-    agent.history?.appendRecent(list);agent.history?.appendPinned(pinned);
+    agent.history?.appendRecent(list);agent.history?.appendPinned(pinned);if(scroller)scroller.scrollTop=scrollTop;
     if(agent.titleEditor && agent.titleEditor.session!==agent.selected)agent.titleEditor.cancel(false);
     $('#agent-session-title').disabled=!agent.selected || !!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);
     $('#agent-session-title').textContent=agent.sessions.find(s=>s.id===agent.selected)?.title || '新会话';
@@ -71,9 +71,14 @@
   function renderProjects(){
     if(!agent.projects.some(p=>p.id===agent.project))agent.project='general';
     localStorage.setItem('keeper-agent-project',agent.project);
-    const list=$('#agent-projects');list.replaceChildren();
-    for(const project of agent.projects){
-      const group=element('details','agent-project-group');group.open=agent.history?agent.history.projectOpen(project.id):project.id===agent.project;
+    const scroller=$('.agent-navigation-sections'),scrollTop=scroller?.scrollTop,list=$('#agent-projects');
+    const owner=agent.ownerKey||'guest';if(list.dataset.owner!==owner){list.dataset.owner=owner;list.dataset.limit='10';}
+    const limit=Number(list.dataset.limit)||10,visible=agent.projects.slice(0,limit),current=agent.projects.find(p=>p.id===agent.project);
+    if(current&&!visible.includes(current))visible.push(current);
+    const focused=document.activeElement,focusProject=focused?.closest('.agent-project-group')?.dataset.projectId,focusSummary=focused?.tagName==='SUMMARY';
+    list.replaceChildren();
+    for(const project of visible){
+      const group=element('details','agent-project-group');group.dataset.projectId=project.id;group.open=agent.history?agent.history.projectOpen(project.id):project.id===agent.project;
       const summary=element('summary');summary.title=project.directory;
       const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','agent-project-icon');icon.setAttribute('aria-hidden','true');
       // Lucide folder-closed / folder-open (ISC), see ui/vendor/lucide-LICENSE.
@@ -92,6 +97,10 @@
       if(agent.history)agent.history.attachProject(group,project.id);else if(!sessions.length)group.append(element('div','agent-nav-empty','暂无会话'));
       list.append(group);
     }
+    if(agent.projects.length>visible.length){const more=element('button','history-load-more',`显示更多项目（还有 ${agent.projects.length-visible.length} 个）`);more.type='button';more.onclick=()=>{list.dataset.limit=String(limit+10);renderProjects();};list.append(more);}
+    if(limit>10){const less=element('button','history-load-more','收起项目');less.type='button';less.onclick=()=>{list.dataset.limit='10';renderProjects();};list.append(less);}
+    if(focusSummary&&focusProject){[...list.children].find(g=>g.dataset.projectId===focusProject)?.querySelector('summary')?.focus({preventScroll:true});}
+    if(scroller)scroller.scrollTop=scrollTop;
   }
   async function switchProject(project){
     if(agent.drafts && !await agent.drafts.load(null))return;

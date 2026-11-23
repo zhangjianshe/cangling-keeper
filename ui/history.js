@@ -41,9 +41,9 @@
     function appendRecent(host){pageButton(recent,()=>morePage(recent,{},()=>{renderSessions();renderProjects();}),host);}
     function appendPinned(host){pageButton(pinned,()=>morePage(pinned,{pinned:true},renderSessions),host);}
     function attachProject(group,id){
-      group.addEventListener('toggle',()=>{opened.set(id,group.open);if(group.open && !projects.has(id))loadProject(id);});
+      group.addEventListener('toggle',()=>{if(!group.isConnected)return;opened.set(id,group.open);if(group.open && !projects.has(id))loadProject(id);});
       const page=projects.get(id);
-      if(!page){if(group.open)queueMicrotask(()=>loadProject(id));return;}
+      if(!page){if(group.open)queueMicrotask(()=>{if(group.isConnected&&group.open)loadProject(id);});return;}
       if(!page.items.length)group.append(element('div','agent-nav-empty',page.loading?'加载中…':page.error?'加载失败':'暂无会话'));
       if(page.error){group.append(button('重试',null,()=>{projects.delete(id);loadProject(id);},'history-load-more'));return;}
       pageButton(page,()=>morePage(page,{projectId:id},renderProjects),group);

@@ -28,7 +28,7 @@
   aceEditor.session.on('change',updateView);
   if(window.ResizeObserver)new ResizeObserver(()=>aceEditor.resize()).observe(documentArea);
   const live=t=>t===ticket&&valid()&&!modal.classList.contains('hidden');
-  function hide(){ticket++;modal.classList.add('hidden');visibility(false);context={};files={};directories.clear();tree.replaceChildren();aceEditor.setValue('',-1);clearPreview();name.value='';description.value='';if(returnFocus?.isConnected)returnFocus.focus();}
+  function hide(){const wasVisible=!modal.classList.contains('hidden');ticket++;modal.classList.add('hidden');visibility(false);context={};files={};directories.clear();tree.replaceChildren();aceEditor.setValue('',-1);clearPreview();name.value='';description.value='';if(wasVisible&&returnFocus?.isConnected)returnFocus.focus({preventScroll:true});}
   close.onclick=cancel.onclick=hide;
   modal.addEventListener('keydown',e=>{if(e.key==='Tab'){const focusable=[...box.querySelectorAll('button,input,textarea,select,[tabindex]')].filter(x=>!x.disabled&&x.tabIndex>=0&&!x.closest('[hidden]'));const first=focusable[0],last=focusable.at(-1);if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}}if(e.key==='Escape'){e.preventDefault();e.stopPropagation();hide();}});
   function parents(key){let p=key;while(p.includes('/')){p=p.slice(0,p.lastIndexOf('/'));directories.add(p);}}

@@ -13,5 +13,11 @@ const tick=()=>new Promise(r=>setTimeout(r,0));
  // A slow earlier response must not restore its highlight after a later click.
  const old=c.select('two'),latest=c.select('one');pending.pop()();await latest;pending.shift()();await old;check('First');
  agent.drafts={load:async()=>false};await c.select('two');check('First');
+ // Large project lists stay bounded; redrawing must restore the actual scroll container.
+ const scroller=d.querySelector('.agent-navigation-sections');for(const id of ['agent-projects','agent-sessions','agent-pinned']){const node=d.getElementById(id),replace=node.replaceChildren.bind(node);node.replaceChildren=(...args)=>{scroller.scrollTop=0;replace(...args);};}
+ agent.projects=Array.from({length:27},(_,i)=>({id:'p'+i,name:'Project '+i,directory:'/tmp/'+i}));agent.project='p26';agent.ownerKey='alice';scroller.scrollTop=350;c.renderProjects();assert.equal(scroller.scrollTop,350);assert.equal(d.querySelectorAll('.agent-project-group').length,11);assert(d.querySelector('[data-project-id="p26"]'));
+ d.querySelector('#agent-projects .history-load-more').click();assert.equal(d.querySelectorAll('.agent-project-group').length,21);assert.equal(scroller.scrollTop,350);c.renderSessions();assert.equal(scroller.scrollTop,350);
+ d.querySelector('#agent-projects .history-load-more').click();assert.equal(d.querySelectorAll('.agent-project-group').length,27);[...d.querySelectorAll('#agent-projects button')].find(b=>b.textContent==='收起项目').click();assert.equal(d.querySelectorAll('.agent-project-group').length,11);
+ d.querySelector('#agent-projects .history-load-more').click();agent.ownerKey='bob';c.renderProjects();assert.equal(d.querySelectorAll('.agent-project-group').length,11);assert.equal(d.querySelector('#agent-projects').dataset.limit,'10');
  dom.window.close();console.log('PASS: project/recent/pinned selection stays synchronized; stale responses and blocked draft switches preserve selection');
 })().catch(e=>{console.error(e);dom.window.close();process.exitCode=1});
