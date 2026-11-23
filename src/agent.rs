@@ -213,7 +213,7 @@ fn detail(store: &Store, session: &str) -> Result<Value, String> {
     let mut runs=runs;for run in &mut runs {run["review"]=crate::agent_runtime::review(store,run["id"].as_str().unwrap())?;}
     let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[session],|r|r.get(0)).map_err(|e|e.to_string())?;
     let model=crate::model::session_config(store,session)?;
-    Ok(json!({"sessionId":session,"contextPolicy":crate::model::context_policy(store,session)?,"executionBudget":crate::agent_runtime::session_budget(store,session)?,"session":session_info,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"draftAttachments":crate::agent_attachments::draft(store,session)?,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
+    Ok(json!({"sessionId":session,"agentProfile":crate::agent_profiles::selected(store,session)?,"agentProfiles":crate::agent_profiles::list(store,session)?,"contextPolicy":crate::model::context_policy(store,session)?,"executionBudget":crate::agent_runtime::session_budget(store,session)?,"session":session_info,"securityMode":crate::agent_security::mode(store,session),"model":model,"messages":messages,"draftAttachments":crate::agent_attachments::draft(store,session)?,"replyGroups":groups,"runs":runs,"tasks":crate::agent_runtime::tasks(store,session)?,"modelConnected":model["enabled"]==true && model["hasApiKey"]==true,"modelPending":pending,"stopRequested":store.conn.query_row("SELECT stop_requested FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,bool>(0)).unwrap_or(false),"streamingMessageId":store.conn.query_row("SELECT message_id FROM agent_model_pending WHERE session_id=?1",[session],|r|r.get::<_,String>(0)).unwrap_or_default()}))
 }
 fn host_snapshot(store: &Store, host_id: &str) -> Result<Value, String> {
     let h = store.get_host(host_id)?;
@@ -452,6 +452,15 @@ pub(crate) async fn dispatch(
             if updated!=1{return Err("MCP 服务配置已变更，请重试".into());}core.mcp_pool.clear()?;crate::agent_mcp::list(&store)
         }
         "agent_model_config" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::config(&store)}
+        "agent_profile_options" | "agent_profile_save" | "agent_profile_select" | "agent_profile_delete" => {
+            let store=core.store.lock().map_err(|e|e.to_string())?;let session=text(&args,"sessionId")?;require_session(&store,&session)?;
+            match command {
+                "agent_profile_options"=>crate::agent_profiles::options(&store,&session),
+                "agent_profile_save"=>crate::agent_profiles::save(&store,&args),
+                "agent_profile_delete"=>{crate::agent_profiles::delete(&store,&session,&text(&args,"id")?)?;detail(&store,&session)},
+                _=>{crate::agent_profiles::choose(&store,&session,args["id"].as_str().unwrap_or(""))?;detail(&store,&session)}
+            }
+        }
         "agent_model_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::save(&store,&args)}
         "agent_model_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::delete(&store,&text(&args,"id")?)}
         "agent_model_test" => crate::model::test(&core,args["id"].as_str()).await,
@@ -476,6 +485,7 @@ pub(crate) async fn dispatch(
             let session=text(&args,"sessionId")?;require_session(&store,&session)?;let id=text(&args,"id")?;
             let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[&session],|r|r.get(0)).map_err(|e|e.to_string())?;
             if pending{return Err("当前会话正在生成回复，完成后才能切换模型".into());}
+            if !crate::agent_profiles::selected(&store,&session)?.is_null(){return Err("请编辑智能体的模型，或先切换为通用助手".into());}
             let config=crate::model::config(&store)?;
             if !config["servers"].as_array().unwrap().iter().any(|s|s["id"]==id && s["enabled"]==true && s["hasApiKey"]==true){return Err("该服务未启用或未配置 API Key，请重新选择".into());}
             store.conn.execute("UPDATE agent_sessions SET server_id=?2 WHERE id=?1",params![session,id]).map_err(|e|e.to_string())?;detail(&store,&session)

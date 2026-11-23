@@ -194,6 +194,7 @@
   document.addEventListener('click',event=>{if(!event.target.closest('.agent-security-control'))closeSecurityMenu();});
   let llmConfig={servers:[],activeServerId:''},llmReturnFocus=null,llmRemote=false,llmIdentityEpoch=0;
   function renderModel(config){
+    agent.profiles?.update();
     let rounds=$('#agent-max-rounds');if(!rounds){rounds=document.createElement('select');rounds.id='agent-max-rounds';rounds.className='btn';rounds.setAttribute('aria-label','会话执行轮数上限');$('.agent-header-tools').append(rounds);rounds.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const data=await invoke('agent_execution_budget',{sessionId:session,maxRounds:Number(rounds.value)});if(session===agent.selected&&epoch===agent.identityEpoch){agent.detail=data;renderModel(data.model);}}catch(e){if(session===agent.selected&&epoch===agent.identityEpoch){renderModel(agent.detail.model);notice(String(e));}}};}
     const maxRounds=agent.detail.executionBudget?.maxRounds||16;rounds.replaceChildren();for(const n of [...new Set([8,16,24,32,maxRounds])].sort((a,b)=>a-b)){const option=document.createElement('option');option.value=String(n);option.textContent=n+' 轮';rounds.append(option);}rounds.value=String(maxRounds);rounds.disabled=!agent.selected||agent.detail.modelPending;rounds.title='每个会话单独保存；任务开始后固定预算。工具调用数和运行时间限制仍有效。';
 
@@ -214,7 +215,7 @@
     const picker=$('#agent-model-picker'),menu=$('#agent-model-menu');
     const available=(config.servers || []).filter(server=>server.enabled && server.hasApiKey);
     $('#agent-model-label').textContent=enabled?config.name+' · '+config.model:available.length?'选择模型':'本地工具模式';
-    picker.dataset.available=String(available.length);picker.disabled=!available.length || !!agent.detail.modelPending;
+    picker.dataset.available=String(available.length);picker.disabled=!available.length || !!agent.detail.modelPending || !!agent.detail.agentProfile;
     picker.title=available.length?'选择当前对话使用的 LLM Server':'到账户 → 模型服务，启用并配置模型';
     menu.replaceChildren(element('div','agent-model-menu-title','选择模型'));
     for(const server of available){
@@ -425,7 +426,7 @@
     let status=container.querySelector('.agent-stream-status');
     if(agent.detail.modelPending){if(!status){status=element('div','agent-message-label agent-stream-status');status.setAttribute('role','status');container.append(status);}const task=agent.detail.tasks?.find(t=>t.responseId===agent.detail.streamingMessageId);status.textContent=agent.detail.stopRequested?'正在停止生成…':agent.detail.messages.find(m=>m.id===agent.detail.streamingMessageId)?.modelMetadata?.context?.status==='compressing'?'正在整理上下文…':task?.status==='approval'?`等待你确认操作 · 第 ${task.step} 轮`:task?.status==='tool'?`正在执行工具 · 第 ${task.step} 轮`:`模型正在生成…${task?.step?' · 第 '+task.step+' 轮':''}`;}
     else status?.remove();
-    agent.history?.updateDetail();agent.guidance?.update();agent.attachments?.render();agent.runExperience?.tick();
+    agent.history?.updateDetail();agent.guidance?.update();agent.profiles?.update();agent.attachments?.render();agent.runExperience?.tick();
   }
   async function saveEditedMessage(entry){
     if(agent.savingEdit || agent.detail.modelPending || !agent.editing)return;
@@ -484,7 +485,7 @@
         if(entry.role!=='user'){
           if(entry.role==='assistant'){const number=element('span','agent-reply-number',String(++replyNumber));number.setAttribute('aria-label','回复 '+replyNumber);message.append(number);}
           const metadata=entry.modelMetadata || {};
-          const label=entry.role==='error'?'模型调用失败':metadata.source==='local'?'苍灵智能 · 本地工具':metadata.model?(metadata.serverName?metadata.serverName+' · ':'')+metadata.model:'苍灵智能 · 模型未记录';
+          const label=(metadata.agentProfile?.name?metadata.agentProfile.name+' · ':'')+(entry.role==='error'?'模型调用失败':metadata.source==='local'?'苍灵智能 · 本地工具':metadata.model?(metadata.serverName?metadata.serverName+' · ':'')+metadata.model:'苍灵智能 · 模型未记录');
           const heading=element('span','agent-message-label agent-reply-model',label);
           if(metadata.requestedModel && metadata.requestedModel!==metadata.model)heading.title='请求模型：'+metadata.requestedModel+'；服务端返回模型：'+metadata.model;
           const replyHeader=element('div','agent-reply-header');replyHeader.append(heading);
@@ -726,7 +727,7 @@
   async function refreshAccountSessions(){
     agent.taskSummaryOpen?.clear();agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
-    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
+    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.guidance?.reset();agent.profiles?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved))return;const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }
@@ -793,6 +794,7 @@
   agent.runExperience=window.createKeeperRunExperience?.({agent,notice});
   agent.drafts=window.createKeeperDrafts?.({agent,invoke,notice,ensureSession});
   agent.history=window.createKeeperHistory?.({agent,invoke,element,notice,bootstrap,select,showConversation,renderProjects,renderSessions,renderConversation,clearSelected});
+  agent.profiles=window.createKeeperProfiles?.({agent,invoke,element,notice,select,ensureSession});
   agent.guidance=window.createKeeperGuidance?.({agent,invoke,element,notice});
   agent.attachments=window.createKeeperAttachments?.({agent,invoke,element,notice,ensureSession,select,renderPending});
   bootstrap().then(async()=>{

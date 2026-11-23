@@ -1,5 +1,6 @@
 mod cis_models;
 mod agent;
+mod agent_profiles;
 mod agent_account;
 mod agent_attachments;
 mod agent_backup;

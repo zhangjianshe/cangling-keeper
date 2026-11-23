@@ -223,6 +223,8 @@ pub(crate) async fn execute(
         "正在准备操作…",
         sink.as_ref(),
     )?;
+    let allowed={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_profiles::check_call(&store,response,&call.name,&parsed.as_ref().cloned().unwrap_or(Value::Null))};
+    if let Err(error)=allowed{return finish_result(&core,session,response,&run,call,Err(error),false,sink.as_ref());}
     if call.name.starts_with("mcp_") {
         return execute_mcp(&core,session,response,&run,call,parsed,step,cancel,deadline,sink.as_ref()).await;
     }

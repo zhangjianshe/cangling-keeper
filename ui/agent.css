@@ -342,3 +342,27 @@
 .agent-shell{--agent-list-font-size:14px}.agent-sidebar{font-size:var(--agent-list-font-size)}
 
 .agent-task-changes{margin:12px 0;padding:12px;border:1px solid #e5e7eb;border-radius:6px}.agent-task-changes details{margin:8px 0}.agent-task-changes pre{max-height:320px;overflow:auto;white-space:pre-wrap}.agent-task-changes .hint{font-size:12px;color:#64748b}
+
+/* Agent preset editor uses the shared modal and footer. */
+#agent-profiles-modal .modal-box{width:min(720px,calc(100vw - 32px));max-height:90vh;overflow:auto}
+#agent-profiles-modal .profile-choices{border:1px solid #dbe4f0;border-radius:6px;padding:12px;max-height:180px;overflow:auto}
+#agent-profiles-modal .profile-choice{display:flex;flex-direction:row;align-items:center;gap:8px;font-size:14px;margin:4px 0}
+#agent-profiles-modal .profile-choice input{width:16px;height:16px;flex:none;order:-1}
+#profile-prompt{width:100%;resize:vertical;min-height:120px}
+#agent-profiles-modal .modal-box{display:flex;flex-direction:column;padding:0;overflow:hidden}
+#agent-profiles-modal .llm-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:18px 24px;border-bottom:1px solid var(--keeper-dialog-border);flex:none}
+#agent-profiles-modal .llm-dialog-head h2{margin:0}
+#agent-profiles-modal .modal-close{position:static;width:28px;height:28px}
+#agent-profiles-modal form{display:flex;flex-direction:column;min-height:0;overflow:hidden;margin:0}
+#agent-profiles-modal .llm-dialog-fields{display:flex;flex-direction:column;gap:14px;padding:20px 24px;overflow:auto;min-height:0}
+#agent-profiles-modal .llm-dialog-fields>label{display:flex;flex-direction:column;gap:6px;font-size:14px}
+#agent-profiles-modal input:not([type=checkbox]),#agent-profiles-modal textarea,#agent-profiles-modal select{box-sizing:border-box;width:100%;padding:9px 11px;border:1px solid #d9d9e0;border-radius:7px;background:#fff;color:inherit;font:inherit}
+#agent-profiles-modal .hint{margin:0;font-size:12px;color:#64748b}
+#agent-profiles-modal .profile-choices{flex:none}
+#agent-profiles-modal .modal-actions{flex:none;margin:0;border-radius:0;padding:14px 24px}
+.agent-header{height:auto;min-height:64px;gap:12px;padding-top:8px;padding-bottom:8px}
+.agent-header-tools{flex-wrap:wrap;justify-content:flex-end}
+.agent-header-tools>button,.agent-header-tools>select{flex-shrink:0}
+#agent-profile-picker{max-width:170px;text-overflow:ellipsis}
+
+#agent-profiles-modal .modal-box{max-width:min(720px,calc(100vw - 32px))}
