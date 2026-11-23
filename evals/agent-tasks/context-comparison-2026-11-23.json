@@ -1,0 +1,198 @@
+[
+  {
+    "budgetK": 64,
+    "id": "sum-empty",
+    "model": "deepseek-flash",
+    "workingBudget": 65536,
+    "modelLimit": 131072,
+    "seconds": 20.5,
+    "passed": true,
+    "taskStatus": "complete",
+    "summaryRequests": 0,
+    "usage": {
+      "cachedTokens": 40320,
+      "completionTokens": 965,
+      "promptTokens": 46398
+    },
+    "undoVerified": true,
+    "errors": [],
+    "context": {
+      "compressionThreshold": 47513,
+      "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+      "estimatedTokens": 14141,
+      "imageTokenEstimateEach": 16384,
+      "imageTokensReserved": 0,
+      "limit": 65536,
+      "modelLimit": 131072,
+      "outputReserved": 4096,
+      "safetyReserved": 2048,
+      "status": "ready",
+      "toolOutputShortened": false,
+      "workingBudget": 65536
+    }
+  },
+  {
+    "budgetK": 64,
+    "id": "cross-file",
+    "model": "deepseek-flash",
+    "workingBudget": 65536,
+    "modelLimit": 131072,
+    "seconds": 91.14,
+    "passed": true,
+    "taskStatus": "failed",
+    "summaryRequests": 0,
+    "usage": {
+      "cachedTokens": 42240,
+      "completionTokens": 1338,
+      "promptTokens": 48354
+    },
+    "undoVerified": true,
+    "errors": [
+      "Agent 已达到 8 轮执行上限，执行记录已保存。"
+    ],
+    "context": {
+      "compressionThreshold": 47513,
+      "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+      "estimatedTokens": 15509,
+      "imageTokenEstimateEach": 16384,
+      "imageTokensReserved": 0,
+      "limit": 65536,
+      "modelLimit": 131072,
+      "outputReserved": 4096,
+      "safetyReserved": 2048,
+      "status": "ready",
+      "toolOutputShortened": false,
+      "workingBudget": 65536
+    }
+  },
+  {
+    "budgetK": 64,
+    "id": "retry-after-test-failure",
+    "model": "deepseek-flash",
+    "workingBudget": 65536,
+    "modelLimit": 131072,
+    "seconds": 20.4,
+    "passed": true,
+    "taskStatus": "complete",
+    "summaryRequests": 0,
+    "usage": {
+      "cachedTokens": 36864,
+      "completionTokens": 1575,
+      "promptTokens": 43204
+    },
+    "undoVerified": true,
+    "errors": [],
+    "context": {
+      "compressionThreshold": 47513,
+      "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+      "estimatedTokens": 15859,
+      "imageTokenEstimateEach": 16384,
+      "imageTokensReserved": 0,
+      "limit": 65536,
+      "modelLimit": 131072,
+      "outputReserved": 4096,
+      "safetyReserved": 2048,
+      "status": "ready",
+      "toolOutputShortened": false,
+      "workingBudget": 65536
+    }
+  },
+  {
+    "budgetK": 128,
+    "id": "sum-empty",
+    "model": "deepseek-flash",
+    "workingBudget": 131072,
+    "modelLimit": 131072,
+    "seconds": 19.44,
+    "passed": true,
+    "taskStatus": "failed",
+    "summaryRequests": 0,
+    "usage": {
+      "cachedTokens": 40576,
+      "completionTokens": 832,
+      "promptTokens": 46647
+    },
+    "undoVerified": true,
+    "errors": [
+      "Agent 已达到 8 轮执行上限，执行记录已保存。"
+    ],
+    "context": {
+      "compressionThreshold": 99942,
+      "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+      "estimatedTokens": 14354,
+      "imageTokenEstimateEach": 16384,
+      "imageTokensReserved": 0,
+      "limit": 131072,
+      "modelLimit": 131072,
+      "outputReserved": 4096,
+      "safetyReserved": 2048,
+      "status": "ready",
+      "toolOutputShortened": false,
+      "workingBudget": 131072
+    }
+  },
+  {
+    "budgetK": 128,
+    "id": "cross-file",
+    "model": "deepseek-flash",
+    "workingBudget": 131072,
+    "modelLimit": 131072,
+    "seconds": 17.5,
+    "passed": true,
+    "taskStatus": "complete",
+    "summaryRequests": 0,
+    "usage": {
+      "cachedTokens": 29440,
+      "completionTokens": 1075,
+      "promptTokens": 35583
+    },
+    "undoVerified": true,
+    "errors": [],
+    "context": {
+      "compressionThreshold": 99942,
+      "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+      "estimatedTokens": 14500,
+      "imageTokenEstimateEach": 16384,
+      "imageTokensReserved": 0,
+      "limit": 131072,
+      "modelLimit": 131072,
+      "outputReserved": 4096,
+      "safetyReserved": 2048,
+      "status": "ready",
+      "toolOutputShortened": false,
+      "workingBudget": 131072
+    }
+  },
+  {
+    "budgetK": 128,
+    "id": "retry-after-test-failure",
+    "model": "deepseek-flash",
+    "workingBudget": 131072,
+    "modelLimit": 131072,
+    "seconds": 14.47,
+    "passed": true,
+    "taskStatus": "complete",
+    "summaryRequests": 0,
+    "usage": {
+      "cachedTokens": 23168,
+      "completionTokens": 1043,
+      "promptTokens": 28809
+    },
+    "undoVerified": true,
+    "errors": [],
+    "context": {
+      "compressionThreshold": 99942,
+      "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+      "estimatedTokens": 13705,
+      "imageTokenEstimateEach": 16384,
+      "imageTokensReserved": 0,
+      "limit": 131072,
+      "modelLimit": 131072,
+      "outputReserved": 4096,
+      "safetyReserved": 2048,
+      "status": "ready",
+      "toolOutputShortened": false,
+      "workingBudget": 131072
+    }
+  }
+]

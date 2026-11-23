@@ -470,7 +470,7 @@
             <label>API 类型<select id="llm-provider"><option value="deepseek">DeepSeek</option><option value="openai-compatible">OpenAI 兼容</option></select></label>
             <label class="llm-field-wide">API 地址<input id="deepseek-url" type="url" required placeholder="https://api.deepseek.com" /></label>
             <label class="llm-field-wide">模型<input id="deepseek-model" type="text" list="deepseek-models" required /><datalist id="deepseek-models"><option value="deepseek-flash"></option><option value="deepseek-v4-pro"></option></datalist></label>
-            <label class="llm-field-wide">上下文预算（token）<input id="llm-context-limit" type="number" min="16384" max="131072" step="1" value="32768" required /><small>默认 32768，包含工具、历史和预留回复；请勿超过模型实际上限。使用保守估算自动压缩历史。</small></label>
+            <label class="llm-field-wide">服务上下文上限（token）<input id="llm-context-limit" type="number" min="16384" max="131072" step="1" value="32768" required /><small>填写服务允许的上限，不应超过上游模型限制。每个会话可单独设置更低的工作预算。</small></label>
             <label class="llm-field-wide">API Key<input id="deepseek-key" type="password" autocomplete="new-password" /><small>留空保留现有密钥；更换 API 地址时需重新输入。</small></label>
           </div>
           <div class="llm-dialog-options">

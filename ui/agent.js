@@ -194,6 +194,9 @@
   document.addEventListener('click',event=>{if(!event.target.closest('.agent-security-control'))closeSecurityMenu();});
   let llmConfig={servers:[],activeServerId:''},llmReturnFocus=null,llmRemote=false,llmIdentityEpoch=0;
   function renderModel(config){
+    let budgetSelect=$('#agent-context-budget');if(!budgetSelect){budgetSelect=document.createElement('select');budgetSelect.id='agent-context-budget';budgetSelect.className='btn';budgetSelect.setAttribute('aria-label','会话上下文工作预算');$('.agent-header-tools').append(budgetSelect);budgetSelect.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const detail=await invoke('agent_context_budget',{sessionId:session,workingBudget:Number(budgetSelect.value)});if(agent.selected===session&&epoch===agent.identityEpoch){agent.detail=detail;renderModel(agent.detail.model);renderConversation();}}catch(e){notice(String(e));}};}
+    const policy=agent.detail.contextPolicy;budgetSelect.replaceChildren();for(const size of [...new Set([16384,32768,65536,131072,policy?.workingBudget].filter(Boolean))].sort((a,b)=>a-b)){if(size>(policy?.modelLimit||32768))continue;const option=document.createElement('option');option.value=String(size);option.textContent='上下文 '+Math.round(size/1024)+'K';budgetSelect.append(option);}budgetSelect.value=String(policy?.workingBudget||32768);budgetSelect.disabled=!agent.selected||agent.detail.modelPending;budgetSelect.title='服务配置上限 '+(policy?.modelLimit||32768)+' token；工作预算包含预留输出，按启发式估算提前压缩。';
+
     if(!config)return;
     renderSecurity();
     const defaultId=config.defaultServerId ?? config.activeServerId;
@@ -456,6 +459,7 @@
     catch(error){notice(String(error));}finally{agent.switchingVersion=false;}
   }
   function renderConversation(){
+    if($('#agent-context-budget'))$('#agent-context-budget').disabled=!agent.selected||agent.detail.modelPending;
     const container=$('#agent-messages'),timeline=$('#agent-timeline');
     window.keeperThreadNav?.begin({account:agent.ownerKey || 'guest',session:agent.selected});
     const follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<90;
@@ -483,7 +487,7 @@
           if(metadata.context || metadata.usage){
             const c=metadata.context || {},u=metadata.usage || {},labels={compressing:'正在整理上下文…',compacted:'上下文已压缩',fallback:'摘要不可用，已裁剪旧上下文',stopped:'上下文压缩已停止',interrupted:'请求已中断',ready:'上下文就绪'};
             const parts=[labels[c.status] || ''];
-            if(c.estimatedTokens)parts.push('输入保守估算 '+c.estimatedTokens.toLocaleString()+' / '+c.limit.toLocaleString()+' token');
+            if(c.estimatedTokens)parts.push('输入估算 '+c.estimatedTokens.toLocaleString()+' / '+c.limit.toLocaleString()+' token');
             if(u.promptTokens!==undefined)parts.push('累计实际输入 '+u.promptTokens.toLocaleString()+' · 输出 '+u.completionTokens.toLocaleString()+' token（含压缩）');
             const info=element('div','agent-context-info',parts.filter(Boolean).join(' · '));info.title='预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');replyHeader.append(info);
           }

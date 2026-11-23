@@ -55,6 +55,10 @@ with tempfile.TemporaryDirectory(prefix='keeper-context-') as folder:
   return s
  try:
   start();call('agent_model_save',{'name':'Fixture','enabled':True,'baseUrl':f'http://127.0.0.1:{api.server_port}','model':'fixture','apiKey':'fixture-only-key','contextLimit':32768})
+  policy_session=call('agent_new_session')['id'];policy=call('agent_context_budget',{'sessionId':policy_session,'workingBudget':16384})['contextPolicy'];assert policy['modelLimit']==32768 and policy['workingBudget']==16384
+  try:call('agent_context_budget',{'sessionId':policy_session,'workingBudget':65536});raise AssertionError('excess budget accepted')
+  except urllib.error.HTTPError:pass
+  assert detail(policy_session)['contextPolicy']['workingBudget']==16384
   s=seed();call('agent_send_message',{'sessionId':s,'content':'验证压缩'});d=wait(s);m=d['messages'][-1];assert m['role']=='assistant',d['messages'][-1]
   meta=m['modelMetadata'];assert meta['context']['status']=='compacted',meta
   assert meta['context']['estimatedTokens']+6144<=32768
@@ -71,7 +75,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-context-') as folder:
   call('agent_send_message',{'sessionId':s,'content':'继续'});d=wait(s);assert sum(not r['stream'] for r in requests)==n
   with sqlite3.connect(str(Path(folder)/'data.sql')) as db:db.execute('UPDATE agent_messages SET content=? WHERE id=?',('changed constraint '+('y'*900),s+'0'))
   call('agent_send_message',{'sessionId':s,'content':'验证编辑历史后重新压缩'});d=wait(s);assert sum(not r['stream'] for r in requests)>n
-  saved=d['messages'][-1]['modelMetadata'];process.terminate();process.wait(10);start();assert detail(s)['messages'][-1]['modelMetadata']==saved
+  saved=d['messages'][-1]['modelMetadata'];process.terminate();process.wait(10);start();assert detail(s)['messages'][-1]['modelMetadata']==saved;assert detail(policy_session)['contextPolicy']['workingBudget']==16384
   # A different history must not reuse the other session's summary.
   mode='tools';t=call('agent_new_session')['id'];root=Path(call('agent_bootstrap')['projects'][0]['directory']);(root/'large.txt').write_text(('z'*900+'\n')*100)
   call('agent_send_message',{'sessionId':t,'content':'读取大型文件并保持原任务'});td=wait(t)

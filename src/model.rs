@@ -466,3 +466,10 @@ mod tests{
  }
  #[test]fn endpoint_validation(){assert!(base("https://api.deepseek.com/v1/").is_ok());for value in ["http://external.test","https://key@host","https://host?token=x"]{assert!(base(value).is_err());}}
 }
+
+pub(crate) fn context_policy(store:&Store,session:&str)->Result<Value,String>{
+    let model=session_config(store,session)?;
+    let model_limit=model["contextLimit"].as_u64().unwrap_or(32768).clamp(16384,131072);
+    let requested=store.get_setting(&format!("agent_context_budget:{session}"))?.and_then(|v|v.parse::<u64>().ok()).unwrap_or(131072);
+    Ok(json!({"modelLimit":model_limit,"workingBudget":requested.min(model_limit),"requestedBudget":requested,"limitSource":"服务配置上限（不等于上游官方最大窗口）"}))
+}
