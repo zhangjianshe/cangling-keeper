@@ -423,3 +423,9 @@
 #agent-skill-library-editor .skill-file-actions .btn{display:inline-flex;align-items:center;justify-content:center}
 #agent-skill-library-editor .skill-file-actions .skill-mode-icon{width:var(--skill-control-height);padding:0;flex:none}
 .skill-mode-icon svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+
+/* Keep conversation header controls on the same compact baseline. */
+.agent-header-tools{--agent-header-control-height:32px;align-items:center}
+.agent-header-tools>button,.agent-header-tools>select,.agent-header-tools>.agent-model-badge,.agent-header-tools .thread-directory-control>#thread-directory-toggle{box-sizing:border-box;height:var(--agent-header-control-height);min-height:var(--agent-header-control-height);margin-top:0;margin-bottom:0;padding:0 10px;line-height:1.4}
+.agent-header-tools>button,.agent-header-tools>.agent-model-badge,.agent-header-tools .thread-directory-control>#thread-directory-toggle{display:inline-flex;align-items:center;justify-content:center}
+.agent-header-tools>.agent-model-badge{white-space:nowrap}
