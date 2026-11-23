@@ -12,11 +12,24 @@
   const layout=node('div','project-browser-layout'),list=node('nav','project-browser-list'),preview=node('section','project-browser-preview'),code=node('div','project-code-editor');list.setAttribute('aria-label','目录内容');preview.append(code);layout.append(list,preview);panel.append(header,bar,layout);document.querySelector('#agent-main').after(panel);
   const save=iconButton('保存文件','M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h12l4 4v12a2 2 0 0 1-2 2ZM7 3v6h10V3M7 21v-8h10v8',true);bar.append(save);save.disabled=true;
   const editor=window.ace.edit(code);window.ace.config.set('basePath','/vendor/ace');editor.setTheme('ace/theme/github');editor.session.setUseWorker(false);editor.setOptions({fontSize:15,showPrintMargin:false});editor.setReadOnly(true);
+  const modes=node('div','project-markdown-modes'),workspace=node('div','project-document-workspace'),rendered=node('article','project-markdown-preview');
+  modes.setAttribute('role','group');modes.setAttribute('aria-label','Markdown 显示模式');modes.hidden=true;rendered.hidden=true;
+  preview.replaceChildren(modes,workspace);workspace.append(code,rendered);
+  let viewMode='edit';
+  for(const [value,label] of [['edit','编辑'],['preview','预览'],['split','分屏']]){const b=node('button','btn',label);b.type='button';b.dataset.mode=value;b.onclick=()=>{viewMode=value;updateView();};modes.append(b);}
+  function updateView(){
+   const markdown=!!file&&/\.(md|markdown)$/i.test(file);modes.hidden=!markdown;
+   const mode=markdown?viewMode:'edit';workspace.dataset.mode=mode;code.hidden=mode==='preview';rendered.hidden=mode==='edit';
+   for(const b of modes.children)b.setAttribute('aria-pressed',String(b.dataset.mode===mode));
+   if(!rendered.hidden){if(window.keeperMarkdown)window.keeperMarkdown.render(rendered,editor.getValue());else rendered.textContent=editor.getValue();}
+   else {rendered.replaceChildren();delete rendered._source;}
+   editor.resize();
+  }
   let guidanceMode=false,guidanceSession=null;
   let project=null,path='.',file=null,seq=0,popup=null,trigger=null,original='',hash='',editable=false,saving=false,creating=false;
   const dirty=()=>!!file&&editor.getValue()!==original;
   function updateSave(){save.disabled=!editable||!dirty()||saving;const label=saving?'正在保存…':dirty()?'保存文件（有未保存修改）':'保存文件';save.title=label;save.setAttribute('aria-label',label);save.setAttribute('aria-busy',String(saving));}
-  editor.session.on('change',updateSave);
+  editor.session.on('change',()=>{updateSave();updateView();});
   const discard=async()=>!dirty()||await window.uiConfirm('当前文件有未保存的修改，放弃修改并继续？','未保存的修改');
   window.addEventListener('beforeunload',e=>{if(dirty()){e.preventDefault();e.returnValue='';}});
   save.onclick=async()=>{if(save.disabled)return;const ownerProject=project,ownerFile=file,epoch=agent.identityEpoch,text=editor.getValue();saving=true;updateSave();try{const data=await invoke('agent_project_file_save',{projectId:project.id,path:file,content:text,sha256:hash});if(project!==ownerProject||file!==ownerFile||epoch!==agent.identityEpoch)return;original=text;hash=data.sha256;status.textContent='已保存';}catch(e){if(project===ownerProject&&file===ownerFile&&epoch===agent.identityEpoch)status.textContent=String(e);}finally{saving=false;updateSave();}};
@@ -52,7 +65,7 @@
    try{const data=await invoke('agent_project_browse',{projectId:project.id,path:target,action:'edit'});if(version!==seq||epoch!==agent.identityEpoch)return;
     file=target;list.querySelectorAll('button').forEach(b=>b.classList.toggle('active',b.dataset.path===target));original=data.content;hash=data.sha256;editable=data.editable;editor.setValue(original,-1);editor.setReadOnly(!editable);
     const ext=target.split('.').pop().toLowerCase(),modes={js:'javascript',ts:'typescript',json:'json',html:'html',htm:'html',css:'css',py:'python',java:'java',rs:'rust',c:'c_cpp',cpp:'c_cpp',h:'c_cpp',sh:'sh',yaml:'yaml',yml:'yaml',xml:'xml',md:'markdown',sql:'sql',ini:'ini'};editor.session.setMode('ace/mode/'+(modes[ext]||'text'));editor.resize();
-    status.textContent=editable?'':'文件超过128 KiB，只读预览';updateSave();
+    status.textContent=editable?'':'文件超过128 KiB，只读预览';updateSave();updateView();
    }catch(e){if(version===seq)status.textContent='不可预览：'+String(e);}
   }
   up.onclick=()=>loadDirectory(path.includes('/')?path.slice(0,path.lastIndexOf('/')):'.');refresh.onclick=()=>guidanceMode?loadGuidance():loadDirectory(path);
