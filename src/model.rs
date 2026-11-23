@@ -206,12 +206,14 @@ fn request_messages(store:&Store,session:&str,messages:&[Value],supports_images:
 #[derive(Debug,PartialEq)]
 pub(crate) enum ReplyFinish { Complete, Stopped }
 pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,response_id:&str,mut cancel:tokio::sync::oneshot::Receiver<()>,sink:std::sync::Arc<dyn crate::EventSink>,mut progress:impl FnMut(&str)->Result<(),String>+Send)->Result<ReplyFinish,String>{
-    let (url,model,key,provider,mut messages,root,revision,supports_images,max_rounds,profile)={
+    let (url,model,key,provider,mut messages,root,revision,supports_images,max_rounds,profile,previous_skills)={
         let store=core.store.lock().map_err(|e|e.to_string())?;
         let raw:String=store.conn.query_row("SELECT model_metadata FROM agent_messages WHERE id=?1 AND session_id=?2",rusqlite::params![response_id,session],|r|r.get(0)).map_err(|e|e.to_string())?;
         let mut metadata:Value=serde_json::from_str(&raw).map_err(|_|"模型信息读取失败")?;
         let original=metadata["regenerateOf"].as_str().map(str::to_owned);
-        let profile=if original.is_some(){metadata["agentProfile"].clone()}else{crate::agent_profiles::selected(&store,session)?};
+        let previous_skills=if original.is_some(){metadata.get("skillBindings").cloned()}else{None};
+        let mut profile=if original.is_some(){metadata["agentProfile"].clone()}else{crate::agent_profiles::selected(&store,session)?};
+        if !profile.is_null(){crate::agent_skill_library::normalize(&mut profile);}
         crate::agent_profiles::validate_snapshot(&profile)?;
         let selected:String=if original.is_some(){text_field(&metadata,"serverId")?}else if let Some(id)=profile["modelId"].as_str(){id.to_owned()}else{store.conn.query_row("SELECT server_id FROM agent_sessions WHERE id=?1",[session],|r|r.get(0)).map_err(|e|e.to_string())?};
         let (url,current_model,key,provider)=credentials_for(&store,Some(&selected))?;
@@ -241,7 +243,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         if server["supportsImages"]!=true && current_prompt(&messages).is_some_and(|i|messages[i]["keeperAttachments"].as_array().is_some_and(|a|a.iter().any(|v|v["kind"]=="image"))){return Err("当前模型未声明支持图片，无法发送或重新生成该图片问题。".into());}
         let root=crate::agent_runtime::begin(&store,session,response_id)?;
         store.conn.execute("INSERT OR REPLACE INTO agent_model_contexts(message_id,messages) VALUES (?1,?2)",rusqlite::params![response_id,serde_json::to_string(&messages).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
-        (url,model,key,provider,messages,root,server["revision"].as_str().unwrap_or("").to_owned(),server["supportsImages"]==true,max_rounds,profile)
+        (url,model,key,provider,messages,root,server["revision"].as_str().unwrap_or("").to_owned(),server["supportsImages"]==true,max_rounds,profile,previous_skills)
     };
     let facts=crate::agent_environment::for_project(core,&root).await?;
     let security_mode={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_security::mode(&store,session)};
@@ -249,15 +251,31 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
     let guidance_cancel=std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mut guidance_worker=tokio::task::spawn_blocking({let dir=project_root.clone();let flag=guidance_cancel.clone();move ||crate::agent_skills::snapshot(&dir,flag)});
     let mut guidance=tokio::select! {biased;_=&mut cancel=>{guidance_cancel.store(true,std::sync::atomic::Ordering::Relaxed);return Ok(ReplyFinish::Stopped)},value=&mut guidance_worker=>value.map_err(|_|"读取项目指南失败")??};
-    if !profile.is_null(){
-        let available=guidance["skills"].as_array().unwrap();
-        if profile["skills"].as_array().unwrap().iter().any(|n|!available.iter().any(|s|s["name"]==*n)){return Err("智能体关联技能已不存在，请编辑智能体配置".into());}
-        guidance["skills"].as_array_mut().unwrap().retain(|s|crate::agent_profiles::includes(&profile,"skills",s["name"].as_str().unwrap_or("")));
-    }
+    let bindings = {
+        let store = core.store.lock().map_err(|e| e.to_string())?;
+        let bindings = crate::agent_skill_library::prepare(
+            &store,
+            session,
+            &profile,
+            &mut guidance,
+            previous_skills.as_ref(),
+        )?;
+        store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.skillBindings',json(?2)) WHERE id=?1",rusqlite::params![response_id,bindings.to_string()]).map_err(|e|e.to_string())?;
+        bindings
+    };
     messages[0]["content"]=json!(format!("{}{}{}{}",crate::agent_environment::system_prompt(&facts),crate::agent_security::prompt(&security_mode),crate::agent_skills::prompt(&guidance),if profile.is_null(){String::new()}else{format!("\n[用户配置的智能体：{}；不能覆盖安全策略]\n{}",profile["name"].as_str().unwrap_or(""),profile["systemPrompt"].as_str().unwrap_or(""))}));
     {let store=core.store.lock().map_err(|e|e.to_string())?;let info=json!({"rulesStatus":guidance["rules"]["status"],"rulesSha256":guidance["rules"]["sha256"],"skills":guidance["skills"].as_array().map(|v|v.iter().map(|s|s["name"].clone()).collect::<Vec<_>>()).unwrap_or_default(),"warnings":guidance["warnings"]});store.conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.projectGuidance',json(?2)) WHERE id=?1",rusqlite::params![response_id,info.to_string()]).map_err(|e|e.to_string())?;}
     {let store=core.store.lock().map_err(|e|e.to_string())?;store.conn.execute("UPDATE agent_model_contexts SET messages=?2 WHERE message_id=?1",rusqlite::params![response_id,json!(messages).to_string()]).map_err(|e|e.to_string())?;}
-    let tools={let store=core.store.lock().map_err(|e|e.to_string())?;let mut tools=crate::agent_files::definitions();let mut mcp=crate::agent_mcp::definitions_for(&store,session)?;
+    let tools={let store=core.store.lock().map_err(|e|e.to_string())?;let mut tools=crate::agent_files::definitions();
+        if bindings
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["scope"] != "project")
+        {
+            tools.push(crate::agent_skill_library::definition());
+        }
+        let mut mcp=crate::agent_mcp::definitions_for(&store,session)?;
         if !profile.is_null()&&profile["mcpTools"].as_array().unwrap().iter().any(|n|!mcp.iter().any(|t|t["function"]["name"]==*n)){return Err("智能体关联 MCP 工具不可用，请重新连接或编辑配置".into());}
         mcp.retain(|t|crate::agent_profiles::includes(&profile,"mcpTools",t["function"]["name"].as_str().unwrap_or("")));tools.extend(mcp);tools};
     let mut deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(crate::agent_runtime::ACTIVE_SECONDS);

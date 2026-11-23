@@ -18,7 +18,7 @@ pub(crate) fn annotate(tool: &str, result: &mut Value, status: &str) {
     let outcome=if status=="rejected" {"rejected"} else if status=="stopped" {"stopped"}
         else if result["timedOut"]==true {"timeout"} else if status=="failed" {"failed"}
         else if truncated {"truncated"} else {"success"};
-    let read_only=matches!(tool,"list_directory"|"read_file"|"search_files"|"load_skill");
+    let read_only=matches!(tool,"list_directory"|"read_file"|"search_files"|"load_skill"|"read_skill_file");
     let advice=match outcome {
         "rejected"=>"用户已拒绝，不要再次请求相同操作。",
         "timeout"|"stopped"=>"先核实当前状态；停止或超时不保证操作未发生，不要自动重复执行。",

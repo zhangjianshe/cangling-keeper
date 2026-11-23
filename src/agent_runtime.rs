@@ -225,6 +225,43 @@ pub(crate) async fn execute(
     )?;
     let allowed={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_profiles::check_call(&store,response,&call.name,&parsed.as_ref().cloned().unwrap_or(Value::Null))};
     if let Err(error)=allowed{return finish_result(&core,session,response,&run,call,Err(error),false,sink.as_ref());}
+    if call.name == "load_skill" || call.name == "read_skill_file" {
+        let managed = {
+            let store = core.store.lock().map_err(|e| e.to_string())?;
+            let raw: String = store
+                .conn
+                .query_row(
+                    "SELECT model_metadata FROM agent_messages WHERE id=?1",
+                    [response],
+                    |r| r.get(0),
+                )
+                .map_err(|e| e.to_string())?;
+            serde_json::from_str::<Value>(&raw)
+                .ok()
+                .is_some_and(|m| m.get("skillBindings").is_some())
+        };
+        if managed {
+            let result = {
+                let store = core.store.lock().map_err(|e| e.to_string())?;
+                parsed
+                    .as_ref()
+                    .map_err(|_| "技能参数无效".to_string())
+                    .and_then(|args| {
+                        crate::agent_skill_library::load(&store, response, &call.name, args, &root)
+                    })
+            };
+            return finish_result(
+                &core,
+                session,
+                response,
+                &run,
+                call,
+                result,
+                false,
+                sink.as_ref(),
+            );
+        }
+    }
     if call.name.starts_with("mcp_") {
         return execute_mcp(&core,session,response,&run,call,parsed,step,cancel,deadline,sink.as_ref()).await;
     }

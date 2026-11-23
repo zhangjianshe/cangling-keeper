@@ -1,4 +1,4 @@
-//! Account-owned, project-scoped agent presets. Credentials remain in model/MCP stores.
+//! Account-owned, cross-project agent presets. Credentials remain in model/MCP stores.
 use crate::store::Store;
 use rusqlite::params;
 use serde_json::{Value, json};
@@ -30,22 +30,23 @@ fn idle(s: &Store, session: &str) -> Result<(), String> {
 }
 pub(crate) fn list(s: &Store, session: &str) -> Result<Value, String> {
     init(s)?;
-    let project = project(s, session)?;
+    project(s, session)?;
     let owner = crate::agent_account::owner(s)?;
     let mut q = s
         .conn
-        .prepare(
-            "SELECT config FROM agent_profiles WHERE owner=?1 AND project_id=?2 ORDER BY rowid",
-        )
+        .prepare("SELECT config FROM agent_profiles WHERE owner=?1 ORDER BY rowid")
         .map_err(|e| e.to_string())?;
     let rows = q
-        .query_map(params![owner, project], |r| r.get::<_, String>(0))
+        .query_map(params![owner], |r| r.get::<_, String>(0))
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     Ok(json!(
         rows.into_iter()
-            .map(|r| serde_json::from_str::<Value>(&r))
+            .map(|r| serde_json::from_str::<Value>(&r).map(|mut p| {
+                crate::agent_skill_library::normalize(&mut p);
+                p
+            }))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?
     ))
@@ -99,7 +100,7 @@ pub(crate) fn options(s: &Store, session: &str) -> Result<Value, String> {
         std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
     )?;
     Ok(
-        json!({"profiles":list(s,session)?,"selected":selected(s,session)?,"models":crate::model::config(s)?["servers"],"skills":guidance["skills"],"mcpTools":crate::agent_mcp::definitions_for(s,session)?}),
+        json!({"profiles":list(s,session)?,"selected":selected(s,session)?,"models":crate::model::config(s)?["servers"],"skills":crate::agent_skill_library::catalog(s,session,&guidance)?,"mcpTools":crate::agent_mcp::definitions_for(s,session)?}),
     )
 }
 pub(crate) fn save(s: &Store, args: &Value) -> Result<Value, String> {
@@ -112,7 +113,7 @@ pub(crate) fn save(s: &Store, args: &Value) -> Result<Value, String> {
         return Err("智能体不存在或无权修改".into());
     }
     if supplied.is_empty() && all.as_array().unwrap().len() >= 100 {
-        return Err("每个项目最多100个智能体".into());
+        return Err("每个账户最多100个智能体".into());
     }
     let name = args["name"].as_str().unwrap_or("").trim();
     if name.is_empty() || name.chars().count() > 80 || name.chars().any(char::is_control) {
@@ -136,14 +137,27 @@ pub(crate) fn save(s: &Store, args: &Value) -> Result<Value, String> {
     }
     let skills = strings(&args["skills"])?;
     let mcp = strings(&args["mcpTools"])?;
-    if skills.iter().any(|n| {
-        !opts["skills"]
+    let previous = all.as_array().unwrap().iter().find(|p| p["id"] == supplied);
+    let mut normalized = json!({"projectId":project,"skills":skills});
+    crate::agent_skill_library::normalize(&mut normalized);
+    let skills = normalized["skills"].clone();
+    for reference in skills.as_array().unwrap() {
+        if let Some(entry) = opts["skills"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|x| x["name"] == *n)
-    }) {
-        return Err("关联技能已不存在，请刷新列表".into());
+            .find(|e| e["ref"] == *reference)
+        {
+            if entry["scope"] == "agent" && entry["profileId"] != supplied {
+                return Err("不能关联其他智能体的专属技能".into());
+            }
+        } else if !reference.as_str().is_some_and(|v| {
+            v.starts_with("project:") && !v.starts_with(&format!("project:{project}:"))
+        }) || !previous
+            .is_some_and(|p| p["skills"].as_array().unwrap().contains(reference))
+        {
+            return Err("关联技能不存在或不适用于当前项目".into());
+        }
     }
     if mcp.iter().any(|n| {
         !opts["mcpTools"]
@@ -159,7 +173,7 @@ pub(crate) fn save(s: &Store, args: &Value) -> Result<Value, String> {
     } else {
         supplied.into()
     };
-    let value = json!({"id":id,"name":name,"systemPrompt":prompt,"modelId":model,"skills":skills,"mcpTools":mcp,"projectId":project,"revision":uuid::Uuid::new_v4().to_string()});
+    let value = json!({"id":id,"name":name,"systemPrompt":prompt,"modelId":model,"skills":skills,"mcpTools":mcp,"scope":"account","projectId":project,"revision":uuid::Uuid::new_v4().to_string()});
     s.conn.execute("INSERT INTO agent_profiles(id,owner,project_id,config) VALUES (?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET config=excluded.config",params![id,owner,project,value.to_string()]).map_err(|e|e.to_string())?;
     Ok(value)
 }
@@ -167,7 +181,7 @@ pub(crate) fn choose(s: &Store, session: &str, id: &str) -> Result<(), String> {
     let all = list(s, session)?;
     idle(s, session)?;
     if !id.is_empty() && !all.as_array().unwrap().iter().any(|p| p["id"] == id) {
-        return Err("智能体不存在或不属于当前项目".into());
+        return Err("智能体不存在或不属于当前账户".into());
     }
     s.set_setting(&format!("agent_profile:{session}"), id)
 }
@@ -214,7 +228,10 @@ pub(crate) fn check_call(
     if name.starts_with("mcp_") && !includes(p, "mcpTools", name) {
         return Err("此 MCP 工具未关联到本轮智能体，未执行".into());
     }
-    if name == "load_skill" && !includes(p, "skills", args["name"].as_str().unwrap_or("")) {
+    if name == "load_skill"
+        && meta.get("skillBindings").is_none()
+        && !includes(p, "skills", args["name"].as_str().unwrap_or(""))
+    {
         return Err("此技能未关联到本轮智能体，未加载".into());
     }
     Ok(())

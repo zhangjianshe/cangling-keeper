@@ -452,6 +452,16 @@ pub(crate) async fn dispatch(
             if updated!=1{return Err("MCP 服务配置已变更，请重试".into());}core.mcp_pool.clear()?;crate::agent_mcp::list(&store)
         }
         "agent_model_config" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::config(&store)}
+        "agent_library_skill_save" | "agent_library_skill_read" => {
+            let store = core.store.lock().map_err(|e| e.to_string())?;
+            let session = text(&args, "sessionId")?;
+            require_session(&store, &session)?;
+            if command == "agent_library_skill_save" {
+                crate::agent_skill_library::save(&store, &args)
+            } else {
+                crate::agent_skill_library::read(&store, &args)
+            }
+        }
         "agent_profile_options" | "agent_profile_save" | "agent_profile_select" | "agent_profile_delete" => {
             let store=core.store.lock().map_err(|e|e.to_string())?;let session=text(&args,"sessionId")?;require_session(&store,&session)?;
             match command {

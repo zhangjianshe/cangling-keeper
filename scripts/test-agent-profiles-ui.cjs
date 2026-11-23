@@ -1,5 +1,6 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
 const dom=new JSDOM('<div class="agent-header-tools"></div>',{runScripts:'outside-only'}),w=dom.window,d=w.document;
+w.eval(fs.readFileSync('ui/agent-skill-library.js','utf8'));
 w.eval(fs.readFileSync('ui/agent-profiles.js','utf8'));
 const p={id:'p',name:'<b>Agent</b>',systemPrompt:'Be precise',modelId:'m',skills:['skill'],mcpTools:['mcp_one']};
 const agent={selected:'s',identityEpoch:0,detail:{agentProfiles:[p],agentProfile:p}},calls=[];

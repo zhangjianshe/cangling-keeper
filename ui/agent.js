@@ -17,7 +17,7 @@
   function updateMessageTimes(){for(const node of document.querySelectorAll('.agent-message-time[data-time]')){const time=Number(node.dataset.time);if(Number.isFinite(time) && time>0)node.textContent=relativeMessageTime(time);}}
   function notice(message='') {$('#agent-notice').textContent=message;$('#agent-notice').hidden=!message;}
   function sessionStorageKey(){return 'keeper-agent-session:'+(agent.ownerKey || 'guest');}
-  function titleFor(tool) {return ({update_plan:'更新任务计划',list_directory:'列出项目目录',read_file:'读取项目文件',load_skill:'加载项目技能',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
+  function titleFor(tool) {return ({update_plan:'更新任务计划',list_directory:'列出项目目录',read_file:'读取项目文件',load_skill:'加载技能',read_skill_file:'读取技能资源',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
   function sessionRow(session){
     const row=element('div','agent-session-row');
     const button=element('button','agent-session'+(session.id===agent.selected?' active':''),session.title);button.type='button';
@@ -606,7 +606,7 @@
     const header=element('summary','agent-run-summary');
     const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('fill','none');icon.setAttribute('stroke','currentColor');icon.setAttribute('stroke-width','1.7');icon.setAttribute('stroke-linecap','round');icon.setAttribute('stroke-linejoin','round');icon.setAttribute('aria-hidden','true');icon.classList.add('agent-run-icon');
     const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',['run_command','ssh_execute'].includes(run.tool)?'m5 7 5 5-5 5m8 0h6':'M9 3h6l1 4 4 1v8l-4 1-1 4H9l-1-4-4-1V8l4-1Z');icon.append(path);
-    const title=run.tool==='load_skill'?'加载项目技能 · '+(run.arguments?.name || ''):run.review?.kind==='mcp'?'MCP · '+run.review.server+' · '+run.review.tool:titleFor(run.tool);
+    const title=run.tool==='load_skill'?'加载技能 · '+(run.arguments?.name || ''):run.review?.kind==='mcp'?'MCP · '+run.review.server+' · '+run.review.tool:titleFor(run.tool);
     const toggle=element('span','agent-run-details-toggle',card.open?'收起':'详情');
     header.append(icon,element('strong','agent-run-title',title),element('span','run-state',statusNames[run.status] || run.status),toggle);card.append(header);
     card.ontoggle=()=>{toggle.textContent=card.open?'收起':'详情';};

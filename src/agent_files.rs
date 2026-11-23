@@ -23,7 +23,8 @@ pub(crate) fn title(name: &str) -> &str {
         "list_directory" => "列出项目目录",
         "read_file" => "读取项目文件",
         "search_files" => "搜索项目文件",
-        "load_skill" => "加载项目技能",
+        "load_skill" => "加载技能",
+        "read_skill_file" => "读取技能资源",
         "update_plan" => "更新任务计划",
         _ => "未知工具",
     }

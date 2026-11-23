@@ -1,0 +1,22 @@
+const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<div class="agent-header-tools"></div>',{runScripts:'outside-only'}),w=dom.window,d=w.document;
+for(const f of ['agent-skill-library.js','agent-profiles.js'])w.eval(fs.readFileSync('ui/'+f,'utf8'));
+const element=(t,c,text)=>{const e=d.createElement(t);e.className=c||'';if(text!==undefined)e.textContent=text;return e;};
+const p={id:'profile',name:'Agent',systemPrompt:'',modelId:'model',skills:['project:elsewhere:review'],mcpTools:[]};
+const agent={selected:'session',identityEpoch:0,detail:{agentProfiles:[p],agentProfile:p}},calls=[],catalog=[{id:'shared',ref:'account:shared',scope:'account',name:'same',description:'Shared'},{id:'private',ref:'agent:private',scope:'agent',profileId:'profile',name:'same',description:'Private'},{id:'other',ref:'agent:other',scope:'agent',profileId:'other-profile',name:'Other private'},{ref:'project:general:same',scope:'project',name:'same'}];
+let deferred=null;
+const invoke=async(n,a)=>{calls.push([n,a]);if(n==='agent_profile_options')return {profiles:[p],selected:p,models:[{id:'model',name:'Model',model:'test',enabled:true,hasApiKey:true}],skills:catalog,mcpTools:[]};if(n==='agent_library_skill_read'){if(deferred)return new Promise(r=>deferred=r);return {...catalog[0],revision:'rev',files:{'SKILL.md':'---\nname: same\ndescription: Shared\n---\nBody','references/demo.md':'Resource'}};}if(n==='agent_library_skill_save'){const entry={id:'created',ref:(a.scope==='agent'?'agent:':'account:')+'created',scope:a.scope,profileId:a.profileId,name:a.name};catalog.push(entry);return entry;}return {};};
+const ui=w.createKeeperProfiles({agent,invoke,element,notice:()=>{},select:async()=>{},ensureSession:async()=>{}}),tick=()=>new Promise(setImmediate);
+const btn=text=>[...d.querySelectorAll('button')].find(b=>b.textContent===text);
+(async()=>{
+ await ui.open();let checks=[...d.querySelectorAll('.profile-choice input')].map(x=>x.value);assert(checks.includes('account:shared')&&checks.includes('agent:private')&&!checks.includes('agent:other'));assert(d.body.textContent.includes('其他项目（当前不适用）'));
+ btn('＋ 专属技能').click();assert(!d.querySelector('#agent-skill-library-modal').classList.contains('hidden'));d.querySelector('#library-skill-name').value='new-skill';d.querySelector('#library-skill-description').value='Use this skill';
+ const input=d.querySelector('[aria-label="新文件路径"]');input.value='references/demo.md';btn('新建文件').click();d.querySelector('#library-skill-content').value='Reference body';
+ await d.querySelector('#agent-skill-library-modal form').onsubmit({preventDefault(){}});const payload=calls.find(([n])=>n==='agent_library_skill_save')[1];assert.equal(payload.scope,'agent');assert.equal(payload.profileId,'profile');assert.equal(payload.files['references/demo.md'],'Reference body');assert(payload.files['SKILL.md'].includes('name: "new-skill"'));assert(d.querySelector('input[value="agent:created"]').checked);assert(d.querySelector('#agent-skill-library-modal').classList.contains('hidden'));
+ // Linking remains explicit until the agent form is saved.
+ assert(!calls.some(([n])=>n==='agent_profile_save'));await d.querySelector('#agent-profiles-modal form').onsubmit({preventDefault(){}});assert(calls.find(([n])=>n==='agent_profile_save')[1].skills.includes('agent:created'));
+ await ui.open();btn('＋ 新建智能体').click();assert(btn('＋ 专属技能').disabled);assert(!d.querySelector('input[value="agent:private"]'));
+ await ui.open();const row=d.querySelector('input[value="account:shared"]').closest('label');row.querySelector('button').click();await tick();assert.equal(d.querySelector('#library-skill-name').value,'same');assert.equal(d.querySelector('[aria-label="技能文件"]').options.length,2);
+ ui.reset();await ui.open();deferred=true;d.querySelector('input[value="account:shared"]').closest('label').querySelector('button').click();await tick();agent.identityEpoch++;ui.reset();deferred({...catalog[0],revision:'rev',files:{'SKILL.md':'secret'}});await tick();assert.equal(d.querySelector('#library-skill-content').value,'');assert(d.querySelector('#agent-skill-library-modal').classList.contains('hidden'));
+ console.log('PASS skills UI: source grouping, private filtering, create files, explicit linking, edit and stale account guard');dom.window.close();
+})().catch(e=>{console.error(e);process.exitCode=1;dom.window.close();});
