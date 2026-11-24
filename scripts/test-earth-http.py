@@ -51,6 +51,13 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   call('agent_earth_import',{**args,'expectedRevision':1,'path':'bad.geojson'},400)
   imported=call('agent_earth_import',{**args,'expectedRevision':1,'path':'demo.geojson'});assert len(imported['overlays'])==1
   stop();start();assert call('agent_earth_get',args)==imported
+  # Public positioning API preserves scene and height, validates coordinates and revisions.
+  located=call('agent_earth_fly_to',{**args,'expectedRevision':imported['revision'],'longitude':120,'latitude':30})
+  assert located['camera']['height']==imported['camera']['height'] and located['overlays']==imported['overlays']
+  for extra in [{'latitude':91},{'longitude':181},{'height':0},{'accountKey':'stale'},{'expectedRevision':0}]:
+   call('agent_earth_fly_to',{**args,'expectedRevision':located['revision'],'longitude':120,'latitude':30,**extra},400)
+  assert call('agent_earth_get',args)==located
+  imported=located
   # Changing active identity cannot overwrite the previous account's scene.
   with sqlite3.connect(Path(tmp)/'data.sql') as db:
    for k,v in [('login_token','fixture'),('login_username','other'),('server_url','http://localhost')]:db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)',(k,v))

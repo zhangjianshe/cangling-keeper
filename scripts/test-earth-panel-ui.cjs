@@ -12,6 +12,8 @@ function send(frame,data,origin='http://localhost',source=frame.contentWindow){w
  send(f,{event:'ready'},'https://attacker.invalid');await flush();assert.equal(commands.length,0);
  send(f,{event:'ready'},'http://localhost',w);await flush();assert.equal(commands.length,0);
  send(f,{event:'ready'});for(let i=0;i<8;i++)await flush();assert.equal(calls.filter(c=>c[0]==='agent_earth_ack').length,1);assert.equal(calls.at(-1)[1].accountKey,'guest');
+ const located=await w.keeperEarth.flyTo({longitude:116.4,latitude:39.9,height:20000});assert.equal(located.status,'saved_not_rendered');
+ const locateCall=calls.find(c=>c[0]==='agent_earth_fly_to');assert.equal(locateCall[1].longitude,116.4);assert.equal(locateCall[1].accountKey,'guest');assert.equal(locateCall[1].projectId,'p');
  [...d.querySelectorAll('button')].find(b=>b.textContent==='对话分屏').click();assert(earth.isSplit());assert(d.querySelector('#agent-main').classList.contains('earth-chat-split'));
  assert(earth.showWithConversation('p'));assert.equal(d.querySelector('iframe'),f);assert(!earth.showWithConversation('other'));
  earth.reset();assert.equal(d.querySelector('iframe'),null);await earth.restore();assert(d.querySelector('iframe'));assert(earth.isSplit());earth.hide();await earth.restore();assert.equal(d.querySelector('iframe'),null);

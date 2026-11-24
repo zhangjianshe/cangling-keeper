@@ -102,6 +102,11 @@ pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, St
                 &json!({"expectedRevision":args["expectedRevision"],"scene":scene}),
             )
         }
+        "agent_earth_fly_to" => {
+            let mut scene = get(s, project)?;
+            set_location(&mut scene, args)?;
+            save(s, project, &json!({"expectedRevision":args["expectedRevision"],"scene":scene}))
+        }
         "agent_earth_get" => get(s, project),
         "agent_earth_save" => save(s, project, args),
         "agent_earth_ack" => {
@@ -117,10 +122,16 @@ pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, St
         _ => Err("未知地球操作".into()),
     }
 }
+fn set_location(scene: &mut Value, args: &Value) -> Result<(), String> {
+    scene["camera"]["longitude"] = args["longitude"].clone();
+    scene["camera"]["latitude"] = args["latitude"].clone();
+    if let Some(height) = args.get("height") { scene["camera"]["height"] = height.clone(); }
+    validate(scene)
+}
 pub(crate) fn definitions() -> Vec<Value> {
     let n = |min: f64, max: f64| json!({"type":"number","minimum":min,"maximum":max});
     [("earth_get_view","读取当前项目已保存地球视图、图层及浏览器最后渲染确认时间。未确认不代表地球已显示。",json!({}),json!([])),
-    ("earth_fly_to","设置项目地球定位，经纬度为WGS84度，高度为米；保存后由打开的地球页面应用。结果saved_not_rendered不是已完成渲染。",json!({"longitude":n(-180.,180.),"latitude":n(-90.,90.),"height":n(20.,100000000.)}),json!(["longitude","latitude","height"])),
+    ("earth_fly_to","设置项目地球定位，经纬度为WGS84度，高度为米，可省略以保留当前高度；保存后由打开的地球页面应用。结果saved_not_rendered不是已完成渲染。",json!({"longitude":n(-180.,180.),"latitude":n(-90.,90.),"height":n(20.,100000000.)}),json!(["longitude","latitude"])),
     ("earth_set_layer_visibility","设置行政边界boundaries、经纬网graticule或已导入图层路径的可见性。",json!({"layer":{"type":"string","maxLength":200},"visible":{"type":"boolean"}}),json!(["layer","visible"])),
     ("earth_get_selection","读取地球页面最后选择的对象/坐标，不推断未选中的地理对象。",json!({}),json!([])),
     ("earth_add_geojson_layer","从项目相对路径加载WGS84 GeoJSON，支持点线及多边形轮廓。最多500要素、5000坐标、1MiB；不执行数据内的HTML或脚本。",json!({"path":{"type":"string","minLength":1,"maxLength":200}}),json!(["path"]))]
@@ -221,7 +232,7 @@ pub(crate) fn execute(
             return Ok(json!({"selection":scene["selection"],"renderedAt":scene["renderedAt"]}));
         }
         "earth_fly_to" => {
-            scene["camera"] = json!({"longitude":args["longitude"],"latitude":args["latitude"],"height":args["height"],"tilt":0.,"heading":0.});
+            set_location(&mut scene, args)?;
         }
         "earth_set_layer_visibility" => {
             let layer = args["layer"].as_str().ok_or("缺少图层")?;

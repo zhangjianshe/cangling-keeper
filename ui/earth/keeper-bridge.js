@@ -36,3 +36,6 @@ window.addEventListener('message',async e=>{
 });
 window.addEventListener('click',e=>{if(!ready||!measuring||e.target!==document.querySelector('canvas'))return;const p=call('pick',{x:e.clientX/innerWidth,y:e.clientY/innerHeight});if(!p)return;points.push(p);if(points.length===1)return;const[a,b]=points,rad=Math.PI/180,dlat=(b.latitude-a.latitude)*rad,dlon=(b.longitude-a.longitude)*rad,h=Math.sin(dlat/2)**2+Math.cos(a.latitude*rad)*Math.cos(b.latitude*rad)*Math.sin(dlon/2)**2;report({measurement:'近似球面距离，不含地形起伏',meters:Math.round(6371008.8*2*Math.asin(Math.min(1,Math.sqrt(h)))),points});points=[];measuring=false;send('measure_finished');});
 document.addEventListener('visibilitychange',()=>{if(ready)call('pause',document.hidden);});
+
+// Double-click a terrain location to make its WGS84 coordinates available to chat.
+window.addEventListener('dblclick',e=>{if(!ready||measuring||e.target!==document.querySelector('canvas'))return;const point=call('pick',{x:e.clientX/innerWidth,y:e.clientY/innerHeight});if(point)report({type:'location',...point,selectedAt:Date.now()});});

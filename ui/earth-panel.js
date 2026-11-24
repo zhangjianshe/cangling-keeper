@@ -32,7 +32,18 @@
  function setWorkbench(){setSplit(true);document.body.classList.add('earth-workbench');remember();window.dispatchEvent(new Event('earth-layout'));}
  async function openWorkbench(value){if(project?.id===value.id&&!panel.classList.contains('hidden'))setWorkbench();else await open(value,true,true);}
  function showWithConversation(id){if(project?.id!==id||panel.classList.contains('hidden'))return false;setSplit(true);return true;}
+ async function flyTo(position){
+   if(!project||!live(sequence))throw Error('请先打开项目三维地球');
+   const t=sequence,id=project.id,accountKey=owner;
+   const current=await invoke('agent_earth_get',{projectId:id});if(!live(t))throw Error('项目已切换');
+   const next=await invoke('agent_earth_fly_to',{projectId:id,accountKey,expectedRevision:current.revision,longitude:position.longitude,latitude:position.latitude,...(position.height===undefined?{}:{height:position.height})});
+   if(!live(t))throw Error('项目已切换');await apply(next);
+   if(!live(t))throw Error('项目已切换');const confirmed=await invoke('agent_earth_get',{projectId:id});
+   if(!live(t))throw Error('项目已切换');
+   return {projectId:id,revision:next.revision,status:confirmed.renderedRevision===next.revision?'rendered':'saved_not_rendered'};
+ }
+ window.keeperEarth={flyTo,getView:async()=>{if(!project)throw Error('请先打开项目三维地球');return invoke('agent_earth_get',{projectId:project.id});}};
  document.addEventListener('visibilitychange',()=>{if(ready)request('pause',document.hidden).catch(()=>{});});
- return {open,openWorkbench,hide,restore,showWithConversation,reset:()=>hide(false),isSplit:()=>splitMode&&!!frame,projectId:()=>project?.id};
+ return {flyTo,open,openWorkbench,hide,restore,showWithConversation,reset:()=>hide(false),isSplit:()=>splitMode&&!!frame,projectId:()=>project?.id};
  };
 })();

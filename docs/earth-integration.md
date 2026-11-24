@@ -83,3 +83,31 @@
 `about:blank`，仅尝试一次读取本机 `/earth/index.html` 并以同源内联文档恢复；
 固定 base URL 指向 WebGL2 查看器，桥接仍校验来源与 iframe 窗口。
 已加载或已经就绪的地球不会被该分支重启。此分支包含在工作台 UI 回归中。
+
+## 定位接口与对话联动
+
+在打开地球的 Keeper 同源页面中调用：
+
+```javascript
+await window.keeperEarth.flyTo({longitude: 116.3913, latitude: 39.9075, height: 20000});
+const scene = await window.keeperEarth.getView();
+```
+
+坐标为 WGS84 十进制度，高度单位米；省略高度保留当前值。接口保留方向、倾角和图层。
+返回 `rendered` 仅表示本次修订已收到画面确认，瓦片仍可能加载中；否则返回 `saved_not_rendered`。
+未打开项目地球时拒绝调用。请求期间切换项目或账户后，不把旧响应应用到新项目。
+
+本机 HTTP 接口沿用 Keeper 的来源与账户校验（不新增匿名公网入口）：
+`POST /api/invoke/agent_earth_fly_to`，JSON 参数示例：
+
+```json
+{"projectId":"general","accountKey":"guest","expectedRevision":0,"longitude":116.3913,"latitude":39.9075,"height":20000}
+```
+
+`accountKey` 使用当前登录账户标识，`expectedRevision` 从 `agent_earth_get` 读取；不能固定写死。
+HTTP 保存成功并不表示页面已经渲染，读取 `renderedRevision` 核对。
+
+对话中可输入：“将地球定位到东经116.3913、北纬39.9075，观察高度20公里。”
+Agent 使用已有 `earth_fly_to`，打开的地球约1.5秒内同步；关闭时保存位置，重新打开恢复。
+地球画面双击可选取一个位置，随后在对话中输入“读取我在地球上选中的位置”，
+Agent 通过 `earth_get_selection` 获取拾取坐标。没有内置地名搜索服务，不应编造精确坐标。
