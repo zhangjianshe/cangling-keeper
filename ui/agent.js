@@ -6,7 +6,8 @@
   agent.projectBrowser=window.createKeeperProjectBrowser?.({invoke,agent,showConversation});
   const projectDirectoryButton=document.createElement('button');projectDirectoryButton.type='button';projectDirectoryButton.className='guidance-trigger';projectDirectoryButton.textContent='项目目录';projectDirectoryButton.onclick=()=>{const project=agent.projects.find(p=>p.id===(agent.detail.session?.projectId || agent.project));if(project)agent.projectBrowser?.open(project);};document.querySelector('.agent-header-tools').prepend(projectDirectoryButton);
   agent.earth=window.createKeeperEarth?.({agent,invoke,showConversation});
-  const earthButton=document.createElement('button');earthButton.type='button';earthButton.className='guidance-trigger';earthButton.textContent='三维地球';earthButton.onclick=()=>{const p=agent.projects.find(p=>p.id===(agent.detail.session?.projectId||agent.project));if(p)agent.earth.open(p);};document.querySelector('.agent-header-tools').append(earthButton);
+  const earthButton=document.createElement('button');earthButton.type='button';earthButton.className='guidance-trigger earth-normal-launcher';earthButton.textContent='三维地球';earthButton.onclick=()=>{const p=agent.projects.find(p=>p.id===(agent.detail.session?.projectId||agent.project));if(p)agent.earth.open(p);};document.querySelector('.agent-header-tools').append(earthButton);
+  agent.earthWorkbench=window.createKeeperEarthWorkbench?.({agent,invoke,select,switchProject,notice});
   window.keeperThreadNav=window.createKeeperThreadNav?.();
   const statusNames = {running:'正在执行',pending_approval:'等待确认',succeeded:'已完成',failed:'执行失败',rejected:'已取消',interrupted:'执行中断',stopped:'已停止',approved:'已确认'};
   function element(tag, cls, text) { const node=document.createElement(tag); if(cls)node.className=cls;if(text!==undefined)node.textContent=text;return node; }
@@ -107,7 +108,7 @@
   }
   async function switchProject(project){
     if(agent.drafts && !await agent.drafts.load(null))return;
-    clearTimeout(agent.timer);++agent.generation;agent.project=project;agent.selected=null;agent.detail={messages:[],runs:[]};
+    clearTimeout(agent.timer);++agent.generation;agent.project=project;localStorage.setItem('keeper-agent-project',project);localStorage.removeItem(sessionStorageKey());agent.selected=null;agent.detail={messages:[],runs:[]};
     renderProjects();renderSessions();renderConversation();showConversation();
     const session=agent.sessions.find(s=>s.projectId===project);if(session)await select(session.id);
   }

@@ -49,7 +49,7 @@
           startDataWorker();
           const { default: init, start } = await import('./pkg/cangling_desktop.js');
           await init();
-          const forced = new URLSearchParams(location.search).get('backend');
+          const forced = new URL(document.baseURI).searchParams.get('backend');
           const adapter = forced === 'webgl2' ? null :
             navigator.gpu ? await navigator.gpu.requestAdapter() : null;
           backend = adapter ? 'webgpu' : 'webgl2';

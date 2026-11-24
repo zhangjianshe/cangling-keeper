@@ -1,7 +1,8 @@
 import {keeper_command} from './pkg/cangling_desktop.js';
+const bridgeOrigin=new URL(document.baseURI).origin;
 let ready=false,applied=null,measuring=false,points=[],lastDraw='';
 const call=(method,args={})=>JSON.parse(keeper_command(method,JSON.stringify(args)));
-const send=(event,value)=>parent.postMessage({earth:true,event,value},location.origin);
+const send=(event,value)=>parent.postMessage({earth:true,event,value},bridgeOrigin);
 const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
 svg.id='business-overlay';svg.style.cssText='position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:2';document.body.append(svg);
 function report(value){send('selection',value);}
@@ -22,7 +23,7 @@ function nextFrame(callback){return new Promise((resolve,reject)=>{const timeout
 async function screenshot(){const output=document.createElement('canvas');output.width=innerWidth;output.height=innerHeight;const ctx=output.getContext('2d');await nextFrame(()=>ctx.drawImage(document.querySelector('canvas'),0,0,output.width,output.height));draw();const url=URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)],{type:'image/svg+xml'}));try{const img=new Image();await new Promise((res,rej)=>{img.onload=res;img.onerror=()=>rej(Error('无法合成业务图层'));img.src=url;});ctx.drawImage(img,0,0);return output.toDataURL('image/png');}finally{URL.revokeObjectURL(url);}}
 window.addEventListener('cangling-earth-ready',()=>{ready=true;send('ready');});
 window.addEventListener('message',async e=>{
- if(e.origin!==location.origin||e.source!==parent||!e.data?.earth||typeof e.data.id!=='string')return;
+ if(e.origin!==bridgeOrigin||e.source!==parent||!e.data?.earth||typeof e.data.id!=='string')return;
  const {id,method,args}=e.data;try{
   if(!ready)throw Error('地球尚未就绪');let result;
   if(method==='apply'){call('set_view',args.camera);call('layers',args.layers);applied=args;await nextFrame();draw();result=call('get_view');}
@@ -30,8 +31,8 @@ window.addEventListener('message',async e=>{
   else if(method==='measure'){measuring=!!args;points=[];result=true;}
   else if(method==='screenshot')result=await screenshot();
   else throw Error('不支持的地球操作');
-  parent.postMessage({earth:true,id,result},location.origin);
- }catch(error){parent.postMessage({earth:true,id,error:String(error)},location.origin);}
+  parent.postMessage({earth:true,id,result},bridgeOrigin);
+ }catch(error){parent.postMessage({earth:true,id,error:String(error)},bridgeOrigin);}
 });
 window.addEventListener('click',e=>{if(!ready||!measuring||e.target!==document.querySelector('canvas'))return;const p=call('pick',{x:e.clientX/innerWidth,y:e.clientY/innerHeight});if(!p)return;points.push(p);if(points.length===1)return;const[a,b]=points,rad=Math.PI/180,dlat=(b.latitude-a.latitude)*rad,dlon=(b.longitude-a.longitude)*rad,h=Math.sin(dlat/2)**2+Math.cos(a.latitude*rad)*Math.cos(b.latitude*rad)*Math.sin(dlon/2)**2;report({measurement:'近似球面距离，不含地形起伏',meters:Math.round(6371008.8*2*Math.asin(Math.min(1,Math.sqrt(h)))),points});points=[];measuring=false;send('measure_finished');});
 document.addEventListener('visibilitychange',()=>{if(ready)call('pause',document.hidden);});

@@ -1,0 +1,20 @@
+const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<body><main id="agent-main"><div class="agent-header-tools"></div><form id="agent-compose"><textarea id="agent-input"></textarea></form></main></body>',{url:'http://localhost',runScripts:'outside-only'}),w=dom.window,d=w.document;
+let recover;const later=w.setTimeout.bind(w);w.setTimeout=(fn,ms,...args)=>ms===1500?(recover=fn,0):later(fn,ms,...args);
+for(const file of ['earth-panel.js','earth-workbench.js'])w.eval(fs.readFileSync('ui/'+file,'utf8'));
+const agent={ownerKey:'a',identityEpoch:0,projects:[{id:'p',name:'One'},{id:'q',name:'Two'}],project:'p',detail:{session:{projectId:'p'}}};let calls=[],selected=[],resolveSearch;
+const invoke=async(name,args)=>{calls.push([name,args]);if(name==='agent_sessions'){if(resolveSearch===true)return new Promise(r=>resolveSearch=r);return {items:[{id:'s',projectId:'p',title:'First'},{id:'t',projectId:'q',title:'Second'}],hasMore:false};}return {revision:0,camera:{},layers:{},overlays:[]};};
+agent.earth=w.createKeeperEarth({agent,invoke,showConversation(){}});
+w.createKeeperEarthWorkbench({agent,invoke,select:async id=>{selected.push(id);agent.detail.session.projectId=id==='s'?'p':'q';return true;},switchProject:async id=>{agent.project=id;},notice:e=>{throw Error(e);}});
+const flush=()=>new Promise(r=>setTimeout(r,0));
+(async()=>{
+ await agent.earth.openWorkbench(agent.projects[0]);assert(d.body.classList.contains('earth-workbench'));const frame=d.querySelector('iframe');assert(frame);assert(!d.querySelector('#agent-main').classList.contains('hidden'));
+ Object.defineProperty(frame.contentDocument,'URL',{value:'about:blank',configurable:true});w.fetch=async()=>({ok:true,text:async()=>fs.readFileSync('ui/earth/index.html','utf8')});await recover();assert(frame.srcdoc.includes('<base href="http://localhost/earth/index.html?backend=webgl2">'));assert(frame.srcdoc.includes('new URL(document.baseURI).searchParams'));
+ agent.earth.showWithConversation('p');assert.equal(d.querySelector('iframe'),frame);
+ const input=d.querySelector('#agent-input');input.value='/projects';input.dispatchEvent(new w.Event('input'));await flush();assert(!d.querySelector('.earth-project-picker').hidden);assert.equal(calls.filter(c=>c[0]==='agent_sessions').length,1);
+ const search=d.querySelector('.earth-project-picker input');search.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true}));assert(d.querySelector('.earth-project-picker').hidden);
+ const enter=new w.KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true});input.dispatchEvent(enter);assert(enter.defaultPrevented);await flush();d.querySelectorAll('.earth-session-result')[1].click();await flush();await flush();assert.deepEqual(selected,['t']);assert.equal(agent.project,'q');assert.equal(input.value,'');assert(d.body.classList.contains('earth-workbench'));
+ const beforeWidth=d.querySelector('#agent-main').style.width;d.querySelector('.earth-chat-grip button:last-child').click();assert(d.body.classList.contains('earth-chat-collapsed'));agent.earth.reset();await agent.earth.restore();assert(d.body.classList.contains('earth-workbench'));assert(d.body.classList.contains('earth-chat-collapsed'));assert.equal(d.querySelector('#agent-main').style.width,beforeWidth);d.querySelector('.earth-chat-reopen').click();assert(!d.body.classList.contains('earth-chat-collapsed'));
+ resolveSearch=true;d.querySelector('.earth-chat-grip button').click();await flush();agent.identityEpoch++;agent.earth.reset();agent.ownerKey='b';resolveSearch({items:[{id:'old',projectId:'p',title:'Private'}]});await flush();assert(d.querySelector('.earth-project-picker').hidden);await agent.earth.restore();assert(!d.body.classList.contains('earth-workbench'));assert(!d.querySelector('iframe'));
+ dom.window.close();console.log('PASS workbench: command interception, query, cross-project switch, layout restore, collapse and account isolation');
+})().catch(e=>{console.error(e);dom.window.close();process.exitCode=1;});
