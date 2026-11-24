@@ -656,7 +656,7 @@
     try{
       const context=agent.approvalAudio;if(!context || context.state!=='running')return;
       const oscillator=context.createOscillator(),gain=context.createGain();oscillator.connect(gain);gain.connect(context.destination);
-      oscillator.frequency.value=660;gain.gain.setValueAtTime(0.035,context.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,context.currentTime+0.18);oscillator.start();oscillator.stop(context.currentTime+0.2);
+      const now=context.currentTime;oscillator.frequency.setValueAtTime(660,now);oscillator.frequency.setValueAtTime(880,now+0.18);gain.gain.setValueAtTime(0.001,now);gain.gain.linearRampToValueAtTime(0.14,now+0.015);gain.gain.setValueAtTime(0.14,now+0.28);gain.gain.exponentialRampToValueAtTime(0.001,now+0.48);oscillator.start(now);oscillator.stop(now+0.5);
     }catch{}
   }
   // Browsers require a user gesture before audio can play. No sound is attempted at page load.
