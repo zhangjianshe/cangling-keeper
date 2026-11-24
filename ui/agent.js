@@ -432,7 +432,7 @@
   }
   function renderPending(container){
     const readonly=!!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);
-    for(const button of container.querySelectorAll('.agent-regenerate'))button.disabled=readonly || !!agent.detail.modelPending || !!agent.regenerating || button.dataset.available!=='true';
+    for(const button of container.querySelectorAll('.agent-regenerate')){button.hidden=!!agent.detail.modelPending || !!agent.regenerating || !!agent.sending;button.disabled=readonly || button.hidden || button.dataset.available!=='true';}
     $('#agent-send').disabled=readonly || agent.sending || !!agent.detail.modelPending;
     $('#agent-send').hidden=!!agent.detail.modelPending;$('#agent-stop').hidden=!agent.detail.modelPending;
     $('#agent-stop').disabled=!!agent.stopping || !!agent.detail.stopRequested;
