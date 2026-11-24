@@ -18,7 +18,7 @@ const button=block.querySelector('button');button.click();
  w.keeperMarkdown.render(body,'```python\nprint("你好');assert.equal(body.querySelector('code').textContent,'print("你好\n');assert.ok(body.querySelector('.agent-code-copy'));
  w.keeperMarkdown.render(body,'```python\nprint("你好")\n```');assert.equal(body.querySelector('code').textContent,'print("你好")\n');assert.ok(body.querySelector('.hljs-string'));
  const malicious='<script>window.pwned=1</script>\n\n<img src="https://example.com/track" onerror="window.pwned=1">\n\n[bad](javascript:alert(1))\n\n[bad-data](data:text/html,test)\n\n<svg onload="alert(1)"></svg>\n\n```html\n<script>alert(1)</script>\n```';
- w.keeperMarkdown.render(body,malicious);assert.equal(body.querySelectorAll('script,img,svg,iframe,style,form').length,0);assert.equal(body.querySelectorAll('[onerror],[onload]').length,0);for(const a of body.querySelectorAll('a'))assert.ok(!a.getAttribute('href'));assert.equal(body.querySelector('code').textContent,'<script>alert(1)</script>\n');
+ w.keeperMarkdown.render(body,malicious);assert.equal(body.querySelectorAll('script,img,svg:not(.agent-copy-icon),iframe,style,form').length,0);assert.equal(body.querySelectorAll('[onerror],[onload]').length,0);for(const a of body.querySelectorAll('a'))assert.ok(!a.getAttribute('href'));assert.equal(body.querySelector('code').textContent,'<script>alert(1)</script>\n');
  w.keeperMarkdown.render(body,'**用户文字**',false);assert.equal(body.textContent,'**用户文字**');assert.equal(body.querySelector('strong'),null);
 
  w.keeperMarkdown.render(body,fs.readFileSync(path.join(root,'scripts/fixtures/math.md'),'utf8'));

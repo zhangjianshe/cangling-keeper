@@ -462,3 +462,5 @@
 .earth-project-section>.earth-session-result{display:block;width:100%;padding-left:24px}
 .earth-workbench .earth-workbench-launcher,.earth-workbench .earth-normal-launcher,.earth-workbench .agent-model-badge{display:none}
 .earth-workbench .agent-header{flex-wrap:wrap;min-height:44px;max-height:none;overflow:visible}.earth-workbench .agent-header-tools{flex-wrap:wrap;overflow:visible;min-width:0}.earth-workbench .agent-title-button{max-width:140px;flex-shrink:0}
+
+.agent-code-copy{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:5px;flex:none}.agent-copy-icon{width:18px;height:18px}.agent-code-copy[data-state="copied"]{color:#278348}.agent-code-copy[data-state="failed"]{color:#bd4141}

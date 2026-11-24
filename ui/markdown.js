@@ -53,8 +53,14 @@
     const wrapper=document.createElement('div');wrapper.className='agent-code-block';
     const header=document.createElement('div');header.className='agent-code-header';
     const label=document.createElement('span');label.textContent=detected || '纯文本';
-    const button=document.createElement('button');button.type='button';button.className='agent-code-copy';button.textContent='复制代码';button.setAttribute('aria-label','复制'+(detected?' '+detected:'')+'代码');
-    button.onclick=async()=>{button.disabled=true;try{await copy(source);button.textContent='已复制';}catch(_){button.textContent='复制失败，请手动选择';}finally{button.disabled=false;setTimeout(()=>{button.textContent='复制代码';},1800);}};
+    const button=document.createElement('button');button.type='button';button.className='agent-code-copy';
+    const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    for(const [name,value] of Object.entries({class:'agent-copy-icon',viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))icon.setAttribute(name,value);
+    const shape=document.createElementNS(icon.namespaceURI,'path');icon.append(shape);
+    const feedback=document.createElement('span');feedback.className='sr-only';feedback.setAttribute('aria-live','polite');button.append(icon,feedback);
+    const setState=state=>{const text=state==='copied'?'已复制':state==='failed'?'复制失败，请手动选择':'复制代码';button.title=text;button.setAttribute('aria-label',text);feedback.textContent=text;button.dataset.state=state;shape.setAttribute('d',state==='copied'?'m5 12 4 4L19 6':state==='failed'?'m6 6 12 12M6 18 18 6':'M9 8V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1h-4M4 8h10a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z');};
+    setState('copy');
+    button.onclick=async()=>{button.disabled=true;try{await copy(source);setState('copied');}catch(_){setState('failed');}finally{button.disabled=false;setTimeout(()=>setState('copy'),1800);}};
     header.append(label,button);wrapper.append(header);wrapper._pre=pre;
     if(previous)pre.scrollLeft=previous.node.querySelector('pre')?.scrollLeft || 0;
     wrapper._codeSnapshot={source,language,node:wrapper};return wrapper;
