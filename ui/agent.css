@@ -483,3 +483,5 @@
 .agent-approval-dock button.approve{color:white;background:#27863c;border-color:#27863c}
 .agent-approval-dock button:disabled{opacity:.5;cursor:default}
 .agent-approval-dock .agent-run[open]{max-height:22vh;overflow:auto}
+
+.keeper-earth{position:relative}.earth-layer-panel{position:absolute;z-index:5;top:70px;right:12px;width:min(420px,calc(100% - 24px));max-height:calc(100% - 90px);overflow:auto;background:#fff;border:1px solid #dbe4f0;border-radius:8px;padding:12px;box-shadow:0 8px 24px #0002;box-sizing:border-box}.earth-layer-panel header{display:flex;align-items:center;gap:8px;margin-bottom:10px}.earth-layer-panel header strong{flex:1}.earth-layer-list{display:flex;flex-direction:column;gap:2px}.earth-layer-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #edf0f4}.earth-layer-row>span{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.earth-layer-panel .hint{font-size:12px}.earth-layer-panel .btn{padding:5px 9px;font-size:13px}.earth-workbench .earth-toolbar .earth-layers-toggle{display:inline-flex}

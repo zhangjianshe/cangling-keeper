@@ -28,3 +28,5 @@ document.addEventListener('visibilitychange',()=>{if(ready)call('pause',document
 window.addEventListener('dblclick',e=>{if(!ready||measuring||e.target!==document.querySelector('canvas'))return;const point=call('pick',{x:e.clientX/innerWidth,y:e.clientY/innerHeight});if(point)report({type:'location',...point,selectedAt:Date.now()});});
 
 window.addEventListener('click',e=>{if(!ready||measuring||e.target!==document.querySelector('canvas'))return;const selected=call('vector_pick',{x:e.clientX/innerWidth,y:e.clientY/innerHeight});if(selected){selected.selectedAt=Date.now();report(selected);}});
+
+window.addEventListener('keydown',e=>{if(!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.repeat&&e.key.toLowerCase()==='l'){e.preventDefault();e.stopImmediatePropagation();send('layers_toggle');}},true);
