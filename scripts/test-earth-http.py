@@ -3,13 +3,22 @@
 import json,os,tempfile,subprocess,socket,sqlite3,time,urllib.request,urllib.error,threading,http.server
 from pathlib import Path
 calls=[]
+import hashlib
+skill_text=Path('skills/earth-workbench/SKILL.md').read_text()
+skill_sha=hashlib.sha256(skill_text.encode()).hexdigest();skill_steps=[];offset=0
+while offset<len(skill_text):
+ skill_steps.append(('load_skill',{'name':'system:earth-workbench','offset':offset,**({'expectedSha256':skill_sha} if offset else {})}))
+ size=0;end=offset
+ while end<len(skill_text) and size+len(skill_text[end].encode())<=2200:size+=len(skill_text[end].encode());end+=1
+ offset=end
+
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));calls.append(body)
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   count=sum(m['role']=='tool' for m in body['messages'])
-  actions=[('earth_publish_image',{'path':'overlay.png'}),('earth_add_image_layer',{'path':'overlay.png','polygon':[[120,30],[121,30],[121,31],[120,31]]}),('earth_fly_to',{'longitude':116.4,'latitude':39.9,'height':1000000}),('earth_add_geojson_layer',{'path':'demo.geojson'}),('earth_get_view',{}),('earth_get_selection',{}),('earth_set_layer_visibility',{'layer':'graticule','visible':True})]
+  actions=skill_steps+[('earth_publish_image',{'path':'overlay.png'}),('earth_add_image_layer',{'path':'overlay.png','polygon':[[120,30],[121,30],[121,31],[120,31]]}),('earth_fly_to',{'longitude':116.4,'latitude':39.9,'height':1000000}),('earth_add_geojson_layer',{'path':'demo.geojson'}),('earth_get_view',{}),('earth_get_selection',{}),('earth_set_layer_visibility',{'layer':'graticule','visible':True})]
   if count<len(actions):
    name,args=actions[count];delta={'tool_calls':[{'index':0,'id':'earth'+str(count),'type':'function','function':{'name':name,'arguments':json.dumps(args)}}]};reason='tool_calls'
   else:delta={'content':'场景已保存，等待浏览器渲染确认。'};reason='stop'
@@ -91,9 +100,13 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
    if not detail['modelPending']:break
    time.sleep(.05)
   assert detail['tasks'][-1]['status']=='complete',detail['tasks']
-  assert len(detail['runs'])==7 and all(r['status']=='succeeded' for r in detail['runs']),detail['runs']
+  assert len(detail['runs'])==7+len(skill_steps) and all(r['status']=='succeeded' for r in detail['runs']),detail['runs']
   result=call('agent_earth_get',args);assert result['camera']['longitude']==116.4 and result['layers']['graticule'] and result['renderedRevision'] is None
-  assert len(calls)==8
+  assert len(calls)==8+len(skill_steps)
+  loaded=[json.loads(r['output']) for r in detail['runs'] if r['tool']=='load_skill'][0]
+  assert loaded['scope']=='system' and loaded['instructions'] and loaded['nextOffset']>0
+  pages=[json.loads(r['output']) for r in detail['runs'] if r['tool']=='load_skill']
+  assert ''.join(p['instructions'] for p in sorted(pages,key=lambda p:p['offset']))==skill_text
   tool_text=[m['content'] for r in calls for m in r['messages'] if m['role']=='tool'];assert any('saved_not_rendered' in t for t in tool_text)
   with urllib.request.urlopen(base+'/earth/pkg/cangling_desktop_bg.wasm') as r:assert r.headers['Content-Type'].startswith('application/wasm') and r.read(4)==b'\x00asm'
   print('PASS Earth: restart persistence, revisions, account isolation, traversal/symlinks, invalid coordinates, seven tools through ReAct, image publication/download, WASM MIME')

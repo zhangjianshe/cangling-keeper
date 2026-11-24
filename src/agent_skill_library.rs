@@ -50,9 +50,12 @@ pub(crate) fn managed(s: &Store) -> Result<Vec<Value>, String> {
     let mut q=s.conn.prepare("SELECT id,profile_id,name,description,revision FROM agent_skill_library WHERE owner=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
     q.query_map([owner],|r|{let id:String=r.get(0)?;let profile:String=r.get(1)?;let scope=if profile.is_empty(){"account"}else{"agent"};Ok(json!({"id":id,"ref":format!("{scope}:{id}"),"scope":scope,"profileId":profile,"name":r.get::<_,String>(2)?,"description":r.get::<_,String>(3)?,"revision":r.get::<_,String>(4)?}))}).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
 }
+const EARTH_SKILL:&str=include_str!("../skills/earth-workbench/SKILL.md");
+fn builtin()->Value{json!({"id":"system-earth-workbench","ref":"system:earth-workbench","scope":"system","name":"earth-workbench","description":"地球定位、项目图片和GeoJSON原生叠加、选中要素、图片下载与渲染核验","revision":format!("{:x}",Sha256::digest(EARTH_SKILL.as_bytes())),"readonly":true})}
 pub(crate) fn catalog(s: &Store, session: &str, guidance: &Value) -> Result<Vec<Value>, String> {
     let project = project(s, session)?;
-    let mut out = managed(s)?;
+    let mut out = vec![builtin()];
+    out.extend(managed(s)?);
     for entry in guidance["skills"].as_array().into_iter().flatten() {
         let mut e = entry.clone();
         e["ref"] = json!(format!(
@@ -184,6 +187,8 @@ fn check_path(p: &str) -> Result<(), String> {
     Ok(())
 }
 fn files(s: &Store, entry: &Value, revision: &str) -> Result<Value, String> {
+    if entry["scope"]=="system" {let current=builtin();if entry["ref"]!=current["ref"]||revision!=current["revision"].as_str().unwrap(){return Err("系统技能版本已变化，请发起新回复".into());}return Ok(json!({"SKILL.md":EARTH_SKILL}));}
+
     let raw: String = s
         .conn
         .query_row(
@@ -354,7 +359,7 @@ pub(crate) fn load(
         return Ok(result);
     }
     let allowed = managed(s)?
-        .into_iter()
+        .into_iter().chain(std::iter::once(builtin()))
         .find(|e| e["id"] == entry["id"] && e["ref"] == entry["ref"])
         .ok_or("技能不属于当前账户")?;
     if allowed["scope"] == "agent" && allowed["profileId"] != metadata["agentProfile"]["id"] {

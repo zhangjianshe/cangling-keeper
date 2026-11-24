@@ -57,10 +57,10 @@
   shared.onclick=()=>{if(options)library.open({sessionId:session,scope:'account'});};
   privateSkill.onclick=()=>{if(current)library.open({sessionId:session,scope:'agent',profileId:current});};
   function skillChoices(selected){
-   const labels={account:'账户共享',agent:'智能体专属',project:'当前项目'};
+   const labels={system:'系统内置',account:'账户共享',agent:'智能体专属',project:'当前项目'};
    const items=options.skills.filter(x=>x.scope!=='agent'||x.profileId===current);
    choices(skills,'关联 Skills（勾选已有技能）',items.map(x=>({id:x.ref||x.name,name:(labels[x.scope]?'['+labels[x.scope]+'] ':'')+x.name,description:x.description})),selected);
-   for(const row of skills.querySelectorAll('.profile-choice')){const ref=row.querySelector('input').value,entry=items.find(x=>(x.ref||x.name)===ref);if(entry&&entry.scope!=='project'&&entry.id){const edit=element('button','btn','编辑');edit.type='button';edit.onclick=e=>{e.preventDefault();library.open({sessionId:session,id:entry.id});};row.append(edit);}}
+   for(const row of skills.querySelectorAll('.profile-choice')){const ref=row.querySelector('input').value,entry=items.find(x=>(x.ref||x.name)===ref);if(entry&&entry.scope!=='project'&&entry.scope!=='system'&&entry.id){const edit=element('button','btn','编辑');edit.type='button';edit.onclick=e=>{e.preventDefault();library.open({sessionId:session,id:entry.id});};row.append(edit);}}
    privateSkill.disabled=!current;privateSkill.title=current?'为此智能体创建专属技能':'先保存智能体，再创建专属技能';
   }
   const valid=()=>session===agent.selected&&epoch===(agent.identityEpoch||0)&&!modal.classList.contains('hidden');

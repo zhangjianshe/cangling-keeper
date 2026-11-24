@@ -434,6 +434,7 @@ pub(crate) fn prompt(snapshot: &Value) -> String {
                 && !name.starts_with("project:")
                 && !name.starts_with("account:")
                 && !name.starts_with("agent:")
+                && !name.starts_with("system:")
             {
                 continue;
             }
@@ -461,7 +462,7 @@ pub(crate) fn prompt(snapshot: &Value) -> String {
 }
 
 pub(crate) fn definition() -> Value {
-    json!({"type":"function","function":{"name":"load_skill","description":"按需读取本轮技能目录中 name 标识对应的技能正文（项目、账户共享或智能体专属）。关联资源文件使用 read_skill_file，项目资源使用 read_file。只读取不执行脚本或更改权限；一次最多约2200字节，用 nextOffset 续读并带 expectedSha256 防止混合不同文件版本。","parameters":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":200},"offset":{"type":"integer","minimum":0,"description":"正文的字符偏移，使用上一页 nextOffset；不是字节偏移。"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64,"description":"后续页填写首个响应中的 sha256，拒绝混合文件版本。"}},"required":["name"],"additionalProperties":false}}})
+    json!({"type":"function","function":{"name":"load_skill","description":"按需读取本轮技能目录中 name 标识对应的技能正文（系统内置、项目、账户共享或智能体专属）。关联资源文件使用 read_skill_file，项目资源使用 read_file。只读取不执行脚本或更改权限；一次最多约2200字节，用 nextOffset 续读并带 expectedSha256 防止混合不同文件版本。","parameters":{"type":"object","properties":{"name":{"type":"string","minLength":1,"maxLength":200},"offset":{"type":"integer","minimum":0,"description":"正文的字符偏移，使用上一页 nextOffset；不是字节偏移。"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64,"description":"后续页填写首个响应中的 sha256，拒绝混合文件版本。"}},"required":["name"],"additionalProperties":false}}})
 }
 /// Read one character-offset page of skill body; frontmatter is metadata only.
 pub(crate) fn load(root: &Dir, args: &Value, cancel: Arc<AtomicBool>) -> Result<Value, String> {
