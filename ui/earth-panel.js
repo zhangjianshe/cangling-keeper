@@ -2,6 +2,8 @@
  window.createKeeperEarth=({agent,invoke,showConversation})=>{
  const node=(t,c,text)=>{const e=document.createElement(t);e.className=c||'';if(text!==undefined)e.textContent=text;return e;};
  const panel=node('section','keeper-earth hidden'),bar=node('header','earth-toolbar'),title=node('strong','','三维地球'),status=node('span','hint'),split=node('button','btn','对话分屏'),close=node('button','btn','返回会话');for(const b of [split,close])b.type='button';bar.append(title,status,split,close);panel.append(bar);document.querySelector('#agent-main').after(panel);
+ const detached=node('button','btn','地球新标签页');detached.type='button';detached.hidden=!!agent.detachedEarth;bar.insertBefore(detached,close);
+ detached.onclick=()=>{if(!project)return;const url=new URL('/earth-window.html',location.origin);url.searchParams.set('project',project.id);url.searchParams.set('account',owner||'guest');window.open(url.href,'_blank','noopener');hide();showConversation();};
  let frame=null,project=null,owner=null,epoch=0,sequence=0,applySequence=0,ready=false,timer=null,polling=false,scene=null,view='',splitMode=false;const pending=new Map();
  const live=t=>t===sequence&&epoch===(agent.identityEpoch||0)&&!panel.classList.contains('hidden');
  function request(method,args={}){return new Promise((resolve,reject)=>{if(!frame||!ready)return reject(Error('地球正在初始化'));const id=crypto.randomUUID(),timeout=setTimeout(()=>{pending.delete(id);reject(Error('地球响应超时'));},10000);pending.set(id,{resolve,reject,timeout});frame.contentWindow.postMessage({earth:true,id,method,args},location.origin);});}
