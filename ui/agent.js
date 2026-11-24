@@ -447,6 +447,7 @@
     let status=container.querySelector('.agent-stream-status');
     if(agent.detail.modelPending){if(!status){status=element('div','agent-message-label agent-stream-status');status.setAttribute('role','status');container.append(status);}const task=agent.detail.tasks?.find(t=>t.responseId===agent.detail.streamingMessageId);status.textContent=agent.detail.stopRequested?'正在停止生成…':agent.detail.messages.find(m=>m.id===agent.detail.streamingMessageId)?.modelMetadata?.context?.status==='compressing'?'正在整理上下文…':task?.status==='approval'?`等待你确认操作 · 第 ${task.step} 轮`:task?.status==='tool'?`正在执行工具 · 第 ${task.step} 轮`:`模型正在生成…${task?.step?' · 第 '+task.step+' 轮':''}`;}
     else status?.remove();
+    renderApprovalDock();
     agent.history?.updateDetail();agent.guidance?.update();agent.profiles?.update();agent.attachments?.render();agent.runExperience?.tick();
   }
   async function saveEditedMessage(entry){
@@ -627,6 +628,41 @@
     catch(error){notice(String(error));}finally{agent.reviewing.delete(run.id);if(agent.selected===session)renderConversation();}
   }
   setInterval(updateMessageTimes,30000);
+  function renderApprovalDock(){
+    const compose=$('#agent-compose');if(!compose)return;
+    let dock=$('#agent-approval-dock');
+    const readonly=!!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);
+    const runs=readonly?[]:(agent.detail.runs || []).filter(r=>r.status==='pending_approval');
+    if(!runs.length){dock?.remove();return;}
+    if(!dock){dock=element('section','agent-approval-dock');dock.id='agent-approval-dock';dock.setAttribute('aria-label','待批准操作');compose.prepend(dock);}
+    const signature=JSON.stringify([agent.selected,agent.identityEpoch,runs.map(r=>[r.id,r.review?.hash,agent.reviewing?.has(r.id)]),agent.stopping,agent.detail.stopRequested]);
+    if(dock.dataset.signature===signature)return;dock.dataset.signature=signature;dock.replaceChildren();
+    const header=element('div','agent-approval-dock-header');header.append(element('strong','','等待批准 · '+runs.length+' 项'));
+    const sound=element('button','btn','');sound.type='button';
+    const muted=()=>{try{return localStorage.getItem('keeper-approval-muted')==='true';}catch{return false;}};
+    const soundLabel=()=>{sound.textContent=muted()?'提示音：关':'提示音：开';sound.setAttribute('aria-pressed',String(!muted()));};soundLabel();
+    sound.onclick=()=>{try{localStorage.setItem('keeper-approval-muted',String(!muted()));}catch{}soundLabel();if(!muted())approvalTone();};header.append(sound);dock.append(header);
+    for(const run of runs){
+      const item=element('div','agent-approval-dock-item'),card=runCard(run);card.open=false;
+      const actions=card.querySelector('.agent-review-actions,.agent-run-actions');
+      if(actions){actions.dataset.reviewRun=run.id;for(const b of actions.querySelectorAll('button')){b.disabled=!!agent.reviewing?.has(run.id) || !!agent.stopping || !!agent.detail.stopRequested;const click=b.onclick;b.onclick=()=>{for(const button of actions.querySelectorAll('button'))button.disabled=true;click?.();};}}
+      item.append(card);if(actions)item.append(actions);dock.append(item);
+      const key='keeper-approval-notified:'+run.id;agent.approvalNotified ||= new Set();
+      let seen=agent.approvalNotified.has(run.id);try{seen ||= sessionStorage.getItem(key)==='1';}catch{}
+      if(!seen){agent.approvalNotified.add(run.id);try{sessionStorage.setItem(key,'1');}catch{}if(!muted())approvalTone();}
+    }
+  }
+  function approvalTone(){
+    try{
+      const context=agent.approvalAudio;if(!context || context.state!=='running')return;
+      const oscillator=context.createOscillator(),gain=context.createGain();oscillator.connect(gain);gain.connect(context.destination);
+      oscillator.frequency.value=660;gain.gain.setValueAtTime(0.035,context.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,context.currentTime+0.18);oscillator.start();oscillator.stop(context.currentTime+0.2);
+    }catch{}
+  }
+  // Browsers require a user gesture before audio can play. No sound is attempted at page load.
+  function unlockApprovalAudio(){try{const Audio=window.AudioContext || window.webkitAudioContext;if(Audio){agent.approvalAudio ||= new Audio();if(agent.approvalAudio.state==='suspended')agent.approvalAudio.resume().catch(()=>{});}}catch{}}
+  document.addEventListener('pointerdown',unlockApprovalAudio,{passive:true});
+  document.addEventListener('keydown',unlockApprovalAudio,{passive:true});
   function isSkillPreparation(run){
     // Never hide failures, pending approvals, writes, or executed scripts.
     if(run.status!=='succeeded')return false;

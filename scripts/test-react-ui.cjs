@@ -47,6 +47,7 @@ context.agent.detail.modelPending=false;context.renderPending(document.querySele
 assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(document.querySelector('.agent-stream-status'),null);
 (async()=>{
  const captured=[];context.invoke=async(name,args)=>{captured.push({name,args});};context.select=async()=>{};
+ let tones=0;context.approvalTone=()=>tones++;
  const current=context.agent.detail.runs.find(r=>r.id==='new-run');current.status='pending_approval';current.review={kind:'file',hash:'immutable-review',path:'README.md',newFile:false,changeSummary:{addedLines:1,removedLines:1},diff:'--- README.md\n+++ README.md\n-old\n+<script>new</script>\n'};
  context.agent.detail.modelPending=true;context.agent.detail.tasks[0].status='approval';context.renderConversation();assert.match(document.querySelector('#agent-messages').textContent,/新增 1 行 · 删除 1 行/);
  assert.match(document.querySelector('.agent-stream-status').textContent,/等待你确认/);
@@ -55,6 +56,10 @@ assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(doc
  assert.equal(context.runCard(JSON.parse(JSON.stringify(current))).open,true,'approval snapshot restores expanded controls');
  assert.equal(context.runCard({id:'ssh-review',tool:'ssh_execute',arguments:{},status:'pending_approval'}).open,true,'manual command approval also remains visible');
 
+ assert.equal(tones,1,'new approval notifies once');context.renderConversation();assert.equal(tones,1,'rerender does not repeat sound');
+ assert.ok(document.querySelector('#agent-compose #agent-approval-dock'),'approval dock lives in composer');
+ assert.equal(document.querySelectorAll('#agent-approval-dock .agent-review-actions button').length,2);
+ assert.equal(document.querySelector('#agent-approval-dock details').open,false,'details available without pushing actions offscreen');
  assert.equal(document.querySelector('.agent-file-diff script'),null,'diff is text, never HTML');
  assert.match(document.querySelector('.agent-file-diff').textContent,/\+<script>new/);assert.equal(captured.length,0,'rendering never authorizes execution');
  await context.reviewAgentTool(current,true);assert.equal(captured[0].name,'agent_review_tool');assert.equal(captured[0].args.reviewHash,'immutable-review');assert.equal(captured[0].args.approved,true);assert.equal(captured[0].args.sessionId,'session');
@@ -62,5 +67,6 @@ assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(doc
  assert.equal(document.querySelector('.agent-command-preview').textContent,current.review.command);assert.equal(document.querySelector('.agent-command-preview img'),null);
  await context.reviewAgentTool(current,false);assert.equal(captured[1].args.approved,false);
  context.agent.detail.stopRequested=true;context.renderPending(document.querySelector('#agent-messages'));assert.ok([...document.querySelectorAll('.agent-review-actions button')].every(b=>b.disabled));await context.reviewAgentTool(current,true);assert.equal(captured.length,2,'stop blocks stale approval');
+ context.agent.detail.runs=[];context.renderPending(document.querySelector('#agent-messages'));assert.equal(document.querySelector('#agent-approval-dock'),null,'resolved or account-cleared approvals disappear');
  dom.window.close();console.log('Agent UI checks passed: version isolation, live updates, snapshot restore, stop, safe file diff/command previews and explicit hash-bound review decisions.');
 })().catch(error=>{console.error(error);dom.window.close();process.exitCode=1;});
