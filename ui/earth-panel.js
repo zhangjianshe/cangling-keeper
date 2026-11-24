@@ -44,7 +44,12 @@
    if(!live(t))throw Error('项目已切换');
    return {projectId:id,revision:next.revision,status:confirmed.renderedRevision===next.revision?'rendered':'saved_not_rendered'};
  }
- window.keeperEarth={flyTo,getView:async()=>{if(!project)throw Error('请先打开项目三维地球');return invoke('agent_earth_get',{projectId:project.id});}};
+ async function addImageLayer({path,polygon}){
+   if(!project||!live(sequence))throw Error('请先打开项目三维地球');const t=sequence,id=project.id;
+   const current=await invoke('agent_earth_get',{projectId:id});if(!live(t))throw Error('项目已切换');
+   const next=await invoke('agent_earth_add_image',{accountKey:owner,projectId:id,expectedRevision:current.revision,path,polygon});if(!live(t))throw Error('项目已切换');await apply(next);return next;
+ }
+ window.keeperEarth={flyTo,addImageLayer,getView:async()=>{if(!project)throw Error('请先打开项目三维地球');return invoke('agent_earth_get',{projectId:project.id});}};
  document.addEventListener('visibilitychange',()=>{if(ready)request('pause',document.hidden).catch(()=>{});});
  return {flyTo,open,openWorkbench,hide,restore,showWithConversation,reset:()=>hide(false),isSplit:()=>splitMode&&!!frame,projectId:()=>project?.id};
  };

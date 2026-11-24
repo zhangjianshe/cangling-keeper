@@ -390,7 +390,7 @@ pub(crate) async fn dispatch(
     sink: Arc<dyn crate::EventSink>,
 ) -> Result<Value, String> {
     match command {
-        "agent_earth_get"|"agent_earth_save"|"agent_earth_ack"|"agent_earth_import"|"agent_earth_fly_to"=>{let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_earth::invoke(&store,command,&args)},
+        "agent_earth_get"|"agent_earth_save"|"agent_earth_ack"|"agent_earth_import"|"agent_earth_fly_to"|"agent_earth_publish_image"|"agent_earth_add_image"=>{let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_earth::invoke(&store,command,&args)},
         "agent_undo_file_change" => {
             let run=text(&args,"runId")?;
             let store=core.store.lock().map_err(|e|e.to_string())?;

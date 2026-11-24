@@ -147,6 +147,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
     let app = Router::new()
         .route("/api/health", get(|| async { Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id() })) }))
         .route("/api/events", get(events_socket))
+        .route("/api/earth/images/{id}",get(earth_image))
         .route("/api/history/restore",post(restore_history).layer(DefaultBodyLimit::max(32*1024*1024)))
         .route("/api/attachments/upload",post(upload_attachment).layer(DefaultBodyLimit::max(6*1024*1024)))
         .route("/api/invoke/{command}", post(invoke))
@@ -186,6 +187,16 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
     crate::agent_actions::shutdown();
     crate::sync_process::shutdown();
     result
+}
+
+async fn earth_image(ConnectInfo(peer):ConnectInfo<SocketAddr>,headers:HeaderMap,State(state):State<WebState>,AxumPath(id):AxumPath<String>,uri:Uri)->Response {
+    if authorize_root_install(peer,&headers).is_err() || headers.get("sec-fetch-site").and_then(|v|v.to_str().ok()).is_some_and(|v|!matches!(v,"same-origin"|"none")) {return StatusCode::FORBIDDEN.into_response();}
+    let result=state.core.store.lock().map_err(|_|"存储不可用".to_string()).and_then(|s|crate::agent_earth::image_data(&s,&id));
+    match result {Ok((mime,bytes))=>{
+        let extension=match mime.as_str(){"image/png"=>"png","image/jpeg"=>"jpg",_=>"webp"};
+        let disposition=if uri.query()==Some("download=1"){format!("attachment; filename=\"image.{extension}\"")}else{"inline".into()};
+        Response::builder().header(header::CONTENT_TYPE,mime).header(header::CACHE_CONTROL,"no-store").header("X-Content-Type-Options","nosniff").header("Cross-Origin-Resource-Policy","same-origin").header(header::CONTENT_DISPOSITION,disposition).body(Body::from(bytes)).unwrap_or_else(|_|StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    },Err(_)=>StatusCode::NOT_FOUND.into_response()}
 }
 
 async fn static_asset(uri: Uri) -> Response {

@@ -23,7 +23,7 @@ pub(crate) fn get(s: &Store, project: &str) -> Result<Value, String> {
     match s.get_setting(&key)? {
         Some(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string()),
         None => Ok(
-            json!({"revision":0,"camera":{"longitude":108.9398,"latitude":34.3416,"height":16000000.,"heading":0.,"tilt":0.},"layers":{"boundaries":true,"graticule":false,"source":0},"overlays":[],"selection":null,"renderedRevision":null}),
+            json!({"revision":0,"camera":{"longitude":108.9398,"latitude":34.3416,"height":16000000.,"heading":0.,"tilt":0.},"layers":{"boundaries":true,"graticule":false,"source":0},"overlays":[],"images":[],"selection":null,"renderedRevision":null}),
         ),
     }
 }
@@ -51,6 +51,11 @@ pub(crate) fn validate(v: &Value) -> Result<(), String> {
     if !v["overlays"].as_array().is_some_and(|a| a.len() <= 8) || v.to_string().len() > 1_100_000 {
         return Err("最多8个业务图层，场景数据不能超过1 MiB".into());
     }
+    if let Some(images)=v.get("images") {
+        let images=images.as_array().ok_or("图片图层须为数组")?;
+        if images.len()>8{return Err("最多8个图片图层".into());}
+        for image in images{validate_polygon(&image["polygon"])?;if !image["id"].as_str().is_some_and(|id|uuid::Uuid::parse_str(id).is_ok()) || !image["visible"].is_boolean(){return Err("图片图层无效".into());}}
+    }
     for layer in v["overlays"].as_array().unwrap() {
         if !layer["path"].as_str().is_some_and(|s| s.len() <= 200) || !layer["visible"].is_boolean()
         {
@@ -70,7 +75,8 @@ pub(crate) fn save(s: &Store, project: &str, args: &Value) -> Result<Value, Stri
     }
     let mut v = args["scene"].clone();
     validate(&v)?;
-    v = json!({"camera":v["camera"],"layers":v["layers"],"overlays":v["overlays"],"selection":v["selection"],"revision":old["revision"].as_u64().unwrap_or(0)+1,"renderedRevision":null});
+    if let Some(images)=v["images"].as_array(){if !images.is_empty(){image_table(s)?;let owner=crate::agent_account::owner(s)?;for image in images{let valid:bool=s.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_earth_images WHERE id=?1 AND owner=?2 AND project=?3)",rusqlite::params![image["id"].as_str(),owner,project],|r|r.get(0)).map_err(|e|e.to_string())?;if !valid{return Err("图片不属于当前账户和项目".into());}}}}
+    v = json!({"camera":v["camera"],"layers":v["layers"],"overlays":v["overlays"],"images":v.get("images").cloned().unwrap_or(json!([])),"selection":v["selection"],"revision":old["revision"].as_u64().unwrap_or(0)+1,"renderedRevision":null});
     s.set_setting(&key(s, project)?, &v.to_string())?;
     Ok(v)
 }
@@ -82,7 +88,7 @@ pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, St
         return Err("账户已切换，请重新打开地球页面".into());
     }
     match command {
-        "agent_earth_import" => {
+        "agent_earth_import" | "agent_earth_publish_image" | "agent_earth_add_image" => {
             let directory: String = s
                 .conn
                 .query_row(
@@ -94,8 +100,9 @@ pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, St
             let root = cap_std::fs::Dir::open_ambient_dir(directory, cap_std::ambient_authority())
                 .map_err(|_| "无法打开项目目录")?;
             let path = args["path"].as_str().ok_or("缺少路径")?;
+            if command=="agent_earth_publish_image"{return publish_image(s,project,&root,path);}
             let mut scene = get(s, project)?;
-            add_layer(&mut scene, &root, path)?;
+            if command=="agent_earth_add_image"{add_image(s,project,&mut scene,&root,path,&args["polygon"])?;}else{add_layer(&mut scene, &root, path)?;}
             save(
                 s,
                 project,
@@ -132,7 +139,9 @@ pub(crate) fn definitions() -> Vec<Value> {
     let n = |min: f64, max: f64| json!({"type":"number","minimum":min,"maximum":max});
     [("earth_get_view","读取当前项目已保存地球视图、图层及浏览器最后渲染确认时间。未确认不代表地球已显示。",json!({}),json!([])),
     ("earth_fly_to","设置项目地球定位，经纬度为WGS84度，高度为米，可省略以保留当前高度；保存后由打开的地球页面应用。结果saved_not_rendered不是已完成渲染。",json!({"longitude":n(-180.,180.),"latitude":n(-90.,90.),"height":n(20.,100000000.)}),json!(["longitude","latitude"])),
-    ("earth_set_layer_visibility","设置行政边界boundaries、经纬网graticule或已导入图层路径的可见性。",json!({"layer":{"type":"string","maxLength":200},"visible":{"type":"boolean"}}),json!(["layer","visible"])),
+    ("earth_set_layer_visibility","设置行政边界boundaries、经纬网graticule、已导入图层路径或图片图层ID的可见性。",json!({"layer":{"type":"string","maxLength":200},"visible":{"type":"boolean"}}),json!(["layer","visible"])),
+    ("earth_publish_image","将项目PNG/JPEG/WebP图片发布为当前账户可下载的本机URL快照，最多4MiB；不公开到互联网。",json!({"path":{"type":"string","maxLength":200}}),json!(["path"])),
+    ("earth_add_image_layer","将项目PNG/JPEG/WebP图片叠加到WGS84多边形。polygon为3至32个不自交的经纬度顶点（可闭合），不跨日期变更线。图片北向上铺满外接矩形后按多边形裁剪，不是自动地理配准；最多8层。",json!({"path":{"type":"string","maxLength":200},"polygon":{"type":"array","minItems":3,"maxItems":33,"items":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}}}}),json!(["path","polygon"])),
     ("earth_get_selection","读取地球页面最后选择的对象/坐标，不推断未选中的地理对象。",json!({}),json!([])),
     ("earth_add_geojson_layer","从项目相对路径加载WGS84 GeoJSON，支持点线及多边形轮廓。最多500要素、5000坐标、1MiB；不执行数据内的HTML或脚本。",json!({"path":{"type":"string","minLength":1,"maxLength":200}}),json!(["path"]))]
     .into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).collect()
@@ -225,12 +234,14 @@ pub(crate) fn execute(
     match tool {
         "earth_get_view" => {
             return Ok(
-                json!({"camera":scene["camera"],"layers":scene["layers"],"businessLayers":scene["overlays"].as_array().unwrap().iter().map(|v|json!({"path":v["path"],"visible":v["visible"]})).collect::<Vec<_>>(),"revision":scene["revision"],"renderedRevision":scene["renderedRevision"],"renderedAt":scene["renderedAt"]}),
+                json!({"camera":scene["camera"],"layers":scene["layers"],"imageLayers":scene.get("images").cloned().unwrap_or(json!([])),"businessLayers":scene["overlays"].as_array().unwrap().iter().map(|v|json!({"path":v["path"],"visible":v["visible"]})).collect::<Vec<_>>(),"revision":scene["revision"],"renderedRevision":scene["renderedRevision"],"renderedAt":scene["renderedAt"]}),
             );
         }
         "earth_get_selection" => {
             return Ok(json!({"selection":scene["selection"],"renderedAt":scene["renderedAt"]}));
         }
+        "earth_publish_image" => {return publish_image(s,&project,root,args["path"].as_str().ok_or("缺少路径")?);}
+        "earth_add_image_layer" => {add_image(s,&project,&mut scene,root,args["path"].as_str().ok_or("缺少路径")?,&args["polygon"])?;}
         "earth_fly_to" => {
             set_location(&mut scene, args)?;
         }
@@ -238,6 +249,8 @@ pub(crate) fn execute(
             let layer = args["layer"].as_str().ok_or("缺少图层")?;
             if ["boundaries", "graticule"].contains(&layer) {
                 scene["layers"][layer] = args["visible"].clone();
+            } else if scene.get("images").and_then(Value::as_array).is_some_and(|images|images.iter().any(|v|v["id"]==layer)) {
+                let image=scene["images"].as_array_mut().unwrap().iter_mut().find(|v|v["id"]==layer).unwrap();image["visible"]=args["visible"].clone();
             } else {
                 let item = scene["overlays"]
                     .as_array_mut()
@@ -273,4 +286,44 @@ fn add_layer(scene: &mut Value, root: &cap_std::fs::Dir, path: &str) -> Result<(
     list.retain(|v| v["path"] != path);
     list.push(json!({"path":path,"visible":true,"data":data}));
     Ok(())
+}
+
+fn image_table(s:&Store)->Result<(),String>{s.conn.execute_batch("CREATE TABLE IF NOT EXISTS agent_earth_images(id TEXT PRIMARY KEY,owner TEXT NOT NULL,project TEXT NOT NULL,name TEXT NOT NULL,mime TEXT NOT NULL,sha TEXT NOT NULL,data BLOB NOT NULL,UNIQUE(owner,project,sha));").map_err(|e|e.to_string())}
+pub(crate) fn image_data(s:&Store,id:&str)->Result<(String,Vec<u8>),String>{
+    image_table(s)?;let owner=crate::agent_account::owner(s)?;
+    s.conn.query_row("SELECT mime,data FROM agent_earth_images WHERE id=?1 AND owner=?2",rusqlite::params![id,owner],|r|Ok((r.get(0)?,r.get(1)?))).map_err(|_|"图片不存在或不属于当前账户".into())
+}
+fn publish_image(s:&Store,project:&str,root:&cap_std::fs::Dir,path:&str)->Result<Value,String>{
+    let bytes=crate::agent_files::image_bytes(root,path)?;
+    let name=std::path::Path::new(path).file_name().and_then(|n|n.to_str()).ok_or("无效文件名")?;
+    let meta=crate::agent_attachments::validate(name,"application/octet-stream",&bytes)?;
+    if meta["kind"]!="image"{return Err("仅支持PNG/JPEG/WebP，请先转换TIFF".into());}
+    image_table(s)?;let owner=crate::agent_account::owner(s)?;let sha=crate::agent_actions::hash(&bytes);
+    let old:Option<String>=s.conn.query_row("SELECT id FROM agent_earth_images WHERE owner=?1 AND project=?2 AND sha=?3",rusqlite::params![owner,project,sha],|r|r.get(0)).ok();
+    let id=if let Some(id)=old{id}else{
+        let total:i64=s.conn.query_row("SELECT COALESCE(SUM(length(data)),0) FROM agent_earth_images WHERE owner=?1",[&owner],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if total+bytes.len() as i64>128*1024*1024{return Err("当前账户图片快照超过128 MiB上限".into());}
+        let id=uuid::Uuid::new_v4().to_string();s.conn.execute("INSERT INTO agent_earth_images VALUES (?1,?2,?3,?4,?5,?6,?7)",rusqlite::params![id,owner,project,name,meta["mimeType"].as_str().unwrap(),sha,bytes]).map_err(|e|e.to_string())?;id
+    };
+    Ok(json!({"id":id,"url":format!("/api/earth/images/{id}"),"downloadUrl":format!("/api/earth/images/{id}?download=1"),"name":name,"width":meta["width"],"height":meta["height"],"sha256":sha,"scope":"current_account_localhost"}))
+}
+fn validate_polygon(value:&Value)->Result<Vec<[f64;2]>,String>{
+    let list=value.as_array().ok_or("polygon须为经纬度数组")?;
+    if !(3..=33).contains(&list.len()){return Err("多边形须为3至32个顶点".into());}
+    let mut pts=Vec::new();for p in list {let a=p.as_array().filter(|a|a.len()==2).ok_or("坐标须为经度、纬度")?;let x=a[0].as_f64().filter(|x|x.is_finite()&&x.abs()<=180.).ok_or("经度无效")?;let y=a[1].as_f64().filter(|y|y.is_finite()&&y.abs()<=90.).ok_or("纬度无效")?;pts.push([x,y]);}
+    if pts.first()==pts.last(){pts.pop();}if !(3..=32).contains(&pts.len()){return Err("多边形顶点数无效".into());}
+    let xmin=pts.iter().map(|p|p[0]).fold(f64::INFINITY,f64::min);let xmax=pts.iter().map(|p|p[0]).fold(f64::NEG_INFINITY,f64::max);
+    if xmax-xmin>180.{return Err("暂不支持跨日期变更线的图片范围".into());}
+    fn cross(a:[f64;2],b:[f64;2],c:[f64;2])->f64{(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0])}
+    let n=pts.len();let mut area=0.;for i in 0..n{let a=pts[i];let b=pts[(i+1)%n];if a==b{return Err("多边形含重复点".into());}area+=a[0]*b[1]-b[0]*a[1];for j in i+1..n{if j==i+1||(i==0&&j==n-1){continue;}let c=pts[j];let d=pts[(j+1)%n];if a[0].min(b[0])<=c[0].max(d[0]) && c[0].min(d[0])<=a[0].max(b[0]) && a[1].min(b[1])<=c[1].max(d[1]) && c[1].min(d[1])<=a[1].max(b[1]) && cross(a,b,c)*cross(a,b,d)<=0. && cross(c,d,a)*cross(c,d,b)<=0.{return Err("多边形自交或重叠".into());}}}
+    if area.abs()<1e-12{return Err("多边形面积为零".into());}Ok(pts)
+}
+fn add_image(s:&Store,project:&str,scene:&mut Value,root:&cap_std::fs::Dir,path:&str,polygon:&Value)->Result<(),String>{
+    let points=validate_polygon(polygon)?;
+    if scene.get("images").is_none(){scene["images"]=json!([]);}
+    let images=scene["images"].as_array_mut().ok_or("图片图层无效")?;
+    let asset=publish_image(s,project,root,path)?;
+    if images.len()>=8 && !images.iter().any(|v|v["id"]==asset["id"]){return Err("最多8个图片图层".into());}
+    images.retain(|v|v["id"]!=asset["id"]);
+    images.push(json!({"id":asset["id"],"name":asset["name"],"polygon":points,"visible":true}));Ok(())
 }

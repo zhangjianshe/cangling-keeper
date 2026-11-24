@@ -122,3 +122,32 @@ Agent 通过 `earth_get_selection` 获取拾取坐标。没有内置地名搜索
 独立页不修改主窗口的地球布局记忆；打开它时关闭当前嵌入式地球，减少双渲染器占用。
 场景约每1.5秒同步；页面被浏览器隐藏时暂停，恢复可见后继续。双屏使用时请拖成独立窗口。
 账户改变后拒绝旧账户的场景读取和写入并关闭画布；从当前账户对话重新打开。
+
+## 项目图片下载与地理覆盖层
+
+智能体可用 `earth_publish_image({path:"output/preview.png"})` 发布当前项目图片，返回
+`url` 和 `downloadUrl`（后者带 `?download=1`，可放入回复的 Markdown 下载链接）。
+地址相对于 Keeper 的 origin，例如 `http://127.0.0.1:4301/api/earth/images/<id>?download=1`。
+图片按内容哈希去重并快照存入 SQLite，后续源文件修改不会改变旧链接；仅当前账户在本机访问，不能作为公网共享链接。
+
+`earth_add_image_layer` 将图片添加到当前项目地球：
+
+```json
+{"path":"output/preview.png","polygon":[[116,39],[117,39],[117,40],[116,40]]}
+```
+
+外部本机调用可 POST `/api/invoke/agent_earth_publish_image`（projectId、accountKey、path），
+或 POST `/api/invoke/agent_earth_add_image`（另加 polygon、expectedRevision）。
+浏览器当前地球页面也可调用 `window.keeperEarth.addImageLayer({path,polygon})`。
+HTTP 调用遵循已有 loopback / Origin 校验，场景修改使用乐观锁；仅图片加载并绘制后确认 renderedRevision。
+`earth_get_view` 返回 imageLayers；`earth_set_layer_visibility` 可用图片 ID 控制显隐。
+独立地球标签页通过既有场景同步接收图层。
+
+限制：PNG/JPEG/WebP，单张4 MiB、边长8192、24M像素，显示纹理最大2048；最多8层，账户快照总量128 MiB。
+多边形为 WGS84 经度/纬度3–32点，不支持孔洞、自交和跨日期变更线。
+图片按北向上经纬度包围矩形映射、按多边形裁剪后投影到球面；不支持任意角点配准或地形贴合/遮挡。
+GeoTIFF 应先重投影到 EPSG:4326 并生成 PNG 预览，保留准确范围；普通图片必须由用户提供范围，不猜测定位。
+图片快照目前不纳入会话备份包；原项目文件仍应保留。
+
+验证：`python3 scripts/test-earth-http.py` 覆盖七种工具、图片下载、重启恢复、账户隔离及范围校验；
+`node scripts/test-earth-image-overlay.cjs` 覆盖纹理缓存、投影、背面隐藏与可见性。

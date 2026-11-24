@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+let loads=0,draws=0,projects=0,behind=false;
+const context={beginPath(){},closePath(){},clip(){},moveTo(){},lineTo(){},save(){},restore(){},setTransform(...n){assert(n.every(Number.isFinite));},clearRect(){},drawImage(){draws++;}};
+const sandbox={window:{},document:{body:{append(){}},createElement(){return {style:{},getContext(){return context;}};}},Image:class {naturalWidth=4096;naturalHeight=2048;set src(v){assert(v.startsWith('/api/earth/images/'));loads++;queueMicrotask(()=>this.onload());}},setTimeout,clearTimeout};
+vm.runInNewContext(fs.readFileSync('ui/earth/image-overlay.js','utf8'),sandbox);
+(async()=>{const overlay=sandbox.window.createKeeperImageOverlay({project(points){projects++;assert.equal(points.length,625);return points.map(p=>behind?null:[p[0]/360,p[1]/180]);}});
+const layers=[{id:'fixture',name:'test',visible:true,polygon:[[0,0],[1,0],[1,1],[0,1]]}];
+await overlay.prepare(layers);await overlay.prepare(layers);assert.equal(loads,1);draws=0;overlay.draw(layers,800,600);assert.equal(draws,1152);assert.equal(projects,1);
+behind=true;draws=0;overlay.draw(layers,800,600);assert.equal(draws,0);
+layers[0].visible=false;overlay.draw(layers,800,600);assert.equal(projects,2);
+await overlay.prepare([]);layers[0].visible=true;await overlay.prepare(layers);assert.equal(loads,2);
+console.log('PASS image overlay: load cache, bounded texture, projected triangles, backface hiding, visibility and cleanup');})().catch(e=>{console.error(e);process.exitCode=1;});

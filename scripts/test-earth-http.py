@@ -9,7 +9,7 @@ class Model(http.server.BaseHTTPRequestHandler):
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));calls.append(body)
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   count=sum(m['role']=='tool' for m in body['messages'])
-  actions=[('earth_fly_to',{'longitude':116.4,'latitude':39.9,'height':1000000}),('earth_add_geojson_layer',{'path':'demo.geojson'}),('earth_get_view',{}),('earth_get_selection',{}),('earth_set_layer_visibility',{'layer':'graticule','visible':True})]
+  actions=[('earth_publish_image',{'path':'overlay.png'}),('earth_add_image_layer',{'path':'overlay.png','polygon':[[120,30],[121,30],[121,31],[120,31]]}),('earth_fly_to',{'longitude':116.4,'latitude':39.9,'height':1000000}),('earth_add_geojson_layer',{'path':'demo.geojson'}),('earth_get_view',{}),('earth_get_selection',{}),('earth_set_layer_visibility',{'layer':'graticule','visible':True})]
   if count<len(actions):
    name,args=actions[count];delta={'tool_calls':[{'index':0,'id':'earth'+str(count),'type':'function','function':{'name':name,'arguments':json.dumps(args)}}]};reason='tool_calls'
   else:delta={'content':'场景已保存，等待浏览器渲染确认。'};reason='stop'
@@ -58,9 +58,27 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
    call('agent_earth_fly_to',{**args,'expectedRevision':located['revision'],'longitude':120,'latitude':30,**extra},400)
   assert call('agent_earth_get',args)==located
   imported=located
+  # Published image snapshots are durable, bounded and account scoped.
+  import base64
+  png=base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAF0lEQVR4nGP8z0AaYCJR/aiGUQ1DSAMAQC4BH2bjRnMAAAAASUVORK5CYII=')
+  (root/'overlay.png').write_bytes(png)
+  asset=call('agent_earth_publish_image',{**args,'path':'overlay.png'})
+  assert call('agent_earth_publish_image',{**args,'path':'overlay.png'})['id']==asset['id']
+  with urllib.request.urlopen(base+asset['downloadUrl']) as r:
+   assert r.read()==png and r.headers['Content-Type']=='image/png' and 'attachment' in r.headers['Content-Disposition']
+  for path in ['../overlay.png','link.geojson','demo.geojson']:
+   call('agent_earth_publish_image',{**args,'path':path},400)
+  for polygon in [[[0,0],[1,1],[0,1],[1,0]],[[0,0],[1,1],[2,2]],[[179,0],[-179,0],[179,1]]]:
+   call('agent_earth_add_image',{**args,'expectedRevision':imported['revision'],'path':'overlay.png','polygon':polygon},400)
+  imported=call('agent_earth_add_image',{**args,'expectedRevision':imported['revision'],'path':'overlay.png','polygon':[[120,30],[121,30],[121,31],[120,31]]})
+  assert imported['images'][0]['id']==asset['id'] and imported['renderedRevision'] is None
+  stop();start();assert call('agent_earth_get',args)==imported
+  with urllib.request.urlopen(base+asset['url']) as r:assert r.read()==png
   # Changing active identity cannot overwrite the previous account's scene.
   with sqlite3.connect(Path(tmp)/'data.sql') as db:
    for k,v in [('login_token','fixture'),('login_username','other'),('server_url','http://localhost')]:db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)',(k,v))
+  try:urllib.request.urlopen(base+asset['url']);raise AssertionError('cross account image access')
+  except urllib.error.HTTPError as e:assert e.code==404
   assert call('agent_earth_get',{'projectId':'general'})['revision']==0
   call('agent_earth_save',{**args,'expectedRevision':0,'scene':scene},400)
   call('agent_earth_get',args,400)  # detached window pins the original account
@@ -73,12 +91,12 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
    if not detail['modelPending']:break
    time.sleep(.05)
   assert detail['tasks'][-1]['status']=='complete',detail['tasks']
-  assert len(detail['runs'])==5 and all(r['status']=='succeeded' for r in detail['runs']),detail['runs']
+  assert len(detail['runs'])==7 and all(r['status']=='succeeded' for r in detail['runs']),detail['runs']
   result=call('agent_earth_get',args);assert result['camera']['longitude']==116.4 and result['layers']['graticule'] and result['renderedRevision'] is None
-  assert len(calls)==6
+  assert len(calls)==8
   tool_text=[m['content'] for r in calls for m in r['messages'] if m['role']=='tool'];assert any('saved_not_rendered' in t for t in tool_text)
   with urllib.request.urlopen(base+'/earth/pkg/cangling_desktop_bg.wasm') as r:assert r.headers['Content-Type'].startswith('application/wasm') and r.read(4)==b'\x00asm'
-  print('PASS Earth: restart persistence, revisions, account isolation, traversal/symlinks, invalid coordinates, five tools through ReAct, WASM MIME')
+  print('PASS Earth: restart persistence, revisions, account isolation, traversal/symlinks, invalid coordinates, seven tools through ReAct, image publication/download, WASM MIME')
  finally:
   if proc and proc.poll() is None:stop()
   model.shutdown()
