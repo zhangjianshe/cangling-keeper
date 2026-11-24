@@ -76,7 +76,7 @@ pub(crate) fn save(s: &Store, project: &str, args: &Value) -> Result<Value, Stri
 }
 pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, String> {
     let project = args["projectId"].as_str().ok_or("缺少项目")?;
-    if command != "agent_earth_get"
+    if (command != "agent_earth_get" || args.get("accountKey").is_some())
         && args["accountKey"].as_str() != Some(&crate::agent_account::owner(s)?)
     {
         return Err("账户已切换，请重新打开地球页面".into());

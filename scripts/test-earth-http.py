@@ -61,8 +61,9 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   # Changing active identity cannot overwrite the previous account's scene.
   with sqlite3.connect(Path(tmp)/'data.sql') as db:
    for k,v in [('login_token','fixture'),('login_username','other'),('server_url','http://localhost')]:db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)',(k,v))
-  assert call('agent_earth_get',args)['revision']==0
+  assert call('agent_earth_get',{'projectId':'general'})['revision']==0
   call('agent_earth_save',{**args,'expectedRevision':0,'scene':scene},400)
+  call('agent_earth_get',args,400)  # detached window pins the original account
   with sqlite3.connect(Path(tmp)/'data.sql') as db:db.execute("DELETE FROM settings WHERE key='login_token'")
   assert call('agent_earth_get',args)==imported
   mid=call('agent_model_save',{'name':'Earth Fixture','enabled':True,'baseUrl':f'http://127.0.0.1:{model.server_port}','model':'earth-test','apiKey':'fixture'})['savedServerId'];call('agent_model_select',{'id':mid})
