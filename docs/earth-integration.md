@@ -145,9 +145,10 @@ HTTP 调用遵循已有 loopback / Origin 校验，场景修改使用乐观锁�
 
 限制：PNG/JPEG/WebP，单张4 MiB、边长8192、24M像素，显示纹理最大2048；最多8层，账户快照总量128 MiB。
 多边形为 WGS84 经度/纬度3–32点，不支持孔洞、自交和跨日期变更线。
-图片按北向上经纬度包围矩形映射、按多边形裁剪后投影到球面；不支持任意角点配准或地形贴合/遮挡。
+图片由 cangling-desktop 的原生 ImageLayerRenderer 绘制：Rust 解码并裁剪，上传 GPU 纹理，以64×64经纬度网格接入地球相机及深度缓冲，随地形采样高度更新。前端仅 fetch 二进制并通过 WASM 传递，不创建图片 DOM/Canvas 覆盖层。
+图片按北向上经纬度包围矩形映射；不支持任意角点配准。固定网格对大范围、陡峭地形存在精度限制，不等同于多级地形瓦片。
 GeoTIFF 应先重投影到 EPSG:4326 并生成 PNG 预览，保留准确范围；普通图片必须由用户提供范围，不猜测定位。
 图片快照目前不纳入会话备份包；原项目文件仍应保留。
 
 验证：`python3 scripts/test-earth-http.py` 覆盖七种工具、图片下载、重启恢复、账户隔离及范围校验；
-`node scripts/test-earth-image-overlay.cjs` 覆盖纹理缓存、投影、背面隐藏与可见性。
+`node scripts/test-earth-image-overlay.cjs` 覆盖二进制传输、缓存、可见性与清理；原生 image_layer 测试验证多边形遮罩、WGSL 及实际 GPU 管线/纹理上传。

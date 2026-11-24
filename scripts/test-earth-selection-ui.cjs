@@ -2,7 +2,7 @@ const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
 const dom=new JSDOM('<canvas></canvas><button>other</button>',{url:'http://localhost/earth/',runScripts:'outside-only'}),w=dom.window;
 const sent=[];w.postMessage=v=>sent.push(v);w.keeper_command=(method,args)=>{assert.equal(method,'pick');const point=JSON.parse(args);assert(point.x>=0&&point.x<=1);return JSON.stringify({longitude:116.4,latitude:39.9,height:100});};
 w.createKeeperImageOverlay=()=>({draw(){},prepare:async()=>{}});
-w.eval(fs.readFileSync('ui/earth/keeper-bridge.js','utf8').replace("import './image-overlay.js';",'').replace("import {keeper_command} from './pkg/cangling_desktop.js';",'const keeper_command=window.keeper_command;'));
+w.eval(fs.readFileSync('ui/earth/keeper-bridge.js','utf8').replace("import './image-overlay.js';",'').replace("import {keeper_command,keeper_image} from './pkg/cangling_desktop.js';",'const keeper_command=window.keeper_command,keeper_image=()=>{};'));
 const click=target=>target.dispatchEvent(new w.MouseEvent('dblclick',{bubbles:true,clientX:20,clientY:20}));
 click(w.document.querySelector('canvas'));assert.equal(sent.length,0);
 w.dispatchEvent(new w.Event('cangling-earth-ready'));click(w.document.querySelector('button'));assert.equal(sent.filter(v=>v.event==='selection').length,0);
