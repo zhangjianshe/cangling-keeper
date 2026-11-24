@@ -549,7 +549,12 @@
             summary.append(element('p','',`工具结果：成功 ${counts.succeeded} · 失败 ${counts.failed} · 拒绝 ${counts.rejected} · 停止/中断 ${counts.stopped+counts.interrupted}`));
             summary.open=!!agent.taskSummaryOpen?.has(entry.id);summary.ontoggle=()=>{agent.taskSummaryOpen ||= new Set();if(summary.open)agent.taskSummaryOpen.add(entry.id);else agent.taskSummaryOpen.delete(entry.id);};message.append(summary);
           }
-          if(runs.length){const steps=element('div','agent-tool-steps');steps.setAttribute('aria-label','工具执行过程');for(const run of runs)steps.append(runCard(run,toolOpen));message.append(steps);}
+          const visibleRuns=runs.filter(run=>!isSkillPreparation(run));
+          const preparationRuns=runs.filter(isSkillPreparation);
+          if(visibleRuns.length){const steps=element('div','agent-tool-steps');steps.setAttribute('aria-label','工具执行过程');for(const run of visibleRuns)steps.append(runCard(run,toolOpen));message.append(steps);}
+          // Keep preparation records available in the existing collapsed task summary.
+          if(preparationRuns.length){const summary=message.querySelector('.agent-task-summary');if(summary){const records=element('details','agent-skill-preparation');records.append(element('summary','',`技能准备记录 · ${preparationRuns.length} 次`));for(const run of preparationRuns)records.append(runCard(run,toolOpen));summary.append(records);}}
+
         }
         const body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');body.hidden=entry.role==='user' && !entry.content?.trim();message.append(body);agent.attachments?.decorate(message,entry);
         if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id){
@@ -622,6 +627,15 @@
     catch(error){notice(String(error));}finally{agent.reviewing.delete(run.id);if(agent.selected===session)renderConversation();}
   }
   setInterval(updateMessageTimes,30000);
+  function isSkillPreparation(run){
+    // Never hide failures, pending approvals, writes, or executed scripts.
+    if(run.status!=='succeeded')return false;
+    if(['load_skill','read_skill_file'].includes(run.tool))return true;
+    const path=String(run.arguments?.path || '').replace(/^(\.\/)+/,'').replace(/\/$/,'');
+    if(path.split('/').includes('..'))return false;
+    if(run.tool==='list_directory')return path==='.agents' || path==='.agents/skills' || path.startsWith('.agents/skills/');
+    return run.tool==='read_file' && path.startsWith('.agents/skills/');
+  }
   function runCard(run,openStates){
     const card=element('details','agent-run agent-compact-run'+(run.responseId?' agent-model-tool':''));card.dataset.runId=run.id;card.open=run.status==='pending_approval' || openStates?.get(run.id) || false;
     const header=element('summary','agent-run-summary');
