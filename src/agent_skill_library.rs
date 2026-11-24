@@ -243,7 +243,7 @@ pub(crate) fn prepare(
 ) -> Result<Value, String> {
     let project = project(s, session)?;
     let all = catalog(s, session, guidance)?;
-    // Regeneration must not silently gain skills added after the original reply.
+    // User-managed skill bindings remain frozen; built-in guidance is globally available.
     let previous_refs = previous.and_then(Value::as_array).map(|items| {
         items.iter().map(|entry| entry["ref"].clone()).collect::<Vec<_>>()
     });
@@ -271,6 +271,8 @@ pub(crate) fn prepare(
     } else {
         selected = all.into_iter().filter(|e| e["scope"] != "agent").collect();
     }
+    let system=builtin();
+    if !selected.iter().any(|e|e["ref"]==system["ref"]){selected.insert(0,system);}
     if selected.len() > 64 {
         return Err("本轮技能超过64项，请使用智能体选择所需技能".into());
     }

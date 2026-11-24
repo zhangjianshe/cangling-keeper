@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   # Seed discovered tool metadata; execution of the unassociated MCP name must be rejected before launch.
   with sqlite3.connect(Path(tmp)/'data.sql') as db:
    db.execute("INSERT INTO agent_mcp_servers(id,owner_key,name,command,args,enabled,tools) VALUES ('preset-fixture','guest','Fixture','never-launch','[]',1,?)",(json.dumps([{'name':'allowed','description':'allowed MCP fixture','inputSchema':{'type':'object'},'enabled':True},{'name':'excluded','description':'excluded MCP fixture','inputSchema':{'type':'object'},'enabled':True}]),))
-  opts=call('agent_profile_options',{'sessionId':s});assert len(opts['skills'])==2 and len(opts['mcpTools'])==2
+  opts=call('agent_profile_options',{'sessionId':s});assert len(opts['skills'])==3 and len(opts['mcpTools'])==2
   allowed=opts['mcpTools'][0]['function']['name'];excluded=opts['mcpTools'][1]['function']['name']
   icon='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAAFUlEQVR4nGP8//8/AwMDEwMDA4ICADkbAwP+wj6MAAAAAElFTkSuQmCC'
   payload={'icon':icon,'sessionId':s,'name':'编码助手','systemPrompt':'PRESET-ORIGINAL','modelId':model,'skills':['chosen'],'mcpTools':[allowed]}
@@ -69,14 +69,17 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   call('agent_profile_select',{'sessionId':s,'id':''},400)
   call('agent_profile_save',{**payload,'systemPrompt':'PRESET-EDITED','icon':''})
   hold.set();d=wait(s);assert d['tasks'][-1]['status']=='complete'
-  answer=next(m for m in d['messages'] if m['role']=='assistant');assert answer['modelMetadata']['agentProfile']['systemPrompt']=='PRESET-ORIGINAL';assert answer['modelMetadata']['agentProfile']['icon']==icon;assert d['agentProfile']['icon']==''
+  answer=next(m for m in d['messages'] if m['role']=='assistant');assert any(e['ref']=='system:earth-workbench' for e in answer['modelMetadata']['skillBindings']);assert answer['modelMetadata']['agentProfile']['systemPrompt']=='PRESET-ORIGINAL';assert answer['modelMetadata']['agentProfile']['icon']==icon;assert d['agentProfile']['icon']==''
   assert [r['status'] for r in d['runs']]==['succeeded','failed','failed']
   for req in requests:
    assert icon not in json.dumps(req)
    assert req['model']=='profile-fixture'
    text=req['messages'][0]['content'];assert 'PRESET-ORIGINAL' in text and 'PRESET-EDITED' not in text and 'chosen-description' in text and 'other-description' not in text
    names=[t['function']['name'] for t in req['tools']];assert allowed in names and excluded not in names
+  with sqlite3.connect(Path(tmp)/'data.sql') as db:
+   meta=json.loads(db.execute('SELECT model_metadata FROM agent_messages WHERE id=?',(answer['id'],)).fetchone()[0]);meta['skillBindings']=[e for e in meta['skillBindings'] if e['scope']!='system'];db.execute('UPDATE agent_messages SET model_metadata=? WHERE id=?',(json.dumps(meta),answer['id']))
   requests.clear();call('agent_regenerate',{'sessionId':s,'messageId':answer['id']});d=wait(s)
+  assert any('system:earth-workbench' in r['messages'][0]['content'] for r in requests)
   assert all(m['modelMetadata']['agentProfile']['icon']==icon for m in d['messages'] if m['role']=='assistant')
   assert requests and all('PRESET-ORIGINAL' in r['messages'][0]['content'] for r in requests)
   hold.clear();started.clear();stopping=call('agent_new_session')['id'];call('agent_profile_select',{'sessionId':stopping,'id':pid})
