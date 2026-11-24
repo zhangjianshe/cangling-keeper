@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-24T09:49:32.219195+00:00",
+  "builtAt": "2026-11-24T09:51:41.861820+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -51,14 +51,14 @@
     "src/terrain.rs": "a31bde910ac01d570fb6896b677f40aabfb692dc6ba3a2bccc8a6d7110a40dc2",
     "src/tile.rs": "382a65336529271a66c82d4501d101ba40e0f36b9cf6a515b520ca47fbe6c723",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
-    "src/vector_layer.rs": "f5f8162d1cb3ad75b6b048eb60174d67521fef551468d727ea8299869778e025",
+    "src/vector_layer.rs": "35125410a9c39095d77bf4ea2296a6d3d5ed39a3185a783e782a058d68385259",
     "src/vector_layer.wgsl": "ae0918515338d06b618aa6629419f79c42aea768145c19628cba7405eb827bae",
     "src/web.rs": "398976e8087e6641e00e9180927ef0b60df28b1aaaa7e963361c2ea455d71b94",
     "src/web_cache.rs": "71cc9c8b07a49b8d66c8c3775d033dea43cd024d4b3600ab6033a7140ab7fc97"
   },
   "artifacts": {
     "pkg/cangling_desktop.js": "dd81e26a99eb70073aa33501fee863f250e535a73c1eed196d25aa5ea2e6ae85",
-    "pkg/cangling_desktop_bg.wasm": "a5ba2f2acf5253b70a1b276c971e79a3eed00f9b318e2fc5e60c6e9e06a0c199"
+    "pkg/cangling_desktop_bg.wasm": "aa0997546e7d6412291c969001c7789eec5fcc996e5f084a031fbb497b8938e0"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }
