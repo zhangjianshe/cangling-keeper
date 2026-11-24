@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-24T09:36:04.864792+00:00",
+  "builtAt": "2026-11-24T09:46:29.113860+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -37,8 +37,8 @@
     "src/image_layer.wgsl": "f47dcc9885c10bf0eebc7b57518477783bd7b8f3f5892e21c6893da5bdcbad0f",
     "src/keeper_bridge.rs": "7aa2b41ea88ce851bd6f73efb21a0aa56cc6b6e96de59be8a9e6ad018cb20816",
     "src/keeper_camera.rs": "b5b33f9752df7981a53a557ea8051fba59cf57a69b9e387a89cd0961259124e6",
-    "src/keeper_renderer.rs": "7d146c48246f14da584b1d203b0a1504d1bafe7f273ac8cecca8e743f857eb74",
-    "src/lib.rs": "08c6b31882fa89354392cb1c7d006e5fcff8b362498748efa9830e569da63fea",
+    "src/keeper_renderer.rs": "52549507833988a4d6bc0d249f088ab55067bc6b56e10dec083a48c17921e4ef",
+    "src/lib.rs": "67721371a7106b51629de456193c92045c2c5fefe36e98c4b2b19779ab6898ff",
     "src/main.rs": "743eef96991f9cd516e336c9a4bf974dff0ad20e2fb0eb2e506161a467ad6601",
     "src/marker.rs": "c585c407ab2ce1917e7bd2cfbab9eedc5ab84f1843c6bd155819a683fa0b013b",
     "src/marker.wgsl": "bdca2b98dad15ada41c92ec8183683192b2193083659fb6775454d63bee1e534",
@@ -47,16 +47,18 @@
     "src/navigation.wgsl": "1842570208a54741f7a41e1fbce008ac8cbec675dfacc21afb84e475b012f865",
     "src/placenames.rs": "a241c516ff1b31df7d4b02155a6cd06369bbc7a8556b226f84107b15a64d9a77",
     "src/profile.rs": "46079037c1318ab3027c1d31b5f048498e735a074bc4fad6497ac3057f00eea2",
-    "src/renderer.rs": "836135041611d5100a41837e901df589f87c88be95ab9595e8f2a3ff125e7635",
+    "src/renderer.rs": "23f834682d866efcaafbcfe4f243edb0f35e1250c88efaa6cb150e6ff8b0de35",
     "src/terrain.rs": "a31bde910ac01d570fb6896b677f40aabfb692dc6ba3a2bccc8a6d7110a40dc2",
     "src/tile.rs": "382a65336529271a66c82d4501d101ba40e0f36b9cf6a515b520ca47fbe6c723",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
+    "src/vector_layer.rs": "19bebff93b45183d11ce9e5141f1bc319f6f310143c13ae41cf499f248552caf",
+    "src/vector_layer.wgsl": "ae0918515338d06b618aa6629419f79c42aea768145c19628cba7405eb827bae",
     "src/web.rs": "398976e8087e6641e00e9180927ef0b60df28b1aaaa7e963361c2ea455d71b94",
     "src/web_cache.rs": "71cc9c8b07a49b8d66c8c3775d033dea43cd024d4b3600ab6033a7140ab7fc97"
   },
   "artifacts": {
-    "pkg/cangling_desktop.js": "6e8d894c9b2e8fb05a2424dc061739f7bbe08e9963f68c5014c2fac86cd43e19",
-    "pkg/cangling_desktop_bg.wasm": "829fd19b85c0df24111dd0f80181fc6ce9ff49b993dbdc22fd0cfe4f5bb3f113"
+    "pkg/cangling_desktop.js": "709e03b90bbf0b57711bbab376139b9211a03b90f4094e4aa71eb3ca6583cf63",
+    "pkg/cangling_desktop_bg.wasm": "70f6cb19430ea8ba92eee0a16fb9ecd85edff15b477e0cd83198a8c1424ee9f3"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }

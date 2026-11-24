@@ -152,3 +152,16 @@ GeoTIFF 应先重投影到 EPSG:4326 并生成 PNG 预览，保留准确范围�
 
 验证：`python3 scripts/test-earth-http.py` 覆盖七种工具、图片下载、重启恢复、账户隔离及范围校验；
 `node scripts/test-earth-image-overlay.cjs` 覆盖二进制传输、缓存、可见性与清理；原生 image_layer 测试验证多边形遮罩、WGSL 及实际 GPU 管线/纹理上传。
+
+## 原生 GeoJSON 矢量渲染
+
+GeoJSON 业务图层使用 Rust `VectorLayerRenderer`，不再创建 SVG / DOM 图层。
+支持 Point、MultiPoint、LineString、MultiLineString、Polygon、MultiPolygon；多边形目前绘制外环及内环边界，不填充面。
+输入采用 WGS84 经纬度，转换为 ECEF 三维位置，再按相机转换成 GPU 三角网格。
+没有第三维时采样地形；显式第三维按绝对椭球高（米）处理。线段经纬度插值细分，跨日期变更线取短路径。
+点标记和线宽保持屏幕像素尺寸，使用地球深度缓冲；超过网格预算的数据会报错，需简化或拆分。
+原生 `vector_scene` 接收现有 overlays，`vector_pick` 返回点击位置附近要素的 layer/feature/properties，继续写入原有选择状态。
+拾取按投影后的点/边距离判断，不支持多边形内部选择；复杂地形遮挡处的拾取仍需后续 GPU picking 完善。
+地球截图直接来自主渲染画布，包含原生图片和矢量图层。
+
+验证：cangling-desktop `cargo test --lib vector_layer` 包括坐标/几何解析、WGSL 校验、本机 GPU 绘制命令提交、中心点拾取及清理；Keeper 页面测试检查选择桥接且不再创建 SVG。
