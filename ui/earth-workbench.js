@@ -8,27 +8,26 @@
     const active=()=>document.body.classList.contains('earth-workbench');
     const entry=button('地球工作台',()=>{const p=agent.projects.find(p=>p.id===(agent.detail.session?.projectId||agent.project));if(p)agent.earth.openWorkbench(p);});
     entry.className='guidance-trigger earth-workbench-launcher';$('.agent-header-tools').append(entry);
-    const grip=node('div','earth-chat-grip');grip.setAttribute('aria-label','拖动对话窗口');
-    const label=node('strong','','智能体对话');
-    const browse=button('项目 / 会话',()=>openPicker());
-    const collapse=button('收起',()=>{document.body.classList.add('earth-chat-collapsed');remember();});
-    grip.append(label,browse,collapse);main.prepend(grip);
-    const reopen=button('展开对话',()=>{document.body.classList.remove('earth-chat-collapsed');remember();});reopen.className='btn earth-chat-reopen';$('.earth-toolbar').append(reopen);
+    const browse=button('项目 / 会话',()=>openPicker());browse.classList.add('earth-workbench-action','earth-project-browse');
+    const collapse=button('收起消息',()=>{document.body.classList.add('earth-chat-collapsed');remember();});collapse.classList.add('earth-workbench-action','earth-messages-collapse');
+    const reopen=button('显示消息',()=>{document.body.classList.remove('earth-chat-collapsed');remember();});reopen.className='btn earth-chat-reopen';$('.earth-toolbar').append(browse,collapse,reopen);
     const picker=node('section','earth-project-picker');picker.hidden=true;picker.setAttribute('role','dialog');picker.setAttribute('aria-label','查询项目和会话');
     const search=node('input','');search.type='search';search.placeholder='搜索项目或会话';search.setAttribute('aria-label','搜索项目或会话');
     const dismiss=button('关闭',()=>closePicker());const heading=node('header','');heading.append(search,dismiss);
     const results=node('div','earth-project-results');picker.append(heading,results);main.append(picker);
-    let revision=0, debounce, page=null, filter=null, cursor=null, selected=0, command=false, dragging=null, items=[];
+    let revision=0, debounce, page=null, filter=null, cursor=null, selected=0, command=false, items=[];
     const key=()=> 'keeper-earth-window:'+(agent.ownerKey||'guest');
-    const remember=()=>{if(!active())return;try{localStorage.setItem(key(),JSON.stringify({left:parseFloat(main.style.left)||main.offsetLeft,top:parseFloat(main.style.top)||main.offsetTop,width:parseFloat(main.style.width)||main.offsetWidth,height:parseFloat(main.style.height)||main.offsetHeight,collapsed:document.body.classList.contains('earth-chat-collapsed')}));}catch{}};
-    function fit(rect={}){const width=Math.max( Math.min(340,innerWidth-24),Math.min(Number(rect.width)||620,innerWidth-24));const height=Math.max(Math.min(300,innerHeight-80),Math.min(Number(rect.height)||innerHeight-110,innerHeight-80));Object.assign(main.style,{width:width+'px',height:height+'px',left:Math.max(12,Math.min(Number(rect.left)||24,innerWidth-width-12))+'px',top:Math.max(64,Math.min(Number(rect.top)||80,innerHeight-height-12))+'px'});}
-    window.addEventListener('earth-layout',()=>{closePicker(false);if(active()){let saved={};try{saved=JSON.parse(localStorage.getItem(key())||'{}');}catch{}fit(saved);document.body.classList.toggle('earth-chat-collapsed',!!saved.collapsed);}else{for(const k of ['width','height','left','top'])main.style[k]='';}});
-    window.addEventListener('resize',()=>{if(active()){fit({left:main.offsetLeft,top:main.offsetTop,width:main.offsetWidth,height:main.offsetHeight});remember();}});
-    grip.addEventListener('pointerdown',e=>{if(e.target.closest('button')||e.button!==0)return;dragging={x:e.clientX,y:e.clientY,left:main.offsetLeft,top:main.offsetTop};grip.setPointerCapture?.(e.pointerId);e.preventDefault();});
-    grip.addEventListener('pointermove',e=>{if(dragging)fit({left:dragging.left+e.clientX-dragging.x,top:dragging.top+e.clientY-dragging.y,width:main.offsetWidth,height:main.offsetHeight});});
-    const endDrag=()=>{if(dragging){dragging=null;remember();}};grip.addEventListener('pointerup',endDrag);grip.addEventListener('pointercancel',endDrag);
-    main.addEventListener('pointerup',()=>{if(active())remember();});
-    if(window.ResizeObserver){let resizeTimer;new ResizeObserver(()=>{clearTimeout(resizeTimer);if(active())resizeTimer=setTimeout(remember,200);}).observe(main);}
+    const remember=()=>{if(!active())return;try{localStorage.setItem(key(),JSON.stringify({collapsed:document.body.classList.contains('earth-chat-collapsed')}));}catch{}};
+    const composer=$('.agent-compose-area');
+    function measureComposer(){if(active()&&composer)main.style.setProperty('--earth-compose-height',Math.ceil(composer.getBoundingClientRect().height)+'px');}
+    window.addEventListener('earth-layout',()=>{
+      closePicker(false);
+      for(const k of ['width','height','left','top'])main.style[k]='';
+      if(active()){let saved={};try{saved=JSON.parse(localStorage.getItem(key())||'{}');}catch{}document.body.classList.toggle('earth-chat-collapsed',!!saved.collapsed);measureComposer();}
+      else main.style.removeProperty('--earth-compose-height');
+    });
+    window.addEventListener('resize',measureComposer);
+    if(window.ResizeObserver&&composer)new ResizeObserver(measureComposer).observe(composer);
     function closePicker(focus=true){picker.hidden=true;++revision;clearTimeout(debounce);if(focus)input.focus();}
     function openPicker(fromCommand=false){command=fromCommand;filter=null;search.value='';picker.hidden=false;load();search.focus();}
     function mark(){const buttons=[...results.querySelectorAll('button')];buttons.forEach((b,i)=>b.classList.toggle('current',i===selected));buttons[selected]?.scrollIntoView?.({block:'nearest'});}
