@@ -3,6 +3,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const {JSDOM}=require('jsdom');
 const dom=new JSDOM(fs.readFileSync('ui/index.html','utf8'),{runScripts:'outside-only'}),context=dom.getInternalVMContext(),document=dom.window.document;
+const style=document.createElement('style');style.textContent=fs.readFileSync('ui/agent.css','utf8');document.head.append(style);
 const source=fs.readFileSync('ui/agent.js','utf8');
 vm.runInContext(source.slice(source.indexOf('  function renderTaskChanges('),source.indexOf('  function renderProjects()')),context);
 const messages=[{id:'question',role:'user',content:'读取项目',createdAt:1},{id:'old',role:'assistant',content:'旧回复',createdAt:2,modelMetadata:{source:'llm',model:'fixture',serverId:'fixture',requestedModel:'fixture'}},{id:'new',role:'assistant',content:'新回复',createdAt:3,modelMetadata:{source:'llm',model:'fixture',serverId:'fixture',requestedModel:'fixture',regenerateOf:'old'}}];
@@ -30,6 +31,7 @@ assert.equal(document.querySelectorAll('.agent-model-tool').length,1,'only selec
 assert.equal(document.querySelector('.agent-model-tool').dataset.runId,'new-run');
 assert.match(document.querySelector('.agent-stream-status').textContent,/第 2 轮/);assert.match(document.querySelector('.agent-task-summary').textContent,/执行工具中 · 2 轮 · 工具调用 1 次/);
 assert.equal(document.querySelector('#agent-stop').hidden,false);
+assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>dom.window.getComputedStyle(b).display==='none'),'busy regenerate must be visually hidden');
 document.querySelector('.agent-model-tool').open=true;
 context.updateAgentRun({payload:{...run('new-run','new'),sessionId:'session',output:'updated output',updatedAt:2}});
 assert.equal(document.querySelector('.agent-model-tool').open,true,'tool updates retain expansion');
@@ -45,6 +47,7 @@ const blockedPlan={...planRun,id:'blocked-plan',output:JSON.stringify({plan:[{st
 const budgetMessage=context.agent.detail.messages.find(m=>m.id==='new');budgetMessage.modelMetadata.taskBudget={maxRounds:8,maxToolCalls:32,activeSeconds:180};context.agent.detail.tasks[0].status='model';context.agent.detail.tasks[0].step=7;context.renderConversation();assert.match(document.querySelector('.agent-task-summary summary').textContent,/7 \/ 8 轮/);assert.match(document.querySelector('.agent-task-summary summary').textContent,/1 \/ 32/);assert.ok(document.querySelector('.agent-budget-warning'));context.agent.detail.tasks[0].status='complete';context.renderConversation();assert.equal(document.querySelector('.agent-budget-warning'),null);delete budgetMessage.modelMetadata.taskBudget;context.agent.detail.tasks[0].step=2;
 context.agent.detail.modelPending=false;context.renderPending(document.querySelector('#agent-messages'));
 assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>!b.hidden),'regenerate returns when idle');
+assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>dom.window.getComputedStyle(b).display!=='none'),'idle regenerate is visible');
 assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(document.querySelector('.agent-stream-status'),null);
 (async()=>{
  const captured=[];context.invoke=async(name,args)=>{captured.push({name,args});};context.select=async()=>{};
@@ -53,6 +56,7 @@ assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(doc
  context.agent.detail.modelPending=true;context.agent.detail.tasks[0].status='approval';context.renderConversation();assert.match(document.querySelector('#agent-messages').textContent,/新增 1 行 · 删除 1 行/);
  assert.match(document.querySelector('.agent-stream-status').textContent,/等待你确认/);
  assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>b.hidden),'regenerate stays hidden during approval');
+ assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>dom.window.getComputedStyle(b).display==='none'),'approval regenerate must be visually hidden');
  assert.equal(document.querySelector('.agent-model-tool').open,true,'approval must reveal its controls even after a previously collapsed run');
  assert.equal(context.runCard(current,new Map([[current.id,false]])).open,true,'pending approval overrides remembered collapsed state');
  assert.equal(context.runCard(JSON.parse(JSON.stringify(current))).open,true,'approval snapshot restores expanded controls');
