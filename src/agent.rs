@@ -474,6 +474,7 @@ pub(crate) async fn dispatch(
         }
         "agent_model_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::save(&store,&args)}
         "agent_model_delete" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::delete(&store,&text(&args,"id")?)}
+        "agent_model_output_budget" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::save_output_budget(&store,&args)},
         "agent_model_test" => crate::model::test(&core,args["id"].as_str()).await,
         "agent_execution_budget" => {
             let session=text(&args,"sessionId")?;let rounds=args["maxRounds"].as_u64().filter(|v|(1..=32).contains(v)).ok_or("执行轮数必须为1–32的整数")?;

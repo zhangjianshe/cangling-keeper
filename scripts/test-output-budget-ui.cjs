@@ -1,0 +1,6 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<div id="llm-list-status"></div>',{runScripts:'outside-only'}),c=dom.getInternalVMContext(),d=dom.window.document;
+let saved;
+Object.assign(c,{$:s=>d.querySelector(s),element:(tag,cls,text)=>{const e=d.createElement(tag);e.className=cls;if(text!==undefined)e.textContent=text;return e;},agent:{identityEpoch:1},server:{id:'cis-fixture',name:'DeepSeek',contextLimit:131072,maxOutputTokens:16384},actions:d.createElement('div'),renderModel(){},invoke:async(n,a)=>{assert.equal(n,'agent_model_output_budget');saved=a;return {};}});
+const s=fs.readFileSync('ui/agent.js','utf8'),start=s.indexOf('      const outputLabel='),end=s.indexOf("      if(server.source==='cis')",start);assert(start>=0&&end>start);vm.runInContext(s.slice(start,end),c);
+(async()=>{const select=c.actions.querySelector('select');assert.equal(select.value,'16384');assert.equal(select.getAttribute('aria-label'),'DeepSeek 单次输出预算');select.value='32768';await select.onchange();assert.equal(saved.id,'cis-fixture');assert.equal(saved.maxOutputTokens,32768);assert.match(d.querySelector('#llm-list-status').textContent,/下次生成/);dom.window.close();console.log('PASS: model output selector, values, save command, feedback');})().catch(e=>{console.error(e);process.exitCode=1;});

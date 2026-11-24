@@ -262,6 +262,14 @@
         try{const result=await invoke('agent_model_delete',{id:server.id});if(epoch!==(agent.identityEpoch || 0))return;renderModel(result);$('#llm-list-status').textContent='本地模型已删除';if(agent.selected)await select(agent.selected);}
         catch(error){$('#llm-list-status').textContent=String(error);}finally{remove.disabled=false;}
       };
+      const outputLabel=element('label','llm-output-budget','单次输出 '),outputSelect=element('select','btn');
+      outputSelect.setAttribute('aria-label',server.name+' 单次输出预算');
+      outputSelect.title='仅保存在本机当前账户，下次生成生效；实际输出最多占会话工作预算的四分之一，且不得超过上游模型支持的上限。';
+      const outputValues=[1024,2048,4096,8192,16384,32768,65536,server.maxOutputTokens || 4096];
+      for(const value of [...new Set(outputValues)].sort((a,b)=>a-b)){if(value>=server.contextLimit)continue;const option=element('option','',value/1024+'K');option.value=String(value);outputSelect.append(option);}
+      outputSelect.value=String(server.maxOutputTokens || 4096);
+      outputSelect.onchange=async()=>{const epoch=agent.identityEpoch;outputSelect.disabled=true;try{const result=await invoke('agent_model_output_budget',{id:server.id,maxOutputTokens:Number(outputSelect.value)});if(epoch!==agent.identityEpoch)return;renderModel(result);$('#llm-list-status').textContent='输出预算已保存，下次生成生效';}catch(error){outputSelect.value=String(server.maxOutputTokens || 4096);$('#llm-list-status').textContent=String(error);}finally{outputSelect.disabled=false;}};
+      outputLabel.append(outputSelect);actions.append(outputLabel);
       if(server.source==='cis')actions.append(use);else actions.append(use,edit,test,remove);row.append(info,actions);list.append(row);
     }
   }

@@ -1,7 +1,6 @@
 //! Context summaries are derived data; original messages and reply snapshots stay intact.
 use super::*;
 use sha2::{Digest, Sha256};
-const OUTPUT: usize = 4096;
 const RESERVE: usize = 2048;
 const RECENT: usize = 8;
 // Planning allowance, not exact billing. Actual vision token cost varies by model;
@@ -141,16 +140,16 @@ pub(super) async fn prepare(
     model: &str,
     provider: &str,
     supports_images:bool,
+    limit:usize,
+    output_budget:usize,
+    model_limit:usize,
     messages: &mut Vec<Value>,
     tools: &[Value],
     cancel: &mut tokio::sync::oneshot::Receiver<()>,
     deadline: tokio::time::Instant,
     sink: &dyn crate::EventSink,
 ) -> Result<(), String> {
-    let policy={let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::context_policy(&store,session)?};
-    let limit=policy["workingBudget"].as_u64().unwrap() as usize;
-    let model_limit=policy["modelLimit"].as_u64().unwrap() as usize;
-    let hard_input_budget=limit-OUTPUT-RESERVE;
+    let hard_input_budget=limit-output_budget-RESERVE;
     let budget=hard_input_budget*80/100;
     // Avoid a summarizer call when the protected current prompt cannot fit anyway.
     if let Some(current)=current_prompt(messages){
@@ -355,7 +354,7 @@ pub(super) async fn prepare(
         core,
         session,
         response,
-        json!({"status":if fallback{"fallback"}else if compacted{"compacted"}else{"ready"},"estimatedTokens":cost(messages,tools,supports_images),"limit":limit,"modelLimit":model_limit,"workingBudget":limit,"compressionThreshold":budget,"outputReserved":OUTPUT,"safetyReserved":RESERVE,"toolOutputShortened":shortened,"imageTokensReserved":image_count(messages,supports_images)*IMAGE_TOKEN_ALLOWANCE,"imageTokenEstimateEach":IMAGE_TOKEN_ALLOWANCE,"estimateMethod":"启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。"}),
+        json!({"status":if fallback{"fallback"}else if compacted{"compacted"}else{"ready"},"estimatedTokens":cost(messages,tools,supports_images),"limit":limit,"modelLimit":model_limit,"workingBudget":limit,"compressionThreshold":budget,"outputReserved":output_budget,"safetyReserved":RESERVE,"toolOutputShortened":shortened,"imageTokensReserved":image_count(messages,supports_images)*IMAGE_TOKEN_ALLOWANCE,"imageTokenEstimateEach":IMAGE_TOKEN_ALLOWANCE,"estimateMethod":"启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。"}),
         sink,
     )
 }
@@ -399,7 +398,7 @@ mod tests {
         assert_eq!(image_count(&m,true),1);assert_eq!(image_count(&m,false),0);
         let before=cost(&m,&[],true);m[0]["keeperAttachments"][1]["text"]=json!("x".repeat(64000));assert!(cost(&m,&[],true)>=before+31990);
         assert!(summary_cost(&m,&[])<cost(&m,&[],true));
-        assert!(cost(&[json!({"role":"user","content":"","keeperAttachments":[{"kind":"image"}]})],&[],true)>16384-OUTPUT-RESERVE);
+        assert!(cost(&[json!({"role":"user","content":"","keeperAttachments":[{"kind":"image"}]})],&[],true)>16384-4096-RESERVE);
     }
     #[test]
     fn mcp_image_budget_is_capability_gated_and_summary_is_metadata_only(){

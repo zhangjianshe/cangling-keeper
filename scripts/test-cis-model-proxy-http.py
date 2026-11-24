@@ -93,7 +93,11 @@ with tempfile.TemporaryDirectory(prefix='keeper-cis-model-') as folder:
   call('agent_send_message',{'sessionId':long,'content':'compact history'});compacted=done(long);assert compacted['messages'][-1]['modelMetadata']['context']['status']=='compacted',compacted['messages'][-1]
   assert any(not request['body'].get('stream') and request['apiToken']=='alice-token' and request['authorization'] is None and request['body']['cis_model_revision']=='revision-changed' for request in seen)
   with sqlite3.connect(str(Path(folder)/'data.sql')) as db:assert db.execute('SELECT api_key FROM agent_llm_servers WHERE id=?',(local,)).fetchone()[0]=='local-private-fixture';assert db.execute('SELECT count(*) FROM agent_llm_servers').fetchone()[0]==1
+  call('agent_model_output_budget',{'id':remote['id'],'maxOutputTokens':8192});call('agent_model_output_budget',{'id':local,'maxOutputTokens':8192})
+  assert next(x for x in call('agent_cis_models_refresh')['servers'] if x['id']==remote['id'])['maxOutputTokens']==8192
   login('bob');call('agent_cis_models_admin',expected=400);call('agent_cis_usage',{'all':True},expected=400);cfg=call('agent_cis_models_refresh');bob=next(x for x in cfg['servers'] if x.get('source')=='cis');assert bob['id']!=remote['id'];assert not any(x['id']==remote['id'] for x in cfg['servers']);call('agent_model_save',{'id':bob['id'],'name':'overwrite','apiKey':'local-private-fixture'},400)
+  assert bob['maxOutputTokens']==4096 and next(x for x in cfg['servers'] if x['id']==local)['maxOutputTokens']==4096
+  call('agent_model_output_budget',{'id':remote['id'],'maxOutputTokens':8192},expected=400)
   call('logout');assert all(x.get('source')!='cis' for x in call('agent_model_config')['servers'])
   print('PASS: CIS catalog, session selection, proxy authentication/stream, local secret isolation, account switch and logout')
  finally:
