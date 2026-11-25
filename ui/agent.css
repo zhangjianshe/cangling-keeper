@@ -492,11 +492,16 @@
 /* Keep navigation mounted so collapsing preserves scroll and selection. */
 #agent-sidebar-content{display:flex;flex-direction:column;gap:7px;flex:1;min-height:0}
 #agent-sidebar-content[hidden]{display:none!important}
-.agent-sidebar-toggle-row{display:flex;justify-content:flex-end;flex:none}
+.agent-sidebar{position:relative}
+.agent-sidebar-toggle-row{position:absolute;top:31px;right:8px;display:flex;justify-content:flex-end;flex:none;z-index:1}
+.agent-sidebar .agent-brand{padding-right:30px}
 #agent-sidebar-toggle{width:30px;height:30px;padding:5px;display:grid;place-items:center;border:0;border-radius:6px;background:transparent;color:#71717a;cursor:pointer}
 #agent-sidebar-toggle:hover{background:#e9e9ec;color:#27272a}
 #agent-sidebar-toggle:focus-visible{outline:2px solid #7ba7ef;outline-offset:2px}
 #agent-sidebar-toggle svg{width:20px;height:20px}
 .agent-shell.agent-sidebar-collapsed .agent-sidebar{box-sizing:border-box;width:46px;padding:12px 8px}
-.agent-sidebar-collapsed .agent-sidebar-toggle-row{justify-content:center}
+.agent-sidebar-collapsed .agent-sidebar-toggle-row{position:static;justify-content:center}
 .agent-sidebar-collapsed #agent-sidebar-toggle svg{transform:scaleX(-1)}
+
+@media(max-width:850px){.agent-sidebar-toggle-row{top:25px}}
+@media(max-width:560px){.agent-sidebar:not(:has(#agent-sidebar-content[hidden])){width:100px}.agent-sidebar-toggle-row{top:24px;right:4px}}
