@@ -13,14 +13,9 @@
       #runtime-error { position: fixed; z-index: 5; top: 16px; left: 16px; right: 16px;
         padding: 12px 16px; color: #ffe0dc; background: #54201d; font: 14px/1.5 system-ui, sans-serif;
         white-space: pre-wrap; overflow-wrap: anywhere; }
-      .earth-navigation-mode {position:fixed;z-index:6;right:16px;top:16px;display:flex;align-items:flex-end;flex-direction:column;gap:8px;font:14px/1.5 system-ui,sans-serif;max-width:calc(100vw - 32px)}
-      .earth-navigation-mode button {height:34px;padding:0 14px;border:1px solid #dbe4f0;border-radius:6px;background:#fff;color:#334155;cursor:pointer}
-      .earth-navigation-mode button[aria-pressed="true"] {background:#eaf2ff;border-color:#7aa7f9;color:#245cc5}
-      .earth-navigation-mode span {background:#fffffff0;padding:6px 10px;border-radius:4px;color:#475569;max-width:460px}
-      .earth-walk-settings {display:flex;align-items:center;gap:8px;background:#fffffff0;padding:6px;border:1px solid #dbe4f0;border-radius:6px;color:#334155}
-      .earth-walk-settings[hidden] {display:none}
-      .earth-walk-settings select {height:34px;border:1px solid #dbe4f0;border-radius:6px;background:white;color:#334155;font:inherit;padding:0 6px}
-      .earth-navigation-mode button:focus-visible {outline:2px solid #6095ed;outline-offset:2px}
+      .earth-navigation-mode {position:fixed;z-index:6;right:16px;top:16px;width:28px;height:28px;padding:5px;border-radius:4px;background:#ffffffd9;color:#64748b;box-sizing:border-box}
+      .earth-navigation-mode[data-mode="first"], .earth-navigation-mode[data-mode="third"] {color:#2563eb}
+      .earth-navigation-mode svg {width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
     </style>
   </head>
   <body>

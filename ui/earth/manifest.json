@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-25T09:37:06.339031+00:00",
+  "builtAt": "2026-11-25T09:45:57.860198+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -34,7 +34,7 @@
     "src/graticule.rs": "05e003f07a964ee0cc79086e9081df75e5a5f5281b0949286a1df6c44f2b6fa7",
     "src/graticule.wgsl": "8ceb948c6abf68145e1ac16f82dd8be3d3b0049ca28b4b814638c9d4507868ba",
     "src/help_panel.wgsl": "206ad3dcd7194f5abbc1e4408f5c409f4f0f465162cd3ae49f5c4a45bac63066",
-    "src/hud.rs": "fa23692fe8bea26026ef1a4a6dbf7d49af715ea4ef9385aa2eca172181038628",
+    "src/hud.rs": "e7fae8e55f3613d6f57729a44f6366aa7dedcb4428a9f29b740d69d3a813c22b",
     "src/image_layer.rs": "82667c5c8c463fb6e572df62478279fa99c2cc7f254c7a6e39cc17f41c618be3",
     "src/image_layer.wgsl": "f47dcc9885c10bf0eebc7b57518477783bd7b8f3f5892e21c6893da5bdcbad0f",
     "src/keeper_bridge.rs": "56028c019d76a6d0d00ac4e9b32c44f7de7963fa264c454fcb3b7db010f25dc7",
@@ -51,7 +51,7 @@
     "src/navigation.wgsl": "1842570208a54741f7a41e1fbce008ac8cbec675dfacc21afb84e475b012f865",
     "src/placenames.rs": "a241c516ff1b31df7d4b02155a6cd06369bbc7a8556b226f84107b15a64d9a77",
     "src/profile.rs": "46079037c1318ab3027c1d31b5f048498e735a074bc4fad6497ac3057f00eea2",
-    "src/renderer.rs": "51296a139a33cfaa66a24fd7ef2947be9aa0df71a779046f0f520ff3a3fedb86",
+    "src/renderer.rs": "282814fe4f73ba34441830ff3dcb6c1fbc8e799de40237101689cc6fafff5a0b",
     "src/terrain.rs": "a31bde910ac01d570fb6896b677f40aabfb692dc6ba3a2bccc8a6d7110a40dc2",
     "src/tile.rs": "0cbbc27eb4d8cdb966d703a2779146e38e6e03b7c53be91baa15616c087b3c3f",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
@@ -61,11 +61,11 @@
     "src/walk_camera.rs": "a4369c16c516ffaf3b2045df06c76a72804c93b15c2a88f341ea53ab8a18fbdf",
     "src/web.rs": "398976e8087e6641e00e9180927ef0b60df28b1aaaa7e963361c2ea455d71b94",
     "src/web_cache.rs": "2a39ab694f39b8d31fb3f23cc77709ff3597e47908912634958e0a801d461f90",
-    "web/navigation-mode.js": "0850935b7d7120e9c017a28bca10df9e65f7b7a7d29a5f78b9a5a4a7e5c04c57"
+    "web/navigation-mode.js": "ac4f7f87d2dc33e5a58b8f9e77fc48c7f3ec3e8a954746167aaee4290a787b31"
   },
   "artifacts": {
-    "pkg/cangling_desktop.js": "cef398759823a102997eb14035b5688ff362c49f37632ef18aa6ec0adc957d43",
-    "pkg/cangling_desktop_bg.wasm": "847660cba98bf28879987072b16115106350a032d41df4875870aca9e47d236d"
+    "pkg/cangling_desktop.js": "083956630b3f33d8168ef6fa207a2c87afb7f095d2734fa205643cb2ec91d7b0",
+    "pkg/cangling_desktop_bg.wasm": "78c82ac83835d73afcddd2389b36801962036e10eca332ae85aa15af0addb639"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }
