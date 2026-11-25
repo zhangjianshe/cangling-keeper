@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-25T02:09:11.359506+00:00",
+  "builtAt": "2026-11-25T02:13:32.728262+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -27,12 +27,12 @@
     "src/administration.rs": "10101bb2e00da11f8a842a183f8bd296fcd3ca6d8284931449ec149237f8c04b",
     "src/boundary.rs": "8d7d918b0bd15b46d8e145feedd90e2d1d066d2e37e9872df34e6ee48352f69e",
     "src/boundary.wgsl": "0625842c2980cb96abf24e030d486287e88be2b192963b60bdbb798fda601bba",
-    "src/camera.rs": "c00ed5e25c641183f14df4ef7d17a5c20ca46d1d3ad6dae15d50396b456300cc",
+    "src/camera.rs": "7af33f9e170e970df0df7531baf47adc510a47b271accfcbe62eff6caceb53c1",
     "src/geo.rs": "ffca893c825b9f5b771499501479644c643f75477a2f1732b40d0b296b09b3e0",
     "src/graticule.rs": "05e003f07a964ee0cc79086e9081df75e5a5f5281b0949286a1df6c44f2b6fa7",
     "src/graticule.wgsl": "8ceb948c6abf68145e1ac16f82dd8be3d3b0049ca28b4b814638c9d4507868ba",
     "src/help_panel.wgsl": "206ad3dcd7194f5abbc1e4408f5c409f4f0f465162cd3ae49f5c4a45bac63066",
-    "src/hud.rs": "615f6a84db853fdeef0e7c1d958e767e8fdcdbc398ece26c0c84cd3e13de4360",
+    "src/hud.rs": "fa23692fe8bea26026ef1a4a6dbf7d49af715ea4ef9385aa2eca172181038628",
     "src/image_layer.rs": "82667c5c8c463fb6e572df62478279fa99c2cc7f254c7a6e39cc17f41c618be3",
     "src/image_layer.wgsl": "f47dcc9885c10bf0eebc7b57518477783bd7b8f3f5892e21c6893da5bdcbad0f",
     "src/keeper_bridge.rs": "e3982a89c47203e9defdba79339dea23c4b712c4a6bfede1b777ebb3b55efc93",
@@ -49,7 +49,7 @@
     "src/navigation.wgsl": "1842570208a54741f7a41e1fbce008ac8cbec675dfacc21afb84e475b012f865",
     "src/placenames.rs": "a241c516ff1b31df7d4b02155a6cd06369bbc7a8556b226f84107b15a64d9a77",
     "src/profile.rs": "46079037c1318ab3027c1d31b5f048498e735a074bc4fad6497ac3057f00eea2",
-    "src/renderer.rs": "60b1c3ff389001dd1d9a7197e105f881ef697319db0e32c1c128b2b6e86fe4a1",
+    "src/renderer.rs": "7129efb15a131a4c20e8f4bd0644b77555b4630ed156ca3c872c794058a5f127",
     "src/terrain.rs": "a31bde910ac01d570fb6896b677f40aabfb692dc6ba3a2bccc8a6d7110a40dc2",
     "src/tile.rs": "382a65336529271a66c82d4501d101ba40e0f36b9cf6a515b520ca47fbe6c723",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
@@ -60,7 +60,7 @@
   },
   "artifacts": {
     "pkg/cangling_desktop.js": "d5b6e9b5fa15cdc4a2618048220483a01d82b51490cca63c335bb5f2fd48d476",
-    "pkg/cangling_desktop_bg.wasm": "e573b92414653f95910a6e2f3cbbf289a27a0628c4621189a9c9fa183f8461c3"
+    "pkg/cangling_desktop_bg.wasm": "f6929ca1c0a07867c805fa925456dfd8d1aaaa9f65d38b8d0db67612807b531d"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }

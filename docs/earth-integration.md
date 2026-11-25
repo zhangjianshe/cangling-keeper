@@ -236,3 +236,7 @@ Native renderer fixture check (in cangling-desktop):
 The sample downloaded to `general/3dmodules/Duck.glb` is from KhronosGroup/glTF-Sample-Assets,
 credited to Sony (2006), SCEA Shared Source License 1.0; its README and license are stored
 beside the sample. The sample is not bundled in Keeper's executable.
+
+Keyboard `T`: toggle 0° nadir / 45° oblique around the screen-centre ground point,
+without jumping to another location. Any existing nonzero tilt returns to 0° first.
+At globe-scale altitude the existing horizon-safe maximum tilt remains enforced.
