@@ -283,7 +283,7 @@ expectedRevision。图层按账户和项目保存，参与 SSE 同步、显隐�
   超限优先保留近处选择及粗级回退，并报告 budgetLimited。
   无粗级内容的宽分支可能只显示部分内容。
 - 几何缓存估计上限128 MiB，单资源16 MiB，单JSON4 MiB；
-  GLB沿用静态模型的几何/纹理限制。预算不足明确报错并保留可用父级。
+  瓦片GLB最多500k顶点，普通独立GLB仍为250k；其他几何/纹理限制不变。预算不足明确报错并保留可用父级。
   当前不是大规模城市数据的完整性能实现。
 - 4个并发请求、15秒超时、最多3次自动尝试，退避等待。
   不再需要的请求取消，离开选择集或隐藏图层时释放几何资源；
@@ -296,7 +296,7 @@ expectedRevision。图层按账户和项目保存，参与 SSE 同步、显隐�
   不接受父目录跳转或重定向；请求不携带凭证，要求源服务CORS。
   HTTPS页面只能加载HTTPS资源。没有新增服务器通用URL代理。
 - `earth_get_view` 的 tilesetStatus 为最近浏览器报告：
-  reportedAt、revision、drawing、loaded、pending、errors、budgetLimited。
+  reportedAt、revision、drawing、loaded、pending、errors、budgetLimited、selectedContents（最多8个实际选中资源路径）。
   `renderedRevision` 只代表场景应用；不能当作全部瓦片已经显示。
   多个窗口时保留最后一份报告，报告时间不代表窗口持续在线。
 

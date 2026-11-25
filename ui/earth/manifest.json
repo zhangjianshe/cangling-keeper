@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-25T03:03:24.795650+00:00",
+  "builtAt": "2026-11-25T03:11:51.403967+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -43,7 +43,7 @@
     "src/marker.rs": "c585c407ab2ce1917e7bd2cfbab9eedc5ab84f1843c6bd155819a683fa0b013b",
     "src/marker.wgsl": "bdca2b98dad15ada41c92ec8183683192b2193083659fb6775454d63bee1e534",
     "src/mesh.rs": "6f393a87b1fe719b2b4675601a8241d78761e4068fc48383faf19d0896c84f1c",
-    "src/model_layer.rs": "a827863b4bddd2e42bfc342239b272ed028e8f2bc093f36d6a31aacc4639af32",
+    "src/model_layer.rs": "c5f2461fe5b5019a36addf909b36d70199d75bf76de6fa881fd7f3c0b38afe26",
     "src/model_layer.wgsl": "f47dcc9885c10bf0eebc7b57518477783bd7b8f3f5892e21c6893da5bdcbad0f",
     "src/navigation.rs": "d911de94d04c508e67d7c72e966505630949d4c2f383fea41ab4ea4e70b58ce5",
     "src/navigation.wgsl": "1842570208a54741f7a41e1fbce008ac8cbec675dfacc21afb84e475b012f865",
@@ -53,15 +53,15 @@
     "src/terrain.rs": "a31bde910ac01d570fb6896b677f40aabfb692dc6ba3a2bccc8a6d7110a40dc2",
     "src/tile.rs": "382a65336529271a66c82d4501d101ba40e0f36b9cf6a515b520ca47fbe6c723",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
-    "src/tiles3d.rs": "8e820f6460c3a9e6e84a4e87a10fc6553e612c2ce15d80f007ce6d5b0db75417",
+    "src/tiles3d.rs": "d1e6a1f50e074131af2b10be22261024e36704b012bdfd0bac7912d44d690d43",
     "src/vector_layer.rs": "35125410a9c39095d77bf4ea2296a6d3d5ed39a3185a783e782a058d68385259",
     "src/vector_layer.wgsl": "ae0918515338d06b618aa6629419f79c42aea768145c19628cba7405eb827bae",
     "src/web.rs": "398976e8087e6641e00e9180927ef0b60df28b1aaaa7e963361c2ea455d71b94",
     "src/web_cache.rs": "71cc9c8b07a49b8d66c8c3775d033dea43cd024d4b3600ab6033a7140ab7fc97"
   },
   "artifacts": {
-    "pkg/cangling_desktop.js": "a6fdb2234e183bbd55cc4980fb014d1042742a1a7283cd09f0aaff5706b3bd9c",
-    "pkg/cangling_desktop_bg.wasm": "1cd4eedd535ba270d9b7e9b3962b78bdb4d9ce9aa8bff959e94eee4cb8a17558"
+    "pkg/cangling_desktop.js": "061417c0c4b8f4e92a0404c99eebeb923105615eaeb8b8a747b79150e60e21d3",
+    "pkg/cangling_desktop_bg.wasm": "935a651d3e197f8977ea0bd6e697988432021f137a5b9ac5d1e9727cb215a480"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }
