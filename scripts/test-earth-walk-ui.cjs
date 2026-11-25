@@ -7,6 +7,8 @@ const button=w.document.querySelector('button');assert(button.disabled);w.dispat
 w.dispatchEvent(new w.KeyboardEvent('keydown',{code:'KeyW',bubbles:true}));assert.equal(calls.at(-1)[1].forward,1);
 w.dispatchEvent(new w.KeyboardEvent('keydown',{code:'ShiftLeft',bubbles:true}));assert.equal(calls.at(-1)[1].sprint,true);
 w.dispatchEvent(new w.Event('blur'));assert.equal(calls.at(-1)[1].forward,0);assert.equal(calls.at(-1)[1].sprint,false);
+const speed=w.document.querySelector('select');assert.equal(speed.value,'12');speed.value='30';speed.dispatchEvent(new w.Event('change'));assert.equal(calls.at(-1)[1].speed,30);
+const perspective=w.document.querySelector('.earth-walk-settings button');perspective.click();assert.equal(calls.at(-1)[1].thirdPerson,true);assert.equal(perspective.textContent,'切换第一人称');assert.equal(JSON.parse(w.localStorage.getItem('earth.walk.preferences')).speed,30);
 button.click();assert(!walking);assert.equal(button.textContent,'地面漫游');assert(w.document.querySelector('span').hidden);
 const before=calls.length;w.dispatchEvent(new w.KeyboardEvent('keydown',{code:'KeyW',bubbles:true}));assert.equal(calls.length,before);
 dom.window.close();console.log('PASS mode switch, WASD, sprint, blur release, orbit input isolation');

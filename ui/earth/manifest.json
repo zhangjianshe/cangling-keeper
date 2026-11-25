@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-25T09:29:20.596556+00:00",
+  "builtAt": "2026-11-25T09:37:06.339031+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -23,11 +23,13 @@
     "assets/navigation/source/compass-needle.svg": "595777fdb7ba9adda0599b2b2d7a3633e07a6e47f44cada2c91fc3fe5cc23a09",
     "assets/navigation/source/slider-thumb.svg": "816331562d13dbbe8bdb21918614d776f51d352e7147f450725dcbb1d16800d2",
     "assets/navigation/source/slider-track.svg": "482b2d59b7c17908023f2d58ebad4c65deaecd512afea6ebb72424e70b6aa557",
+    "assets/walker.glb": "8639242a3761e14f2ed579fc21f7440f9f6cf487db1773f49b25fce84198b9ba",
+    "scripts/build-walker.py": "f74837adbad5b4fff6dd0b743221e8e5429267177d73681bac572eb34baecedd",
     "scripts/build-web.sh": "57d67b51b6a499eb7ab5fd4e410f6b2a180913b1e9c4b62a8fadab9d8b865909",
     "src/administration.rs": "10101bb2e00da11f8a842a183f8bd296fcd3ca6d8284931449ec149237f8c04b",
     "src/boundary.rs": "8d7d918b0bd15b46d8e145feedd90e2d1d066d2e37e9872df34e6ee48352f69e",
     "src/boundary.wgsl": "0625842c2980cb96abf24e030d486287e88be2b192963b60bdbb798fda601bba",
-    "src/camera.rs": "2f3c63c9add20f613a2814aa0b710961bce79826b1f1cb37396e2093b80092c2",
+    "src/camera.rs": "17e91975dae68d69774516a73f70e958cac6a290e3d6123bcc0523545ac25438",
     "src/geo.rs": "ffca893c825b9f5b771499501479644c643f75477a2f1732b40d0b296b09b3e0",
     "src/graticule.rs": "05e003f07a964ee0cc79086e9081df75e5a5f5281b0949286a1df6c44f2b6fa7",
     "src/graticule.wgsl": "8ceb948c6abf68145e1ac16f82dd8be3d3b0049ca28b4b814638c9d4507868ba",
@@ -37,33 +39,33 @@
     "src/image_layer.wgsl": "f47dcc9885c10bf0eebc7b57518477783bd7b8f3f5892e21c6893da5bdcbad0f",
     "src/keeper_bridge.rs": "56028c019d76a6d0d00ac4e9b32c44f7de7963fa264c454fcb3b7db010f25dc7",
     "src/keeper_camera.rs": "30d2841b99dfa0b15cc0d1d76aae7424d53f237de7cf690655febc542039f52e",
-    "src/keeper_renderer.rs": "7a7288da84e4df8b780a61a3bc9d6d5642ca2ed704d27949a271585638d12515",
+    "src/keeper_renderer.rs": "d19c0c25f921ae4780595a895b66d0953c37b3f0f02e552630b609b0b9ee629f",
     "src/lib.rs": "525cb578110f63b2171b7ca340f88af5fec8e688b31db8a0c3369e92dc424d73",
     "src/main.rs": "743eef96991f9cd516e336c9a4bf974dff0ad20e2fb0eb2e506161a467ad6601",
     "src/marker.rs": "c585c407ab2ce1917e7bd2cfbab9eedc5ab84f1843c6bd155819a683fa0b013b",
     "src/marker.wgsl": "bdca2b98dad15ada41c92ec8183683192b2193083659fb6775454d63bee1e534",
     "src/mesh.rs": "6f393a87b1fe719b2b4675601a8241d78761e4068fc48383faf19d0896c84f1c",
-    "src/model_layer.rs": "cbd037bf2edc689cbd91000cb15287acb1bf85aa71eba26d1965626083d0bf56",
+    "src/model_layer.rs": "c5dcf22493c862d85df2f5eb2c5ee678a19f430297b874c32a484912d55fbdb6",
     "src/model_layer.wgsl": "3e5a65296b072af438eac4ac04bfeab334c5689e1c93d9262c6c876958c5c265",
     "src/navigation.rs": "d911de94d04c508e67d7c72e966505630949d4c2f383fea41ab4ea4e70b58ce5",
     "src/navigation.wgsl": "1842570208a54741f7a41e1fbce008ac8cbec675dfacc21afb84e475b012f865",
     "src/placenames.rs": "a241c516ff1b31df7d4b02155a6cd06369bbc7a8556b226f84107b15a64d9a77",
     "src/profile.rs": "46079037c1318ab3027c1d31b5f048498e735a074bc4fad6497ac3057f00eea2",
-    "src/renderer.rs": "833789b2e66b2b6b1c6541f3fb7a9929efa725ad129415f9cded4cf7c2e054bd",
+    "src/renderer.rs": "51296a139a33cfaa66a24fd7ef2947be9aa0df71a779046f0f520ff3a3fedb86",
     "src/terrain.rs": "a31bde910ac01d570fb6896b677f40aabfb692dc6ba3a2bccc8a6d7110a40dc2",
     "src/tile.rs": "0cbbc27eb4d8cdb966d703a2779146e38e6e03b7c53be91baa15616c087b3c3f",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
     "src/tiles3d.rs": "d1e6a1f50e074131af2b10be22261024e36704b012bdfd0bac7912d44d690d43",
     "src/vector_layer.rs": "35125410a9c39095d77bf4ea2296a6d3d5ed39a3185a783e782a058d68385259",
     "src/vector_layer.wgsl": "ae0918515338d06b618aa6629419f79c42aea768145c19628cba7405eb827bae",
-    "src/walk_camera.rs": "0457f31f276bc552b24848ecf578a6f22a0f8bcd2481fa8ea29a66d650fb76f0",
+    "src/walk_camera.rs": "a4369c16c516ffaf3b2045df06c76a72804c93b15c2a88f341ea53ab8a18fbdf",
     "src/web.rs": "398976e8087e6641e00e9180927ef0b60df28b1aaaa7e963361c2ea455d71b94",
     "src/web_cache.rs": "2a39ab694f39b8d31fb3f23cc77709ff3597e47908912634958e0a801d461f90",
-    "web/navigation-mode.js": "30d6df75b23a960096e550de1664e3ee81676b8c1482cbbeffca6e5651dc094a"
+    "web/navigation-mode.js": "0850935b7d7120e9c017a28bca10df9e65f7b7a7d29a5f78b9a5a4a7e5c04c57"
   },
   "artifacts": {
     "pkg/cangling_desktop.js": "cef398759823a102997eb14035b5688ff362c49f37632ef18aa6ec0adc957d43",
-    "pkg/cangling_desktop_bg.wasm": "630030e6f7a75726ea0590b773e85a6f4a2fbde69215ee3b2d97bdf3855c586e"
+    "pkg/cangling_desktop_bg.wasm": "847660cba98bf28879987072b16115106350a032d41df4875870aca9e47d236d"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }

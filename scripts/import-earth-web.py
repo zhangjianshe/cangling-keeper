@@ -11,7 +11,7 @@ index=(source/'web/index.html').read_text().replace('<script type="module">','<s
 (target/'licenses').mkdir(exist_ok=True)
 for p in (source/'assets').glob('*LICENSE.txt'):shutil.copy2(p,target/'licenses'/p.name)
 hashfile=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
-files=[source/'Cargo.toml',source/'Cargo.lock',source/'scripts/build-web.sh',source/'web/navigation-mode.js']+[p for folder in ['src','assets'] for p in (source/folder).rglob('*') if p.is_file()]
+files=[source/'Cargo.toml',source/'Cargo.lock',source/'scripts/build-web.sh',source/'scripts/build-walker.py',source/'web/navigation-mode.js']+[p for folder in ['src','assets'] for p in (source/folder).rglob('*') if p.is_file()]
 manifest={'builtAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'sourceCommit':subprocess.check_output(['git','rev-parse','HEAD'],cwd=source,text=True).strip() if (source/'.git').exists() else None,'dirtyWorkingTree':bool(subprocess.check_output(['git','status','--porcelain'],cwd=source)) if (source/'.git').exists() else None, 'sourceSha256':{str(p.relative_to(source)):hashfile(p) for p in sorted(files)},'artifacts':{str(p.relative_to(target)):hashfile(p) for p in (target/'pkg').iterdir() if p.is_file()},'wasmBindgen':subprocess.check_output(['wasm-bindgen','--version'],text=True).strip()}
 (target/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
 print('Imported Earth runtime:',target)
