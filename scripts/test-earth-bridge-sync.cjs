@@ -1,7 +1,7 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 const handlers={},sent=[];let nativeFrame=false,camera={longitude:1},sets=0;
-const context={console,JSON,Promise,setTimeout,clearTimeout,performance,innerWidth:100,innerHeight:100,parent:{postMessage:m=>sent.push(m)},document:{baseURI:'http://localhost/earth/index.html',addEventListener(){},hidden:false},keeper_image(){},keeper_model(){}};
-context.window={addEventListener:(n,f)=>(handlers[n]??=[]).push(f),removeEventListener:(n,f)=>handlers[n]=handlers[n].filter(v=>v!==f),createKeeperImageOverlay:()=>({prepare:async()=>{}}),createKeeperModelOverlay:()=>({prepare:async()=>{}})};
+const context={console,JSON,Promise,setTimeout,clearTimeout,performance,innerWidth:100,innerHeight:100,parent:{postMessage:m=>sent.push(m)},document:{baseURI:'http://localhost/earth/index.html',addEventListener(){},hidden:false},keeper_image(){},keeper_model(){},keeper_tile(){}};
+context.window={addEventListener:(n,f)=>(handlers[n]??=[]).push(f),removeEventListener:(n,f)=>handlers[n]=handlers[n].filter(v=>v!==f),createKeeperTilesOverlay:()=>({prepare(){},pause(){},dispose(){}}),createKeeperImageOverlay:()=>({prepare:async()=>{}}),createKeeperModelOverlay:()=>({prepare:async()=>{}})};
 context.URL=URL;context.keeper_command=(m,args)=>{assert(!nativeFrame,'native renderer must not be re-entered during its frame event');if(m==='set_view'){camera=JSON.parse(args);sets++;}return JSON.stringify(m==='get_view'?camera:true);};
 vm.runInNewContext(fs.readFileSync('ui/earth/keeper-bridge.js','utf8').replace(/^import .*;$/gm,''),context);
 const emit=(n,e)=>{for(const f of [...(handlers[n]||[])])f(e);};const flush=()=>new Promise(r=>setTimeout(r,20));

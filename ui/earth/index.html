@@ -33,7 +33,7 @@
       window.addEventListener('cangling-gpu-error', () => {
         const message = window.canglingLastGpuError || 'GPU render failed';
         if (backend === 'webgpu') {
-          const fallback = new URL(location.href);
+          const fallback = new URL(document.baseURI);
           fallback.searchParams.set('backend', 'webgl2');
           showError(`WebGPU 绘制失败，正在切换 WebGL2…\n${message}`);
           location.replace(fallback);
@@ -49,7 +49,7 @@
           startDataWorker();
           const { default: init, start } = await import('./pkg/cangling_desktop.js');
           await init();
-          const forced = new URLSearchParams(location.search).get('backend');
+          const forced = new URL(document.baseURI).searchParams.get('backend');
           const adapter = forced === 'webgl2' ? null :
             navigator.gpu ? await navigator.gpu.requestAdapter() : null;
           backend = adapter ? 'webgpu' : 'webgl2';

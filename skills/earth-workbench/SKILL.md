@@ -42,3 +42,15 @@ description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、
 场景保存但未确认绘制时说明“已保存，等待地球页面加载”，不要循环重复添加。绘制确认也不是目视验收，不保证图层在当前相机可见范围内；需要时定位到真实范围中心再核对。
 
 视角独立同步：手动拖动不会改变图层 revision。使用 earth_fly_to 后须核对 renderedCameraCommandRevision == cameraCommandRevision；只有图层 renderedRevision 相等不能证明定位已显示。
+
+## 原生 3D Tiles
+使用 `earth_add_tileset` 添加 Cangling Map 发布的 HTTP(S) `/3dtiles/<id>/tileset.json`，
+可指定 name 和 maximumScreenSpaceError（2–128，默认16）。数据集已有地理坐标，
+不要把 GLB 经度纬度放置参数套用到 tileset。然后用 earth_fly_to 定位到数据范围。
+支持显式 1.0/1.1 瓦片树、嵌套 tileset、静态 GLB / b3dm、ADD / REPLACE；
+暂不支持隐式瓦片、点云、i3dm/cmpt 和压缩扩展。资源服务必须允许浏览器 CORS，
+HTTPS 页面须使用 HTTPS 资源，无登录凭证和查询参数，子资源必须在数据集目录内。
+瓦片树遍历、视锥裁剪、屏幕误差 LOD、模型解码与绘制均由原生 Rust/WGPU 完成。
+使用 earth_get_view 核对 tilesetStatus.layers 的 drawing、pending、errors 和 reportedAt；
+这是最近浏览器报告，不代表浏览器仍在线。renderedRevision 只确认场景应用，
+不能证明瓦片全部加载。用 earth_set_layer_visibility 的图层 ID 控制显示或隐藏。

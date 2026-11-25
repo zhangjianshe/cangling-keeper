@@ -253,3 +253,67 @@ At globe-scale altitude the existing horizon-safe maximum tilt remains enforced.
 - 渲染确认分别检查 `renderedRevision == revision` 与 `renderedCameraCommandRevision == cameraCommandRevision`；保存成功不表示浏览器已渲染。
 
 验证：`python3 scripts/test-earth-http.py`，`NODE_PATH=/zjs/satway/dev/n8n/node_modules node scripts/test-earth-panel-ui.cjs`，`node scripts/test-earth-bridge-sync.cjs`。
+
+## 原生 3D Tiles（2026-11-25）
+
+地球的“图层（L）”面板可添加 Cangling Map 发布的
+`http(s)://<map>/3dtiles/<id>/tileset.json`。智能体使用
+`earth_add_tileset({url,name?,maximumScreenSpaceError?})`；
+HTTP 对应 `agent_earth_add_tileset`，增加 projectId、accountKey、
+expectedRevision。图层按账户和项目保存，参与 SSE 同步、显隐、删除、
+清空和刷新恢复。旧场景自动视为 tilesets 空数组，不迁移或删除已有资源。
+
+### 原生执行路径
+- `src/tiles3d.rs`（Earth 原生源码）解析显式瓦片树，继承变换和 refine，
+  计算 sphere/box/region 的保守包围球，视锥裁剪及按屏幕误差选择 LOD。
+- ADD 保留父内容；REPLACE 在可见子树覆盖就绪前保留父内容。
+  没有粗级内容的分支允许显示已就绪的部分子内容。
+- GLB / 现代 b3dm 解码后复用 Rust/WGPU ModelLayerRenderer；
+  glTF 节点变换 → Y-up 转 Z-up → RTC_CENTER → 继承 ECEF 变换，
+  再转换为 Earth 内部轴与相机相对坐标，与地球共用相机及深度缓冲。
+- `ui/earth/tiles-overlay.js` 只负责受限 HTTP 传输，不解析 LOD 或创建 DOM 模型。
+  每 250ms 在本机原生状态机上更新选择；空闲时不轮询后端场景。
+  状态有变化时才回报服务器，最多每秒一次。页面隐藏暂停网络，恢复后继续。
+- Earth 源码精确归档于 `vendor/cangling-earth/source.tar.gz`，
+  `ui/earth/manifest.json` 记录源文件及 WASM 哈希，可独立解包重新构建。
+
+### 预算与边界
+- 最多4个 tileset、每个10000节点、深度32（包括外部 tileset）。
+- 每层最多32个选中的几何资源（包括回退父级），总计128个；
+  超限优先保留近处选择及粗级回退，并报告 budgetLimited。
+  无粗级内容的宽分支可能只显示部分内容。
+- 几何缓存估计上限128 MiB，单资源16 MiB，单JSON4 MiB；
+  GLB沿用静态模型的几何/纹理限制。预算不足明确报错并保留可用父级。
+  当前不是大规模城市数据的完整性能实现。
+- 4个并发请求、15秒超时、最多3次自动尝试，退避等待。
+  不再需要的请求取消，离开选择集或隐藏图层时释放几何资源；
+  外部JSON树保留到图层删除/URL变化/页面刷新。
+- 支持显式1.0/1.1、content/contents、外部 tileset、静态 GLB、现代28字节头 b3dm，
+  b3dm RTC_CENTER 当前支持JSON三元组。batch table 暂不提供要素选择。
+- 暂不支持 implicit、pnts、i3dm、cmpt、压缩扩展、外部 glTF 缓冲/纹理、
+  完整 PBR、动画。重复外部 tileset URI明确拒绝，避免递归引用。
+- URL无用户名密码、查询参数和片段；子资源必须同源且在数据集根路径内，
+  不接受父目录跳转或重定向；请求不携带凭证，要求源服务CORS。
+  HTTPS页面只能加载HTTPS资源。没有新增服务器通用URL代理。
+- `earth_get_view` 的 tilesetStatus 为最近浏览器报告：
+  reportedAt、revision、drawing、loaded、pending、errors、budgetLimited。
+  `renderedRevision` 只代表场景应用；不能当作全部瓦片已经显示。
+  多个窗口时保留最后一份报告，报告时间不代表窗口持续在线。
+
+规范参考：[3D Tiles](https://github.com/CesiumGS/3d-tiles/tree/main/specification)，
+[b3dm 坐标变换](https://github.com/CesiumGS/3d-tiles/tree/main/specification/TileFormats/Batched3DModel)。
+
+### 验证
+- Earth `cargo test --lib`：110通过，1个显式GPU资产测试默认忽略；
+  另外指定 Duck.glb 运行该GPU测试通过。9项瓦片树测试涵盖LOD、
+  REPLACE/ADD、嵌套变换、无效资源、预算、隐藏取消和重试。
+- Keeper `cargo test agent_earth_tiles`、`python3 scripts/test-earth-http.py`：
+  URL校验、持久化、版本冲突、状态回报、账户隔离及模拟模型真实工具调用。
+- `node scripts/test-earth-tiles-transport.cjs`：并发、取消、越界URL、
+  请求凭证策略、正常上传、超大资源、删除后的迟到响应。
+- `NODE_PATH=<jsdom所在node_modules> node scripts/test-earth-panel-ui.cjs`；
+  `node scripts/test-earth-bridge-sync.cjs`。
+- `python3 scripts/test-earth-tiles-browser.py --hold` 创建临时 Map + Keeper，
+  发布红色父瓦片、绿色GLB子瓦片和外部tileset内蓝色b3dm子瓦片。
+  用打印的独立地球URL检查远景红色/近景绿蓝、显隐及刷新恢复；
+  回车停止进程并清理测试目录，不触碰本机用户场景。

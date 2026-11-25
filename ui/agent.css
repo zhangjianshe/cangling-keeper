@@ -505,3 +505,5 @@
 
 @media(max-width:850px){.agent-sidebar-toggle-row{top:25px}}
 @media(max-width:560px){.agent-sidebar:not(:has(#agent-sidebar-content[hidden])){width:100px}.agent-sidebar-toggle-row{top:24px;right:4px}}
+.earth-tiles-form { display:flex; gap:8px; padding:8px 0; }
+.earth-tiles-form input { flex:1; min-width:0; }

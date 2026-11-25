@@ -35,6 +35,8 @@ pub(crate) fn get(s: &Store, project: &str) -> Result<Value, String> {
         scene["cameraCommandRevision"] = json!(0);
         scene["renderedCameraCommandRevision"] = json!(0);
     }
+    if scene.get("tilesets").is_none(){scene["tilesets"]=json!([]);}
+    if let Some(raw)=s.get_setting(&format!("{key}:tiles-status"))?{let status:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;if status["revision"]==scene["revision"]{scene["tilesetStatus"]=status;}}
     Ok(scene)
 }
 // Metadata-only notifications: each subscriber checks current account/project before delivery.
@@ -112,9 +114,10 @@ pub(crate) fn save(s: &Store, project: &str, args: &Value) -> Result<Value, Stri
     }
     let mut v = args["scene"].clone();
     validate(&v)?;
+    crate::agent_earth_tiles::validate(&v["tilesets"])?;
     crate::agent_earth_models::validate(s,project,&v["models"])?;
     if let Some(images)=v["images"].as_array(){if !images.is_empty(){image_table(s)?;let owner=crate::agent_account::owner(s)?;for image in images{let valid:bool=s.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_earth_images WHERE id=?1 AND owner=?2 AND project=?3)",rusqlite::params![image["id"].as_str(),owner,project],|r|r.get(0)).map_err(|e|e.to_string())?;if !valid{return Err("图片不属于当前账户和项目".into());}}}}
-    v = json!({"camera":old["camera"],"layers":v["layers"],"overlays":v["overlays"],"images":v.get("images").cloned().unwrap_or(json!([])),"models":v.get("models").cloned().unwrap_or(json!([])),"selection":v["selection"],"revision":old["revision"].as_u64().unwrap_or(0)+1,"renderedRevision":null});
+    v = json!({"camera":old["camera"],"layers":v["layers"],"overlays":v["overlays"],"images":v.get("images").cloned().unwrap_or(json!([])),"tilesets":v.get("tilesets").cloned().unwrap_or(json!([])),"models":v.get("models").cloned().unwrap_or(json!([])),"selection":v["selection"],"revision":old["revision"].as_u64().unwrap_or(0)+1,"renderedRevision":null});
     s.set_setting(&key(s, project)?, &v.to_string())?;
     let v = get(s, project)?;
     notify(s, project, &v)?;
@@ -128,6 +131,15 @@ pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, St
         return Err("账户已切换，请重新打开地球页面".into());
     }
     match command {
+        "agent_earth_add_tileset" => {let mut scene=get(s,project)?;crate::agent_earth_tiles::add(&mut scene,args)?;save(s,project,&json!({"expectedRevision":args["expectedRevision"],"scene":scene}))}
+        "agent_earth_tiles_status" => {
+            let scene=get(s,project)?;
+            let layers=args["layers"].as_array().filter(|a|a.len()<=4).ok_or("无效图层状态")?;
+            if args["revision"]!=scene["revision"]||args["layers"].to_string().len()>32768{return Err("场景版本已变化或状态过大".into());}
+            for layer in layers {if !scene["tilesets"].as_array().unwrap().iter().any(|l|l["id"]==layer["id"]){return Err("未知图层".into());}}
+            let value=json!({"revision":scene["revision"],"reportedAt":chrono::Utc::now().timestamp_millis(),"layers":layers});
+            s.set_setting(&format!("{}:tiles-status",key(s,project)?),&value.to_string())?;Ok(value)
+        }
         "agent_earth_add_model" | "agent_earth_publish_model" | "agent_earth_import" | "agent_earth_publish_image" | "agent_earth_add_image" => {
             let directory: String = s
                 .conn
@@ -187,7 +199,8 @@ fn set_location(scene: &mut Value, args: &Value) -> Result<(), String> {
 }
 pub(crate) fn definitions() -> Vec<Value> {
     let n = |min: f64, max: f64| json!({"type":"number","minimum":min,"maximum":max});
-    [("earth_publish_model","发布项目内静态GLB下载URL，内嵌纹理/缓冲区，最多16MiB，当前账户本机可访问。",json!({"path":{"type":"string","maxLength":200}}),json!(["path"])),
+    [("earth_add_tileset","添加原生3D Tiles图层。URL为允许CORS的公开HTTP(S) tileset.json（如Cangling Map发布地址）；支持显式瓦片树、GLB/b3dm，不支持隐式瓦片及点云。浏览器异步LOD加载；earth_get_view的tilesetStatus报告加载、绘制及错误，renderedRevision只代表场景已应用，不能据此声称瓦片已显示。",json!({"url":{"type":"string","maxLength":2048},"name":{"type":"string","maxLength":128},"maximumScreenSpaceError":n(2.,128.)}),json!(["url"])),
+    ("earth_publish_model","发布项目内静态GLB下载URL，内嵌纹理/缓冲区，最多16MiB，当前账户本机可访问。",json!({"path":{"type":"string","maxLength":200}}),json!(["path"])),
     ("earth_add_model","将项目静态GLB加载到WGS84经纬度，height米默认0，altitudeMode默认relativeToGround离地高，absolute为椭球高；heading度默认0，scale默认1（米），GLB的Y轴朝上。保存后等地球页面确认。",json!({"path":{"type":"string","maxLength":200},"longitude":n(-180.,180.),"latitude":n(-90.,90.),"height":n(-10000.,100000.),"heading":n(-360.,360.),"scale":n(0.001,10000.),"altitudeMode":{"type":"string","enum":["relativeToGround","absolute"]}}),json!(["path","longitude","latitude"])),
     ("earth_get_view","读取当前项目已保存地球视图、图层及浏览器最后渲染确认时间。未确认不代表地球已显示。",json!({}),json!([])),
     ("earth_fly_to","设置项目地球定位，经纬度为WGS84度，高度为米，可省略以保留当前高度；保存后由打开的地球页面应用。结果saved_not_rendered不是已完成渲染。",json!({"longitude":n(-180.,180.),"latitude":n(-90.,90.),"height":n(20.,100000000.)}),json!(["longitude","latitude"])),
@@ -286,13 +299,14 @@ pub(crate) fn execute(
     match tool {
         "earth_get_view" => {
             return Ok(
-                json!({"camera":scene["camera"],"layers":scene["layers"],"modelLayers":scene.get("models").cloned().unwrap_or(json!([])),"imageLayers":scene.get("images").cloned().unwrap_or(json!([])),"businessLayers":scene["overlays"].as_array().unwrap().iter().map(|v|json!({"path":v["path"],"visible":v["visible"]})).collect::<Vec<_>>(),"revision":scene["revision"],"renderedRevision":scene["renderedRevision"],"cameraRevision":scene["cameraRevision"],"cameraCommandRevision":scene["cameraCommandRevision"],"renderedCameraCommandRevision":scene["renderedCameraCommandRevision"],"renderedAt":scene["renderedAt"]}),
+                json!({"camera":scene["camera"],"layers":scene["layers"],"tilesetLayers":scene["tilesets"],"tilesetStatus":scene["tilesetStatus"],"modelLayers":scene.get("models").cloned().unwrap_or(json!([])),"imageLayers":scene.get("images").cloned().unwrap_or(json!([])),"businessLayers":scene["overlays"].as_array().unwrap().iter().map(|v|json!({"path":v["path"],"visible":v["visible"]})).collect::<Vec<_>>(),"revision":scene["revision"],"renderedRevision":scene["renderedRevision"],"cameraRevision":scene["cameraRevision"],"cameraCommandRevision":scene["cameraCommandRevision"],"renderedCameraCommandRevision":scene["renderedCameraCommandRevision"],"renderedAt":scene["renderedAt"]}),
             );
         }
         "earth_get_selection" => {
             return Ok(json!({"selection":scene["selection"],"renderedAt":scene["renderedAt"]}));
         }
         "earth_publish_model" => {return crate::agent_earth_models::publish(s,&project,root,args["path"].as_str().ok_or("缺少路径")?);}
+        "earth_add_tileset" => {crate::agent_earth_tiles::add(&mut scene,args)?;}
         "earth_add_model" => {crate::agent_earth_models::add(s,&project,root,&mut scene,args)?;}
         "earth_publish_image" => {return publish_image(s,&project,root,args["path"].as_str().ok_or("缺少路径")?);}
         "earth_add_image_layer" => {add_image(s,&project,&mut scene,root,args["path"].as_str().ok_or("缺少路径")?,&args["polygon"])?;}
@@ -303,6 +317,7 @@ pub(crate) fn execute(
             let layer = args["layer"].as_str().ok_or("缺少图层")?;
             if ["boundaries", "graticule"].contains(&layer) {
                 scene["layers"][layer] = args["visible"].clone();
+            } else if scene["tilesets"].as_array().is_some_and(|a|a.iter().any(|v|v["id"]==layer)){scene["tilesets"].as_array_mut().unwrap().iter_mut().find(|v|v["id"]==layer).unwrap()["visible"]=args["visible"].clone();
             } else if scene.get("models").and_then(Value::as_array).is_some_and(|a|a.iter().any(|v|v["id"]==layer)){scene["models"].as_array_mut().unwrap().iter_mut().find(|v|v["id"]==layer).unwrap()["visible"]=args["visible"].clone();
             } else if scene.get("images").and_then(Value::as_array).is_some_and(|images|images.iter().any(|v|v["id"]==layer)) {
                 let image=scene["images"].as_array_mut().unwrap().iter_mut().find(|v|v["id"]==layer).unwrap();image["visible"]=args["visible"].clone();

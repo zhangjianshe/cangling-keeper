@@ -21,6 +21,7 @@ pub(crate) fn definitions() -> Vec<Value> {
 pub(crate) fn title(name: &str) -> &str {
     match name {
         "earth_publish_model"=>"生成模型下载链接",
+        "earth_add_tileset"=>"加载3D Tiles",
         "earth_add_model"=>"加载三维模型",
         "earth_publish_image"=>"生成图片下载链接",
         "earth_add_image_layer"=>"叠加地理图片",

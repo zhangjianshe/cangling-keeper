@@ -18,7 +18,7 @@ class Model(http.server.BaseHTTPRequestHandler):
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));calls.append(body)
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   count=sum(m['role']=='tool' for m in body['messages'])
-  actions=skill_steps+[('earth_publish_model',{'path':'demo.glb'}),('earth_add_model',{'path':'demo.glb','longitude':120,'latitude':30}),('earth_publish_image',{'path':'overlay.png'}),('earth_add_image_layer',{'path':'overlay.png','polygon':[[120,30],[121,30],[121,31],[120,31]]}),('earth_fly_to',{'longitude':116.4,'latitude':39.9,'height':1000000}),('earth_add_geojson_layer',{'path':'demo.geojson'}),('earth_get_view',{}),('earth_get_selection',{}),('earth_set_layer_visibility',{'layer':'graticule','visible':True})]
+  actions=skill_steps+[('earth_add_tileset',{'url':'http://localhost:8080/3dtiles/agent/tileset.json'}),('earth_publish_model',{'path':'demo.glb'}),('earth_add_model',{'path':'demo.glb','longitude':120,'latitude':30}),('earth_publish_image',{'path':'overlay.png'}),('earth_add_image_layer',{'path':'overlay.png','polygon':[[120,30],[121,30],[121,31],[120,31]]}),('earth_fly_to',{'longitude':116.4,'latitude':39.9,'height':1000000}),('earth_add_geojson_layer',{'path':'demo.geojson'}),('earth_get_view',{}),('earth_get_selection',{}),('earth_set_layer_visibility',{'layer':'graticule','visible':True})]
   if count<len(actions):
    name,args=actions[count];delta={'tool_calls':[{'index':0,'id':'earth'+str(count),'type':'function','function':{'name':name,'arguments':json.dumps(args)}}]};reason='tool_calls'
   else:delta={'content':'场景已保存，等待浏览器渲染确认。'};reason='stop'
@@ -122,6 +122,16 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   for path in ['broken.glb','link.glb','../demo.glb','/etc/passwd']:
    call('agent_earth_publish_model',{**args,'path':path},400)
   stop();start();assert call('agent_earth_get',args)==placed;imported=placed
+  # Tiles references/status persist without modifying scene revision; stale reports are rejected.
+  placed=call('agent_earth_add_tileset',{**args,'expectedRevision':placed['revision'],'url':'http://localhost:8080/3dtiles/demo/tileset.json','name':'测试瓦片'})
+  lid=placed['tilesets'][0]['id'];rev=placed['revision']
+  for extra in [{'accountKey':'stale'},{'expectedRevision':0},{'url':'file:///tmp/tileset.json'}]:
+   call('agent_earth_add_tileset',{**args,'expectedRevision':rev,'url':'http://localhost:8080/3dtiles/other/tileset.json',**extra},400)
+  report=call('agent_earth_tiles_status',{**args,'revision':rev,'layers':[{'id':lid,'drawing':2,'pending':0,'errors':[]}]})
+  assert call('agent_earth_get',args)['revision']==rev
+  call('agent_earth_tiles_status',{**args,'revision':0,'layers':[]},400)
+  call('agent_earth_tiles_status',{**args,'revision':rev,'layers':[{'id':'other'}]},400)
+  imported=call('agent_earth_get',args);stop();start();assert call('agent_earth_get',args)==imported
   # Changing active identity cannot overwrite the previous account's scene.
   with sqlite3.connect(Path(tmp)/'data.sql') as db:
    for k,v in [('login_token','fixture'),('login_username','other'),('server_url','http://localhost')]:db.execute('INSERT OR REPLACE INTO settings(key,value) VALUES (?,?)',(k,v))
@@ -141,16 +151,16 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
    if not detail['modelPending']:break
    time.sleep(.05)
   assert detail['tasks'][-1]['status']=='complete',detail['tasks']
-  assert len(detail['runs'])==9+len(skill_steps) and all(r['status']=='succeeded' for r in detail['runs']),detail['runs']
+  assert len(detail['runs'])==10+len(skill_steps) and all(r['status']=='succeeded' for r in detail['runs']),detail['runs']
   result=call('agent_earth_get',args);assert result['camera']['longitude']==116.4 and result['layers']['graticule'] and result['renderedRevision'] is None
-  assert len(calls)==10+len(skill_steps)
+  assert len(calls)==11+len(skill_steps)
   loaded=[json.loads(r['output']) for r in detail['runs'] if r['tool']=='load_skill'][0]
   assert loaded['scope']=='system' and loaded['instructions'] and loaded['nextOffset']>0
   pages=[json.loads(r['output']) for r in detail['runs'] if r['tool']=='load_skill']
   assert ''.join(p['instructions'] for p in sorted(pages,key=lambda p:p['offset']))==skill_text
   tool_text=[m['content'] for r in calls for m in r['messages'] if m['role']=='tool'];assert any('saved_not_rendered' in t for t in tool_text)
   with urllib.request.urlopen(base+'/earth/pkg/cangling_desktop_bg.wasm') as r:assert r.headers['Content-Type'].startswith('application/wasm') and r.read(4)==b'\x00asm'
-  print('PASS Earth: restart persistence, revisions, account isolation, traversal/symlinks, invalid coordinates, nine tools through ReAct, GLB publication/placement/download, image publication/download, WASM MIME')
+  print('PASS Earth: restart persistence, revisions, account isolation, traversal/symlinks, invalid coordinates, ten tools through ReAct, 3D Tiles storage/status, GLB publication/placement/download, image publication/download, WASM MIME')
  finally:
   if proc and proc.poll() is None:stop()
   model.shutdown()
