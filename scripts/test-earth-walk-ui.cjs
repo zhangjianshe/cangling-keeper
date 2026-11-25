@@ -1,8 +1,9 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
 const dom=new JSDOM('<canvas tabindex="0"></canvas><input>',{url:'http://localhost/earth/index.html',runScripts:'outside-only'}),w=dom.window;
-let walking=false,releases=0;const calls=[];
+let walking=false,releases=0,blocked=null,clock=1000;
+Object.defineProperty(w.performance,'now',{value:()=>clock});const calls=[];
 w.document.exitPointerLock=()=>{releases++;};
-w.keeper_command=(method,raw)=>{const a=JSON.parse(raw);calls.push([method,a]);if(method==='navigation_mode'){if(typeof a.walking==='boolean')walking=a.walking;return JSON.stringify({walking});}return 'true';};
+w.keeper_command=(method,raw)=>{const a=JSON.parse(raw);calls.push([method,a]);if(method==='navigation_mode'){if(typeof a.walking==='boolean')walking=a.walking;return JSON.stringify({walking,blocked});}return 'true';};
 w.eval(fs.readFileSync('ui/earth/navigation-mode.js','utf8').replace("import {keeper_command} from './pkg/cangling_desktop.js';",'const keeper_command=window.keeper_command;'));
 const key=(code,extra={},target=w)=>target.dispatchEvent(new w.KeyboardEvent('keydown',{code,bubbles:true,cancelable:true,...extra}));
 const indicator=w.document.querySelector('.earth-navigation-mode');
@@ -11,6 +12,9 @@ key('KeyM');assert(!walking);w.dispatchEvent(new w.Event('cangling-earth-ready')
 key('KeyM',{},w.document.querySelector('input'));assert(!walking);
 key('KeyM');assert(walking);assert.equal(indicator.dataset.mode,'first');
 key('KeyM',{repeat:true});assert(walking);
+blocked='terrain_pending';w.dispatchEvent(new w.Event('cangling-earth-frame'));assert.equal(indicator.dataset.blocked,'true');assert(indicator.title.includes('地形加载中'));
+clock+=400;blocked='steep';w.dispatchEvent(new w.Event('cangling-earth-frame'));assert(indicator.title.includes('坡度或台阶过高'));
+clock+=400;blocked=null;w.dispatchEvent(new w.Event('cangling-earth-frame'));assert.equal(indicator.dataset.blocked,'false');
 key('Space');assert.equal(calls.at(-1)[0],'walk_jump');const jumps=calls.length;
 key('Space',{repeat:true});assert.equal(calls.length,jumps);
 key('Space',{},w.document.querySelector('input'));assert.equal(calls.length,jumps);
