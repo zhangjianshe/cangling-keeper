@@ -1,8 +1,11 @@
 // Fetch and read cached map resources away from the rendering thread.
 async function fetchBytes(url, cacheName) {
-  const request = new Request(url);
+  // Agri URLs are mutable: CacheStorage has no automatic HTTP freshness checks.
+  // Revalidate through the browser HTTP cache instead of serving saved bytes forever.
+  const mutableImagery = cacheName?.startsWith('cangling-imagery-agri-');
+  const request = new Request(url, mutableImagery ? {cache: 'no-cache'} : {});
   let cache;
-  if (cacheName && self.caches) {
+  if (!mutableImagery && cacheName && self.caches) {
     try { cache = await caches.open(cacheName); } catch { /* CacheStorage is optional. */ }
   }
   if (cache) {
