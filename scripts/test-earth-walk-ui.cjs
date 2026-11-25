@@ -11,6 +11,9 @@ key('KeyM');assert(!walking);w.dispatchEvent(new w.Event('cangling-earth-ready')
 key('KeyM',{},w.document.querySelector('input'));assert(!walking);
 key('KeyM');assert(walking);assert.equal(indicator.dataset.mode,'first');
 key('KeyM',{repeat:true});assert(walking);
+key('Space');assert.equal(calls.at(-1)[0],'walk_jump');const jumps=calls.length;
+key('Space',{repeat:true});assert.equal(calls.length,jumps);
+key('Space',{},w.document.querySelector('input'));assert.equal(calls.length,jumps);
 key('KeyW');assert.equal(calls.at(-1)[1].forward,1);key('ShiftLeft');assert(calls.at(-1)[1].sprint);
 w.dispatchEvent(new w.Event('blur'));assert.equal(calls.at(-1)[1].forward,0);
 key('KeyP');assert.equal(indicator.dataset.mode,'third');key('BracketRight');assert.equal(JSON.parse(w.localStorage.getItem('earth.walk.preferences')).speed,30);
@@ -19,5 +22,5 @@ key('KeyW');canvas.dispatchEvent(new w.MouseEvent('pointerdown',{button:2,bubble
 assert.equal(canvas.dispatchEvent(new w.MouseEvent('contextmenu',{bubbles:true,cancelable:true})),false);
 let help=false;w.addEventListener('keydown',e=>{if(e.code==='F1')help=true;});key('F1');assert(help);
 key('KeyM');assert(!walking);assert.equal(indicator.dataset.mode,'orbit');
-const before=calls.length;key('KeyP');key('KeyW');assert.equal(calls.length,before);
+const before=calls.length;key('KeyP');key('KeyW');key('Space');assert.equal(calls.length,before);
 dom.window.close();console.log('PASS readiness, editable isolation, M/P, repeats, speed, movement, right-click release, F1 and orbit isolation');

@@ -25,6 +25,7 @@ window.addEventListener('keydown',e=>{
   return;
  }
  if(!walking)return;
+ if(e.code==='Space'){e.preventDefault();e.stopImmediatePropagation();if(!e.repeat)try{call('walk_jump');}catch{}return;}
  if(movement.has(e.code)){e.preventDefault();e.stopImmediatePropagation();keys.add(e.code);controls();}
  if(e.code==='Escape'||e.code==='F1')release();
 },true);
