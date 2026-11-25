@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-25T10:40:37.231080+00:00",
+  "builtAt": "2026-11-25T10:47:17.300900+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -61,7 +61,7 @@
     "src/terrain.rs": "ceb56cfbe7113721cc4f0f0b18ac60ac51d37880ffca50b90a19ddc0f770843b",
     "src/tile.rs": "bdc77379876868d8cb1973209261942c9cee67bd27581b0abffd4e297e95c25b",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
-    "src/tiles3d.rs": "d1e6a1f50e074131af2b10be22261024e36704b012bdfd0bac7912d44d690d43",
+    "src/tiles3d.rs": "26bdcc6d98a4139bea0c209d2cca5f95a7fa1666bc708947f3817d57c2d295e1",
     "src/vector_layer.rs": "35125410a9c39095d77bf4ea2296a6d3d5ed39a3185a783e782a058d68385259",
     "src/vector_layer.wgsl": "ae0918515338d06b618aa6629419f79c42aea768145c19628cba7405eb827bae",
     "src/walk_camera.rs": "c868f6eb841f85b2b4dc9afbf37fa6a02fce0ba22de5d58c680803b855b6c873",
@@ -72,8 +72,8 @@
     "web/navigation-mode.js": "a67d125bb249af351202c657a25b2615012d584ad11bf873006137acb4cd87e9"
   },
   "artifacts": {
-    "pkg/cangling_desktop.js": "bc138374b7abef28a12946849b70fdcaacf08a09fabfd623e7b896a3224d4353",
-    "pkg/cangling_desktop_bg.wasm": "5bc2a7520cb8d5cfb7d96c510bb323651a6af26605dbe3e6b8bad7c8b022700a"
+    "pkg/cangling_desktop.js": "47ac033965c7efea3a8744b76d4bbd10171b6af095c4312d8f72f323d82c3bd8",
+    "pkg/cangling_desktop_bg.wasm": "37758b53b86659e4e6157a2479b758f0923daa043ae7096eac4e77c5b2a56549"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }
