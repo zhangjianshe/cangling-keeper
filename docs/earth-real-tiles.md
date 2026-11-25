@@ -36,8 +36,17 @@ Keeper 新建独立的“3D Tiles 示例”项目，保留现有 general 场景�
 - 指定 `EARTH_TEST_B3DM` 运行 `decode_real_tiles_budget -- --ignored`：通过。
 - 浏览器WASM/WebGL2：三级模型显示、REPLACE远近往返切换、倾斜视角通过。
 
-## 已知显示限制
+## 法线与基础光照复验
 
-当前模型shader显示基础色/纹理，没有法线光照和PBR明暗。
-该无纹理示例因此呈灰色轮廓，不能据此声称已验证表面光照细节。
-LOD几何加载与显示正常；后续应补充基础光照来展示扫描表面细节。
+原先的纯基础色显示已替换为环境光、方向漫反射、少量视角补光和高光。
+优先读取 glTF NORMAL，缺失时按三角形面积生成顶点法线；节点变换和地理放置
+均使用逆转置矩阵，支持非均匀缩放。法线的 CPU 存储计入缓存预算。
+影像图层不使用此模型光照，不改变底图亮度。
+
+- 原生 `cargo test --lib`：112通过，2个外部资产测试默认忽略。
+- Duck GLB GPU上传/绘制及法线测试：3通过；包含退化面/未使用顶点、
+  非均匀缩放、镜像和奇异矩阵校验。
+- Keeper 本机 WASM/WebGL2 中 Dragon 的曲面凹凸、头部和身体明暗可见。
+- 45°视角复验 30km/6km/2km，分别选择 low/medium/high；均 drawing=1、
+  pending=0、errors=[]、budgetLimited=false。
+- 当前是基础光照，不含投影阴影、法线贴图或完整 PBR 材质。

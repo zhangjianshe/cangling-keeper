@@ -225,7 +225,10 @@ after layer removal, just like images; deletion does not delete project source f
 
 Rendering is native Rust/wgpu, using node transforms, triangle geometry, base colour
 and embedded PNG/JPEG textures with the globe camera/depth buffer. No DOM model overlay.
-This first version is not a full PBR renderer: no lighting model, metallic/roughness,
+Models use imported vertex normals (or area-weighted generated normals when absent),
+inverse-transpose normal transforms, ambient/directional diffuse lighting, view fill and
+a small specular highlight. Imagery layers retain their original unlit rendering.
+This is not a full PBR renderer: no shadows, metallic/roughness,
 normal maps, animation, skins, morphs, required compression extensions or external URIs.
 Bounds: 16 MiB per GLB, 8 models, 250k vertices, 64 primitives, 32 MiB decoded texture
 budget per model, 128 MiB snapshot budget per account. Unsupported geometry and required extensions fail explicitly; additional PBR material channels are ignored.
