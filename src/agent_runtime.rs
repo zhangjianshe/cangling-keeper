@@ -268,6 +268,21 @@ pub(crate) async fn execute(
     }
     let validation=parsed.as_ref().map_err(|_|"工具参数不是有效 JSON，未执行".to_string()).and_then(|args|crate::agent_tool_args::validate(&call.name,args));
     if let Err(error)=validation{return finish_result(&core,session,response,&run,call,Err(error),false,sink.as_ref());}
+    if matches!(call.name.as_str(),"earth_search_datasets"|"earth_load_dataset") {
+        let catalog=tokio::select!{biased;
+            _=&mut *cancel=>{persist_run(&core,session,response,&run,"stopped","已停止数据集查询",sink.as_ref())?;return Ok(None)},
+            _=tokio::time::sleep_until(*deadline)=>{persist_run(&core,session,response,&run,"failed","数据集查询超过任务时限",sink.as_ref())?;return Err("Agent已达到执行时限".into())},
+            value=crate::agent_earth_catalog::fetch(parsed.as_ref().unwrap())=>value
+        };
+        let result=catalog.and_then(|catalog|{
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            crate::agent_history::require_active(&store,session)?;
+            if call.name=="earth_search_datasets" {return Ok(catalog);}
+            let mut args=parsed.as_ref().unwrap().clone();args["_catalog"]=catalog;
+            crate::agent_earth::execute(&store,session,&call.name,&args,&root)
+        });
+        return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());
+    }
     if call.name.starts_with("earth_"){let result={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_earth::execute(&store,session,&call.name,parsed.as_ref().unwrap(),&root)};return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());}
     if call.name == "update_plan" {
         let result=parsed.map_err(|_|"计划参数不是有效 JSON".to_string()).and_then(crate::agent_plan::update);

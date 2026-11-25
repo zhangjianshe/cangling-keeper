@@ -3,6 +3,8 @@
 import json,os,tempfile,subprocess,socket,sqlite3,time,urllib.request,urllib.error,threading,http.server
 from pathlib import Path
 calls=[]
+action_index=0
+fixture_layer=None
 import hashlib
 skill_text=Path('skills/earth-workbench/SKILL.md').read_text()
 skill_sha=hashlib.sha256(skill_text.encode()).hexdigest();skill_steps=[];offset=0
@@ -14,11 +16,25 @@ while offset<len(skill_text):
 
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*a):pass
+ def do_GET(self):
+  assert self.path.startswith('/api/3dtiles/discover'),self.path
+  self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers()
+  self.wfile.write(json.dumps({'datasets':[{'id':'fixture-buildings','name':'测试建筑','version':'a'*64,'bounds':[113.7,34.7,113.8,34.8]}],'total':1,'truncated':False}).encode())
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));calls.append(body)
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
-  count=sum(m['role']=='tool' for m in body['messages'])
-  actions=skill_steps+[('earth_add_tileset',{'url':'http://localhost:8080/3dtiles/agent/tileset.json'}),('earth_publish_model',{'path':'demo.glb'}),('earth_add_model',{'path':'demo.glb','longitude':120,'latitude':30}),('earth_publish_image',{'path':'overlay.png'}),('earth_add_image_layer',{'path':'overlay.png','polygon':[[120,30],[121,30],[121,31],[120,31]]}),('earth_fly_to',{'longitude':116.4,'latitude':39.9,'height':1000000}),('earth_add_geojson_layer',{'path':'demo.geojson'}),('earth_get_view',{}),('earth_get_selection',{}),('earth_set_layer_visibility',{'layer':'graticule','visible':True})]
+  global action_index,fixture_layer
+  for message in body["messages"]:
+   if message["role"]=="tool":
+    try:
+     content=json.loads(message["content"])
+     for layer in content.get("tilesetLayers",[]):
+      if layer.get("datasetId")=="fixture-buildings":fixture_layer=layer["id"]
+    except (ValueError,AttributeError):pass
+  if not body.get('tools'):
+   self.wfile.write(('data: '+json.dumps({'choices':[{'delta':{'content':'测试场景执行中，继续下一步骤。'},'finish_reason':'stop'}]})+'\n\ndata: [DONE]\n\n').encode());return
+  count=action_index;action_index+=1
+  actions=skill_steps+[('earth_search_datasets',{'query':'测试建筑'}),('earth_load_dataset',{'datasetId':'fixture-buildings'}),('earth_load_dataset',{'datasetId':'fixture-buildings'}),('earth_set_layer_visibility',{'layer':fixture_layer or 'missing','visible':False}),('earth_remove_tileset',{'layer':fixture_layer or 'missing'}),('earth_load_dataset',{'datasetId':'fixture-buildings'}),('earth_add_tileset',{'url':'http://localhost:8080/3dtiles/agent/tileset.json'}),('earth_publish_model',{'path':'demo.glb'}),('earth_add_model',{'path':'demo.glb','longitude':120,'latitude':30}),('earth_publish_image',{'path':'overlay.png'}),('earth_add_image_layer',{'path':'overlay.png','polygon':[[120,30],[121,30],[121,31],[120,31]]}),('earth_fly_to',{'longitude':116.4,'latitude':39.9,'height':1000000}),('earth_add_geojson_layer',{'path':'demo.geojson'}),('earth_get_view',{}),('earth_get_selection',{}),('earth_set_layer_visibility',{'layer':'graticule','visible':True})]
   if count<len(actions):
    name,args=actions[count];delta={'tool_calls':[{'index':0,'id':'earth'+str(count),'type':'function','function':{'name':name,'arguments':json.dumps(args)}}]};reason='tool_calls'
   else:delta={'content':'场景已保存，等待浏览器渲染确认。'};reason='stop'
@@ -35,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   assert status==code,(name,status,v);return v.get('result',v)
  def start():
   global proc
-  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',tmp,'--no-open'],env={**os.environ,'TMPDIR':tmp},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',tmp,'--no-open'],env={**os.environ,'TMPDIR':tmp,'KEEPER_EARTH_MAP_URL':f'http://127.0.0.1:{model.server_port}/'},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
   for _ in range(100):
    try:call('agent_bootstrap');return
    except Exception:time.sleep(.05)
@@ -145,22 +161,24 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   with sqlite3.connect(Path(tmp)/'data.sql') as db:db.execute("DELETE FROM settings WHERE key='login_token'")
   assert call('agent_earth_get',args)==imported
   mid=call('agent_model_save',{'name':'Earth Fixture','enabled':True,'baseUrl':f'http://127.0.0.1:{model.server_port}','model':'earth-test','apiKey':'fixture'})['savedServerId'];call('agent_model_select',{'id':mid})
-  sid=call('agent_new_session')['id'];call('agent_send_message',{'sessionId':sid,'content':'展示测试点并打开经纬网'})
+  sid=call('agent_new_session')['id'];call('agent_execution_budget',{'sessionId':sid,'maxRounds':32});call('agent_send_message',{'sessionId':sid,'content':'展示测试点并打开经纬网'})
   for _ in range(300):
    detail=call('agent_session',{'sessionId':sid})
    if not detail['modelPending']:break
    time.sleep(.05)
   assert detail['tasks'][-1]['status']=='complete',detail['tasks']
-  assert len(detail['runs'])==10+len(skill_steps) and all(r['status']=='succeeded' for r in detail['runs']),detail['runs']
+  assert len(detail['runs'])==16+len(skill_steps) and all(r['status']=='succeeded' for r in detail['runs']),detail['runs']
   result=call('agent_earth_get',args);assert result['camera']['longitude']==116.4 and result['layers']['graticule'] and result['renderedRevision'] is None
-  assert len(calls)==11+len(skill_steps)
+  assert len([c for c in calls if c.get('tools')])==17+len(skill_steps)
+  catalog_layers=[l for l in result['tilesets'] if l.get('datasetId')=='fixture-buildings'];assert len(catalog_layers)==1 and catalog_layers[0]['datasetVersion']=='a'*64
+  stop();start();assert call('agent_earth_get',args)['tilesets']==result['tilesets']
   loaded=[json.loads(r['output']) for r in detail['runs'] if r['tool']=='load_skill'][0]
   assert loaded['scope']=='system' and loaded['instructions'] and loaded['nextOffset']>0
   pages=[json.loads(r['output']) for r in detail['runs'] if r['tool']=='load_skill']
   assert ''.join(p['instructions'] for p in sorted(pages,key=lambda p:p['offset']))==skill_text
   tool_text=[m['content'] for r in calls for m in r['messages'] if m['role']=='tool'];assert any('saved_not_rendered' in t for t in tool_text)
   with urllib.request.urlopen(base+'/earth/pkg/cangling_desktop_bg.wasm') as r:assert r.headers['Content-Type'].startswith('application/wasm') and r.read(4)==b'\x00asm'
-  print('PASS Earth: restart persistence, revisions, account isolation, traversal/symlinks, invalid coordinates, ten tools through ReAct, 3D Tiles storage/status, GLB publication/placement/download, image publication/download, WASM MIME')
+  print('PASS Earth: restart persistence, revisions, account isolation, traversal/symlinks, invalid coordinates, catalog search/load/idempotence/visibility/removal through ReAct, 3D Tiles storage/status, GLB publication/placement/download, image publication/download, WASM MIME')
  finally:
   if proc and proc.poll() is None:stop()
   model.shutdown()

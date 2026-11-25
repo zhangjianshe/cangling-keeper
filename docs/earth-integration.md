@@ -329,3 +329,22 @@ Agri 最大级别由 18 提高至 20，仍受原有 LOD/并发/显存预算限�
 
 验证：WASM release 和 Keeper debug 构建通过；`node scripts/test-earth-imagery-cache.cjs` 验证可变影像重新校验、其他资源缓存复用、网络失败不偷偷返回旧影像；3D Tiles 传输回归通过。Chrome 中刷新当前地球页面后郑东新区 CBD 的建筑与道路影像明显更新。
 源站抽查 WGS84(113.728,34.775)：12/16/18级有有效影像，20/855544/416137返回256×256全透明PNG。该源站数据覆盖/发布问题不属于客户端缓存修复，未修改服务器数据。
+
+### 已发布三维数据集发现与智能体加载
+
+Map 新增公开只读 `GET /api/3dtiles/discover?q=名称&bbox=西,南,东,北&id=数据集&limit=50`。
+只返回启用且已发布的数据集，不暴露磁盘路径。默认50、最多100，返回total/truncated。
+范围来自根包围体：region转换为WGS84度；小范围ECEF box/sphere应用根transform后估算包络。
+未知/大范围/跨日期变更线不自动定位；bbox查询排除未知范围。包络不是精确建筑覆盖率或逐栋属性。
+
+Keeper 通过 `KEEPER_EARTH_MAP_URL` 设置Map服务根地址（保留反向代理前缀），默认
+`https://train.cangling.cn/geoserver/`；本机联调设为 `http://127.0.0.1:4310/`。
+模型不能指定任意网络目标，目录请求15秒超时、响应最多1MiB、不跟随重定向、不携带登录凭证。
+`earth_search_datasets`查询；`earth_load_dataset`按ID重新解析当前发布版本，用同源版本化URL加载。
+图层持久化datasetId/datasetVersion/bounds；同版本重复加载复用图层，新版本不会替换旧版本。
+`earth_remove_tileset`删除场景引用。显隐、相机定位和加载报告复用现有工具。
+任务停止/超时会取消未完成的目录请求，账户切换后再次校验会话归属再保存。
+
+系统技能指导按“查询→核对范围→加载→定位→核对浏览器报告”执行。
+场景已保存与模型已绘制分别报告；不添加按业务关键词猜测是否成功的运行时规则。
+新增HTTP目录能力需要先升级Map；旧Map返回404时工具明确报告，不虚构数据或静默改用硬编码URL。

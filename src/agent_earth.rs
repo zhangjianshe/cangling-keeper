@@ -199,7 +199,10 @@ fn set_location(scene: &mut Value, args: &Value) -> Result<(), String> {
 }
 pub(crate) fn definitions() -> Vec<Value> {
     let n = |min: f64, max: f64| json!({"type":"number","minimum":min,"maximum":max});
-    [("earth_add_tileset","添加原生3D Tiles图层。URL为允许CORS的公开HTTP(S) tileset.json（如Cangling Map发布地址）；支持显式瓦片树、GLB/b3dm，不支持隐式瓦片及点云。浏览器异步LOD加载；earth_get_view的tilesetStatus报告加载、绘制及错误，renderedRevision只代表场景已应用，不能据此声称瓦片已显示。",json!({"url":{"type":"string","maxLength":2048},"name":{"type":"string","maxLength":128},"maximumScreenSpaceError":n(2.,128.)}),json!(["url"])),
+    [("earth_search_datasets","查询已配置Cangling Map公开发布的3D Tiles数据集，按名称关键词或WGS84范围筛选。返回真实ID、版本、覆盖范围及URL。范围未知时不猜测；无结果不能编造数据集。",json!({"query":{"type":"string","maxLength":128},"bounds":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"number"}}}),json!([])),
+    ("earth_load_dataset","按查询所得数据集ID加载当前发布版本到当前账户项目。重复调用同一版本复用图层；不自动定位，使用返回范围调用earth_fly_to，再用earth_get_view确认tilesetStatus。保存不代表绘制成功。",json!({"datasetId":{"type":"string","minLength":1,"maxLength":64}}),json!(["datasetId"])),
+    ("earth_remove_tileset","按图层ID移除当前项目的3D Tiles场景引用，不删除服务端数据。",json!({"layer":{"type":"string","maxLength":64}}),json!(["layer"])),
+    ("earth_add_tileset","添加原生3D Tiles图层。URL为允许CORS的公开HTTP(S) tileset.json（如Cangling Map发布地址）；支持显式瓦片树、GLB/b3dm，不支持隐式瓦片及点云。浏览器异步LOD加载；earth_get_view的tilesetStatus报告加载、绘制及错误，renderedRevision只代表场景已应用，不能据此声称瓦片已显示。",json!({"url":{"type":"string","maxLength":2048},"name":{"type":"string","maxLength":128},"maximumScreenSpaceError":n(2.,128.)}),json!(["url"])),
     ("earth_publish_model","发布项目内静态GLB下载URL，内嵌纹理/缓冲区，最多16MiB，当前账户本机可访问。",json!({"path":{"type":"string","maxLength":200}}),json!(["path"])),
     ("earth_add_model","将项目静态GLB加载到WGS84经纬度，height米默认0，altitudeMode默认relativeToGround离地高，absolute为椭球高；heading度默认0，scale默认1（米），GLB的Y轴朝上。保存后等地球页面确认。",json!({"path":{"type":"string","maxLength":200},"longitude":n(-180.,180.),"latitude":n(-90.,90.),"height":n(-10000.,100000.),"heading":n(-360.,360.),"scale":n(0.001,10000.),"altitudeMode":{"type":"string","enum":["relativeToGround","absolute"]}}),json!(["path","longitude","latitude"])),
     ("earth_get_view","读取当前项目已保存地球视图、图层及浏览器最后渲染确认时间。未确认不代表地球已显示。",json!({}),json!([])),
@@ -306,6 +309,8 @@ pub(crate) fn execute(
             return Ok(json!({"selection":scene["selection"],"renderedAt":scene["renderedAt"]}));
         }
         "earth_publish_model" => {return crate::agent_earth_models::publish(s,&project,root,args["path"].as_str().ok_or("缺少路径")?);}
+        "earth_load_dataset" => {crate::agent_earth_catalog::load(&mut scene,&args["_catalog"],args["datasetId"].as_str().ok_or("缺少数据集ID")?)?;}
+        "earth_remove_tileset" => {let id=args["layer"].as_str().ok_or("缺少图层ID")?;let layers=scene["tilesets"].as_array_mut().ok_or("没有3D Tiles图层")?;if !layers.iter().any(|l|l["id"]==id){return Err("图层不存在".into());}layers.retain(|l|l["id"]!=id);}
         "earth_add_tileset" => {crate::agent_earth_tiles::add(&mut scene,args)?;}
         "earth_add_model" => {crate::agent_earth_models::add(s,&project,root,&mut scene,args)?;}
         "earth_publish_image" => {return publish_image(s,&project,root,args["path"].as_str().ok_or("缺少路径")?);}
@@ -343,7 +348,7 @@ pub(crate) fn execute(
         &json!({"expectedRevision":scene["revision"],"scene":scene}),
     )? };
     Ok(
-        json!({"status":"saved_not_rendered","projectId":project,"revision":saved["revision"],"cameraCommandRevision":saved["cameraCommandRevision"],"message":"场景已保存；打开项目三维地球后应用。请用 earth_get_view 核对 renderedRevision 和 renderedCameraCommandRevision，不能声称已经显示。"}),
+        json!({"status":"saved_not_rendered","projectId":project,"tilesetLayers":saved["tilesets"],"revision":saved["revision"],"cameraCommandRevision":saved["cameraCommandRevision"],"message":"场景已保存；打开项目三维地球后应用。请用 earth_get_view 核对 renderedRevision 和 renderedCameraCommandRevision，不能声称已经显示。"}),
     )
 }
 

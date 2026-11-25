@@ -54,3 +54,13 @@ HTTPS 页面须使用 HTTPS 资源，无登录凭证和查询参数，子资源�
 使用 earth_get_view 核对 tilesetStatus.layers 的 drawing、pending、errors 和 reportedAt；
 这是最近浏览器报告，不代表浏览器仍在线。renderedRevision 只确认场景应用，
 不能证明瓦片全部加载。用 earth_set_layer_visibility 的图层 ID 控制显示或隐藏。
+
+## 查找并加载已发布建筑数据集
+
+- 用户要求显示某地区建筑或现有三维数据时，先 `earth_search_datasets` 按名称 query 查询；已知可信范围可用 bounds `[西,南,东,北]` 筛选，不跨日期变更线。
+- 目录只列出已发布且启用的数据。没有结果时说明缺少覆盖，不编造 ID、URL 或建筑信息。名称匹配不等于覆盖整个行政区；检查 bounds，未知范围不要猜测定位。
+- 用返回的 id 调用 `earth_load_dataset({"datasetId":"..."})`。工具解析当前版本并保存版本化 URL；同一版本重复加载复用图层。版本更新不会悄悄改变已加载图层。
+- 加载返回 tilesetLayers 中的图层 ID、datasetVersion 和 bounds。需要定位时以有效 bounds 中心调用 earth_fly_to，并选择能容纳范围的相机高度；范围为包围体估算，非精确建筑边界。
+- 用 earth_get_view 核对当前场景 revision、相机确认，以及 tilesetStatus 的 reportedAt、drawing/pending/errors。没有新报告只说明已保存，不能说模型已显示；无需反复加载。
+- 用 earth_set_layer_visibility 按图层 ID 显隐；earth_remove_tileset 移除场景引用，不删除数据集或服务端文件。
+- 数据集目录不是单栋建筑查询接口，不能据此回答楼层/高度统计。模型可能来自估算拉伸，不能宣称为实测建筑。
