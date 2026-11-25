@@ -144,6 +144,7 @@ pub(crate) fn finish(
     response: &str,
     status: &str,
 ) -> Result<(), String> {
+    crate::agent_evidence::persist(&store.conn,session,response)?;
     store
         .conn
         .execute(

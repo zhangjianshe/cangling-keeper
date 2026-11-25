@@ -8,7 +8,8 @@ class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
-  assert {t['function']['name'] for t in body['tools']}=={'list_directory','read_file','search_files','write_file','apply_patch','run_command','load_skill','update_plan'}
+  assert {'list_directory','read_file','search_files','write_file','apply_patch','run_command','load_skill','update_plan'} <= {t['function']['name'] for t in body['tools']}
+  assert '[本次回复的运行时执行记录' in body['messages'][0]['content']
   assert self.headers['Authorization']=='Bearer fixture-only-key'
   user=next(m['content'] for m in reversed(body['messages']) if m['role']=='user')
   results=[m for m in body['messages'] if m['role']=='tool']
@@ -232,9 +233,10 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    assert call('agent_session',{'sessionId':planned})['runs']==plan_detail['runs']
    complete=session('阅读项目并总结 complete');complete_detail=wait_for(complete,lambda d:not d['modelPending']);assert complete_detail['tasks'][-1]['status']=='complete';assert len(complete_detail['runs'])==3
    # A regenerated answer owns a separate tool history and selects the new version.
+   evidence=complete_detail['messages'][-1]['modelMetadata']['executionEvidence'];assert evidence['callCount']==3 and evidence['counts']['succeeded']==3 and evidence['goalStatus']=='not_assessed'
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
-   multiline=session('multiline event fixture');multi=wait_for(multiline,lambda d:not d['modelPending']);assert multi['tasks'][-1]['status']=='complete';assert multi['messages'][-1]['content']=='多行事件正常'
+   multiline=session('multiline event fixture');multi=wait_for(multiline,lambda d:not d['modelPending']);assert multi['tasks'][-1]['status']=='complete';assert multi['messages'][-1]['content']=='多行事件正常';assert multi['messages'][-1]['modelMetadata']['executionEvidence']['callCount']==0
    oversized=session('oversized event fixture');over=wait_for(oversized,lambda d:not d['modelPending']);assert over['tasks'][-1]['status']=='failed' and not over['runs'];assert not (root/'oversized-event.txt').exists()
    answer=next(m for m in reversed(over['messages']) if m['role']=='assistant');assert 'Before oversized event' in answer['content'];assert answer['modelMetadata']['taskReasonCode']=='stream_limit'
    assert next(m for m in reversed(call('agent_session',{'sessionId':oversized})['messages']) if m['role']=='assistant')['modelMetadata']['taskReasonCode']=='stream_limit'

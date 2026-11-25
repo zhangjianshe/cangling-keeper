@@ -531,9 +531,14 @@
           }}catch{}}
           const task=agent.detail.tasks?.find(t=>t.responseId===entry.id),metadata=entry.modelMetadata || {};
           if(task){
-            const labels={model:'模型生成中',tool:'执行工具中',approval:'等待确认',complete:'已完成',failed:'执行失败',stopped:'已停止',interrupted:'已中断'};
+            const labels={model:'模型生成中',tool:'执行工具中',approval:'等待确认',complete:'回复已结束',failed:'执行失败',stopped:'已停止',interrupted:'已中断'};
             const budget=metadata.taskBudget || task.budget,validBudget=budget && ['maxRounds','maxToolCalls','activeSeconds'].every(key=>Number.isSafeInteger(budget[key]) && budget[key]>0);
             const rounds=validBudget?`${task.step || 0} / ${budget.maxRounds}`:String(task.step || 0),calls=validBudget?`${runs.length} / ${budget.maxToolCalls}`:String(runs.length);
+            const evidence=metadata.executionEvidence;
+            if(evidence?.version===1 && evidence.responseId===entry.id){
+              const c={};for(const run of runs)c[run.status]=(c[run.status] || 0)+1;const label=runs.length===0?'执行记录：本轮未调用工具':`执行记录：工具成功 ${c.succeeded || 0} · 失败 ${c.failed || 0} · 拒绝 ${c.rejected || 0} · 停止/中断 ${(c.stopped || 0)+(c.interrupted || 0)} · 待处理 ${(c.pending_approval || 0)+(c.approved || 0)+(c.running || 0)}`;
+              const evidenceLine=element('small','agent-execution-evidence',label);evidenceLine.title='来自本次回复的实际工具记录；调用成功不等于用户目标已完成。';message.append(evidenceLine);
+            }
             const summary=element('details','agent-task-summary'),caption=element('summary','',`${labels[task.status] || '任务记录'} · ${rounds} 轮 · 工具调用 ${calls} 次`);
             const terminal=['complete','failed','stopped','interrupted'].includes(task.status);
             const reason=metadata.taskReason || (task.status==='interrupted'?'服务中断，执行记录已保留；不会自动重放操作。':terminal?'历史任务未记录具体结束原因。':'任务进行中，可随时停止生成。');
@@ -543,7 +548,7 @@
               if(!terminal && ((task.step || 0)>=budget.maxRounds-1 || runs.length>=budget.maxToolCalls-4)){const warning=element('p','agent-budget-warning','执行预算即将用尽；可检查已完成内容，必要时停止并拆分剩余任务。');warning.setAttribute('role','status');summary.append(warning);caption.append(element('span','agent-budget-warning',' · 接近上限'));}
             }
 
-            const reasonCode=metadata.taskReasonCode || (task.status==='interrupted'?'interrupted':''),nextSteps={stream_limit:'模型流数据超过大小上限；已保留回复，请检查模型服务响应，不会自动重试。',invalid_tool_call:'模型返回了格式无效的工具批次，本轮未执行；检查模型工具调用兼容性后再尝试。',output_limit:'模型输出达到上限，回复可能不完整；检查已生成内容后缩小任务或明确要求继续。',model_filtered:'模型服务中止了回复；检查请求内容和服务提示，不会自动重试。',complete:'任务已结束，可检查结果或继续提出需求。',user_stopped:'已保留生成内容；继续前请核实已执行操作。',rejected_repeat:'模型重复提出了已拒绝的操作。若你改变决定，请明确发送新消息。',no_progress:'检查工具结果并调整目标或参数后，再发送新消息。',round_limit:'任务达到轮次上限；检查已完成步骤，将剩余工作拆分后继续。',tool_limit:'任务达到工具调用上限；缩小范围后继续。',time_limit:'任务达到运行时限；检查实际执行状态后再继续。',interrupted:'服务中断后不会自动重放操作；请先核实实际状态。',error:'查看上述错误并核实操作是否部分完成，再决定是否重试。'};
+            const reasonCode=metadata.taskReasonCode || (task.status==='interrupted'?'interrupted':''),nextSteps={stream_limit:'模型流数据超过大小上限；已保留回复，请检查模型服务响应，不会自动重试。',invalid_tool_call:'模型返回了格式无效的工具批次，本轮未执行；检查模型工具调用兼容性后再尝试。',output_limit:'模型输出达到上限，回复可能不完整；检查已生成内容后缩小任务或明确要求继续。',model_filtered:'模型服务中止了回复；检查请求内容和服务提示，不会自动重试。',complete:'模型回复已结束；操作结果以工具记录为准。',user_stopped:'已保留生成内容；继续前请核实已执行操作。',rejected_repeat:'模型重复提出了已拒绝的操作。若你改变决定，请明确发送新消息。',no_progress:'检查工具结果并调整目标或参数后，再发送新消息。',round_limit:'任务达到轮次上限；检查已完成步骤，将剩余工作拆分后继续。',tool_limit:'任务达到工具调用上限；缩小范围后继续。',time_limit:'任务达到运行时限；检查实际执行状态后再继续。',interrupted:'服务中断后不会自动重放操作；请先核实实际状态。',error:'查看上述错误并核实操作是否部分完成，再决定是否重试。'};
             if(terminal && nextSteps[reasonCode])summary.append(element('p','agent-task-next-step',nextSteps[reasonCode]));
 
             const counts={succeeded:0,failed:0,rejected:0,stopped:0,interrupted:0};for(const run of runs)if(run.status in counts)counts[run.status]++;

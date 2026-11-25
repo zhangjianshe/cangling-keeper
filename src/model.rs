@@ -288,7 +288,7 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         if !profile.is_null()&&profile["mcpTools"].as_array().unwrap().iter().any(|n|!mcp.iter().any(|t|t["function"]["name"]==*n)){return Err("智能体关联 MCP 工具不可用，请重新连接或编辑配置".into());}
         mcp.retain(|t|crate::agent_profiles::includes(&profile,"mcpTools",t["function"]["name"].as_str().unwrap_or("")));tools.extend(mcp);tools};
     let mut deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(crate::agent_runtime::ACTIVE_SECONDS);
-    if let Err(e)=context::prepare(core,session,response_id,&url,&key,&model,&provider,supports_images,working_budget,output_budget,model_limit,&mut messages,&tools,&mut cancel,deadline,sink.as_ref()).await {if e=="上下文压缩已停止，原始消息已保留。"{return Ok(ReplyFinish::Stopped);}return Err(e);}
+    let evidence_base_prompt=messages[0]["content"].as_str().unwrap_or("").to_string();
     // Keep the saved canonical snapshot intact; compaction is local to this generation.
     let root=project_root;
     let mut visible=String::new();let mut total_calls=0;let mut loop_guard=loop_guard::LoopGuard::default();let mut refusals=loop_guard::RefusalGuard::default();
@@ -296,7 +296,9 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         if crate::agent_actions::is_shutting_down(){return Err("Keeper 正在关闭，任务不会自动重放。".into());}
         if tokio::time::Instant::now()>=deadline{return Err(crate::agent_runtime::termination_error(core,response_id,"time_limit",format!("Agent 已达到 {} 秒运行时限，执行记录已保存。",crate::agent_runtime::ACTIVE_SECONDS)));}
         crate::agent_runtime::phase(core,session,response_id,"model",round,sink.as_ref())?;
-        if round>1 {if let Err(e)=context::prepare(core,session,response_id,&url,&key,&model,&provider,supports_images,working_budget,output_budget,model_limit,&mut messages,&tools,&mut cancel,deadline,sink.as_ref()).await {if e=="上下文压缩已停止，原始消息已保留。"{return Ok(ReplyFinish::Stopped);}return Err(e);}}
+        let evidence={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_evidence::persist(&store.conn,session,response_id)?};
+        messages[0]["content"]=json!(format!("{}{}",evidence_base_prompt,crate::agent_evidence::prompt(&evidence)));
+        if let Err(e)=context::prepare(core,session,response_id,&url,&key,&model,&provider,supports_images,working_budget,output_budget,model_limit,&mut messages,&tools,&mut cancel,deadline,sink.as_ref()).await {if e=="上下文压缩已停止，原始消息已保留。"{return Ok(ReplyFinish::Stopped);}return Err(e);}
         let wire_messages={let store=core.store.lock().map_err(|e|e.to_string())?;request_messages(&store,session,&messages,supports_images)?};
         let mut body=json!({"model":model,"messages":wire_messages,"stream":true,"max_tokens":output_budget,"tools":tools,"tool_choice":"auto","stream_options":{"include_usage":true}});
         if provider=="cis-proxy"{body["cis_model_revision"]=json!(revision);}
