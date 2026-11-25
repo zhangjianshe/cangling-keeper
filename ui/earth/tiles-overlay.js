@@ -25,7 +25,7 @@ window.createKeeperTilesOverlay=({call,upload,report})=>{
   const epoch=generation,controller=new AbortController(),job={controller};jobs.set(request.key,job);
   const timeout=setTimeout(()=>controller.abort(),15000);
   try{
-   const response=await fetch(resourceUrl(layer,request.uri),{signal:controller.signal,credentials:'omit',redirect:'error',referrerPolicy:'no-referrer'});
+   const response=await fetch(resourceUrl(layer,request.uri),{signal:controller.signal,cache:request.key.endsWith('|root')?'no-store':'default',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer'});
    const data=await bytes(response,request.json?4*1024*1024:16*1024*1024);
    if(epoch!==generation||jobs.get(request.key)!==job)return;
    if(request.json)call('tiles_manifest',{key:request.key,document:JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(data))});
@@ -47,7 +47,11 @@ window.createKeeperTilesOverlay=({call,upload,report})=>{
   timer=setTimeout(tick,250);
  }
  return {
-  prepare(next,rev){stop();layers=next;revision=rev;lastStatus='';lastReport=0;call('tiles_scene',layers);if(!layers.length)call('tiles_tick');tick();},
+  prepare(next,rev){stop();
+   // Stable entry URLs may publish new content. A new scene revision must discard
+   // the native tree, otherwise scene() retains the previous tree for the same URL.
+   if(layers.length&&rev!==revision)call('tiles_scene',[]);
+   layers=next;revision=rev;lastStatus='';lastReport=0;call('tiles_scene',layers);if(!layers.length)call('tiles_tick');tick();},
   pause(value){paused=!!value;if(paused)stop();else tick();},
   dispose(){stop();disposed=true;call('tiles_scene',[]);call('tiles_tick');}
  };

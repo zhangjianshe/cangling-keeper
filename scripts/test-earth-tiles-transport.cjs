@@ -13,6 +13,16 @@ plan={requests:[{key:'b|root',layerId:'b',uri:'http://evil.invalid/a.glb',json:f
 overlay.prepare([{id:'b',url:'http://localhost/data/tileset.json'}],2);overlay.pause(false);
 assert.equal(requests.length,4,'cross-origin content never fetched');assert(calls.some(c=>c[0]==='tiles_fail'));overlay.prepare([],3);assert.equal(calls.at(-1)[0],'tiles_tick','empty scene flushes native geometry');overlay.dispose();
 console.log('PASS tiles transport: concurrency, cancellation, credential omission, URL containment');
+// Reapplying a new scene version at the same URL must invalidate the native tree.
+plan={requests:[{key:'v|root',layerId:'v',uri:'',json:true}],active:['v|root'],layers:[]};
+const versioned=context.window.createKeeperTilesOverlay({call:(m,a)=>{calls.push([m,a]);return m==='tiles_tick'?plan:true},upload(){},report(){}});
+versioned.prepare([{id:'v',url:'http://localhost/data/tileset.json'}],10);
+assert.equal(requests.at(-1).options.cache,'no-store');
+const before=calls.length;
+versioned.prepare([{id:'v',url:'http://localhost/data/tileset.json'}],11);
+assert(calls.slice(before).some(([m,a])=>m==='tiles_scene'&&Array.isArray(a)&&a.length===0));
+versioned.dispose();
+
 (async()=>{
  const wait=()=>new Promise(r=>setImmediate(r));
  context.fetch=async()=>new Response(new Uint8Array([1,2,3]),{status:200});
