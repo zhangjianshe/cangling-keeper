@@ -422,6 +422,8 @@ pub(crate) fn prompt(snapshot: &Value) -> String {
             .push_str("AGENTS.md 过长未内联；操作前通过 read_file 分页读取，不能忽略适用规则。\n"),
         _ => output.push_str("AGENTS.md 无效或不可读，未加载规则；如影响任务应说明此情况。\n"),
     }
+    // Reserve space for the catalog heading, truncation notice and trailing newline.
+    let catalog_budget = CATALOG_PROMPT_BYTES.min(7000usize.saturating_sub(output.len() + 320));
     let skills = snapshot["skills"].as_array();
     let mut shown = Vec::new();
     if let Some(skills) = skills {
@@ -441,7 +443,7 @@ pub(crate) fn prompt(snapshot: &Value) -> String {
             let description = skill["description"].as_str().unwrap_or("");
             let record = json!({"name":name,"label":skill["name"],"scope":skill["scope"],"description":clip(description,160)});
             shown.push(record);
-            if json!(shown).to_string().len() > CATALOG_PROMPT_BYTES {
+            if json!(shown).to_string().len() > catalog_budget {
                 shown.pop();
                 break;
             }
