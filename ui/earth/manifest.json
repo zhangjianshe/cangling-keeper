@@ -1,6 +1,6 @@
 {
-  "builtAt": "2026-11-25T11:11:40.219191+00:00",
-  "sourceCommit": "48ff8a21afdc3357c6d2dc566654b70fc04cbc38",
+  "builtAt": "2026-11-25T11:19:52.382741+00:00",
+  "sourceCommit": "468924cb8491eaf2ed1142a32867e03d27785bc7",
   "dirtyWorkingTree": true,
   "sourceSha256": {
     "Cargo.lock": "71ead7d340132d9c501bb5f4f37c8ba1f4087de4437ce067e949e3be0093467d",
@@ -33,7 +33,7 @@
     "src/administration.rs": "10101bb2e00da11f8a842a183f8bd296fcd3ca6d8284931449ec149237f8c04b",
     "src/boundary.rs": "8d7d918b0bd15b46d8e145feedd90e2d1d066d2e37e9872df34e6ee48352f69e",
     "src/boundary.wgsl": "0625842c2980cb96abf24e030d486287e88be2b192963b60bdbb798fda601bba",
-    "src/camera.rs": "0b9eabccb47997a39f1c43e9a1d85d81ac272a5eb37aeb1107d2d61b58f41b0b",
+    "src/camera.rs": "662269901844ad977acc5daa20c453a5e5e024c81c8a176cd0ba138c343d0eaa",
     "src/geo.rs": "ffca893c825b9f5b771499501479644c643f75477a2f1732b40d0b296b09b3e0",
     "src/graticule.rs": "05e003f07a964ee0cc79086e9081df75e5a5f5281b0949286a1df6c44f2b6fa7",
     "src/graticule.wgsl": "8ceb948c6abf68145e1ac16f82dd8be3d3b0049ca28b4b814638c9d4507868ba",
@@ -75,7 +75,7 @@
   },
   "artifacts": {
     "pkg/cangling_desktop.js": "81ae422758fd0d46bf141e100569b0cbb709945f61b4ca1e6ef2743c75315761",
-    "pkg/cangling_desktop_bg.wasm": "8dbdc5d0e08136354a0e6a055c59df57af5b5c444236983a0df9a8b2c5ffe2d1"
+    "pkg/cangling_desktop_bg.wasm": "774bc4624bb6481e04f1b82d1933d8a1412326a6a5593661ce5ec8209988f158"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }
