@@ -52,6 +52,23 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   call('agent_earth_save',{**args,'expectedRevision':0,'scene':scene},400)
   call('agent_earth_ack',{**args,'revision':0},400)
   assert call('agent_earth_ack',{**args,'revision':1})['renderedRevision']==1
+  # Camera persistence never increments the layer revision; stale layer saves cannot rewind it.
+  initial=call('agent_earth_get',args)
+  cam={**initial['camera'],'longitude':118.}
+  moved=call('agent_earth_camera_save',{**args,'expectedCameraCommandRevision':0,'camera':cam})
+  assert moved['revision']==1 and moved['cameraRevision']==1 and moved['camera']==cam
+  # SSE initial resync and live scoped metadata, with no scene body or polling.
+  stream=urllib.request.urlopen(urllib.request.Request(base+'/api/earth/events?project=general&account=guest',headers={'Origin':base}),timeout=3)
+  def event():
+   while True:
+    line=stream.readline().decode().strip()
+    if line.startswith('data: '):return json.loads(line[6:])
+  assert event()=={'resync':True}
+  moved=call('agent_earth_camera_save',{**args,'expectedCameraCommandRevision':0,'camera':{**cam,'longitude':119.}})
+  notice=event();assert notice=={'revision':1,'cameraRevision':2,'cameraCommandRevision':0}
+  stream.close()
+  try:urllib.request.urlopen(base+'/api/earth/events?project=general&account=other',timeout=3);raise AssertionError('scope')
+  except urllib.error.HTTPError as e:assert e.code==403
   for path in ['../secret.geojson','link.geojson','/etc/passwd']:
    call('agent_earth_import',{**args,'expectedRevision':1,'path':path},400)
   invalid=json.loads(json.dumps(scene));invalid['camera']['latitude']=91
@@ -62,6 +79,8 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   stop();start();assert call('agent_earth_get',args)==imported
   # Public positioning API preserves scene and height, validates coordinates and revisions.
   located=call('agent_earth_fly_to',{**args,'expectedRevision':imported['revision'],'longitude':120,'latitude':30})
+  assert located['revision']==imported['revision'] and located['cameraCommandRevision']==1
+  call('agent_earth_camera_save',{**args,'expectedCameraCommandRevision':0,'camera':cam},400)
   assert located['camera']['height']==imported['camera']['height'] and located['overlays']==imported['overlays']
   for extra in [{'latitude':91},{'longitude':181},{'height':0},{'accountKey':'stale'},{'expectedRevision':0}]:
    call('agent_earth_fly_to',{**args,'expectedRevision':located['revision'],'longitude':120,'latitude':30,**extra},400)

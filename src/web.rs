@@ -147,6 +147,7 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
     let app = Router::new()
         .route("/api/health", get(|| async { Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "pid": std::process::id() })) }))
         .route("/api/events", get(events_socket))
+        .route("/api/earth/events", get(earth_events))
         .route("/api/earth/images/{id}",get(earth_image))
         .route("/api/earth/models/{id}",get(earth_model))
         .route("/api/history/restore",post(restore_history).layer(DefaultBodyLimit::max(32*1024*1024)))
@@ -227,6 +228,38 @@ async fn static_asset(uri: Uri) -> Response {
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from(asset.data))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+#[derive(serde::Deserialize)]
+struct EarthSubscription { project: String, account: String }
+async fn earth_events(ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap, State(state): State<WebState>, axum::extract::Query(query): axum::extract::Query<EarthSubscription>) -> Response {
+    if authorize_root_install(peer,&headers).is_err() || headers.get("sec-fetch-site").and_then(|v|v.to_str().ok()).is_some_and(|v|!matches!(v,"same-origin"|"none")) { return StatusCode::FORBIDDEN.into_response(); }
+    // Subscribe before the initial snapshot, so a concurrent commit cannot be missed.
+    let receiver = crate::agent_earth::changes().subscribe();
+    let allowed = state.core.store.lock().ok().is_some_and(|s| crate::agent_account::owner(&s).ok().as_deref()==Some(query.account.as_str()) && crate::agent_earth::get(&s,&query.project).is_ok());
+    if !allowed { return StatusCode::FORBIDDEN.into_response(); }
+    let stream = futures_util::stream::unfold((receiver,state.core,query,true), |(mut receiver,core,query,mut initial)| async move {
+        loop {
+            let value = if initial { initial=false; Some(json!({"resync":true})) } else {
+                tokio::select! {
+                    event = receiver.recv() => match event {
+                        Ok(e) if e.owner==query.account && e.project==query.project => Some(e.value),
+                        Ok(_) => None,
+                        Err(broadcast::error::RecvError::Lagged(_)) => Some(json!({"resync":true})),
+                        Err(_) => return None,
+                    },
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(15)) => None,
+                }
+            };
+            let current = core.store.lock().ok().is_some_and(|s|crate::agent_account::owner(&s).ok().as_deref()==Some(query.account.as_str()));
+            if !current { return None; }
+            let event = if let Some(value)=value { axum::response::sse::Event::default().event("scene").data(value.to_string()) } else { axum::response::sse::Event::default().comment("heartbeat") };
+            return Some((Ok::<_,std::convert::Infallible>(event),(receiver,core,query,initial)));
+        }
+    });
+    let mut response=axum::response::Sse::new(stream).into_response();
+    response.headers_mut().insert("x-accel-buffering",header::HeaderValue::from_static("no"));
+    response
 }
 
 async fn events_socket(ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap, State(state): State<WebState>, upgrade: WebSocketUpgrade) -> Response {

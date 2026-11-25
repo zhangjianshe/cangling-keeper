@@ -240,3 +240,16 @@ beside the sample. The sample is not bundled in Keeper's executable.
 Keyboard `T`: toggle 0° nadir / 45° oblique around the screen-centre ground point,
 without jumping to another location. Any existing nonzero tilt returns to 0° first.
 At globe-scale altitude the existing horizon-safe maximum tilt remains enforced.
+
+## 场景 / 相机分离与 SSE 同步
+
+- `revision` 只表示图层和选择状态；`cameraRevision` 单独表示已保存视角。
+- 相机以 `earth:<账户>:<项目>:camera` 单独保存在 SQLite settings；旧场景的 camera 作为迁移初值，已有图层不变。
+- `agent_earth_save` 保留当前相机，不接受旧页面夹带的相机覆盖。
+- 手动移动通过 `agent_earth_camera_save(camera, expectedCameraCommandRevision)` 合并保存，600ms 防抖；不影响其他窗口视角。多个窗口手动移动时，最后完成保存的视角作为下次打开的初值。
+- `agent_earth_fly_to` / `earth_fly_to` 增加 `cameraCommandRevision`，所有打开窗口同步定位；旧定位版本下的延迟拖动保存被拒绝。
+- `/api/earth/events?project=...&account=...` 是本机同源 SSE。仅推送版本元数据；首次连接、重连、通知丢失时触发重新读取。每15秒注释心跳；账户变化结束连接。反向代理应关闭缓冲。
+- 图层通知保留当前窗口相机。空闲窗口不再每1.5秒调用 `agent_earth_get`；相机检测仅在原生渲染帧后执行，变化才发请求。
+- 渲染确认分别检查 `renderedRevision == revision` 与 `renderedCameraCommandRevision == cameraCommandRevision`；保存成功不表示浏览器已渲染。
+
+验证：`python3 scripts/test-earth-http.py`，`NODE_PATH=/zjs/satway/dev/n8n/node_modules node scripts/test-earth-panel-ui.cjs`，`node scripts/test-earth-bridge-sync.cjs`。

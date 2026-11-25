@@ -1,5 +1,6 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
 const dom=new JSDOM('<!doctype html><main id="agent-main"></main>',{url:'http://localhost',runScripts:'outside-only'}),w=dom.window,d=w.document;
+const streams=[];w.EventSource=class {constructor(url){this.url=url;this.listeners={};streams.push(this);}addEventListener(n,f){this.listeners[n]=f;}close(){this.closed=true;}emit(value){this.listeners.scene({data:JSON.stringify(value)});}};
 w.eval(fs.readFileSync('ui/earth-panel.js','utf8'));
 const scene={revision:0,camera:{longitude:108,latitude:34,height:1000000},layers:{source:0,boundaries:true,graticule:false},overlays:[{path:'demo.geojson',visible:true}],images:[{id:'image1',name:'preview.png',visible:true}]};
 const agent={projects:[{id:'p',name:'Project'}],identityEpoch:0,ownerKey:'guest',detail:{session:{projectId:'p'}}},calls=[];let deferred=null;
@@ -12,6 +13,10 @@ function send(frame,data,origin='http://localhost',source=frame.contentWindow){w
  send(f,{event:'ready'},'https://attacker.invalid');await flush();assert.equal(commands.length,0);
  send(f,{event:'ready'},'http://localhost',w);await flush();assert.equal(commands.length,0);
  send(f,{event:'ready'});for(let i=0;i<8;i++)await flush();assert.equal(calls.filter(c=>c[0]==='agent_earth_ack').length,1);assert.equal(calls.at(-1)[1].accountKey,'guest');
+ // A layer notification preserves this window's camera, while explicit fly-to synchronizes it.
+ assert.equal(streams.length,1);scene.revision++;streams[0].emit({revision:scene.revision,cameraCommandRevision:0});for(let i=0;i<12;i++)await flush();assert.equal(commands.filter(c=>c.method==='apply').at(-1).args.preserveCamera,true);
+ scene.cameraCommandRevision=1;streams[0].emit({revision:scene.revision,cameraCommandRevision:1});for(let i=0;i<12;i++)await flush();assert.equal(commands.filter(c=>c.method==='apply').at(-1).args.preserveCamera,false);
+ const reads=calls.filter(c=>c[0]==='agent_earth_get').length;await new Promise(r=>setTimeout(r,1600));assert.equal(calls.filter(c=>c[0]==='agent_earth_get').length,reads);
  const located=await w.keeperEarth.flyTo({longitude:116.4,latitude:39.9,height:20000});assert.equal(located.status,'saved_not_rendered');
  const locateCall=calls.find(c=>c[0]==='agent_earth_fly_to');assert.equal(locateCall[1].longitude,116.4);assert.equal(locateCall[1].accountKey,'guest');assert.equal(locateCall[1].projectId,'p');
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'l',bubbles:true}));assert(!d.querySelector('.earth-layer-panel').classList.contains('hidden'));assert.equal(d.querySelectorAll('.earth-layer-row').length,2);
@@ -25,7 +30,7 @@ function send(frame,data,origin='http://localhost',source=frame.contentWindow){w
  send(f,{event:'layers_toggle'},'https://attacker.invalid');assert(d.querySelector('.earth-layer-panel').classList.contains('hidden'));send(f,{event:'layers_toggle'});assert(!d.querySelector('.earth-layer-panel').classList.contains('hidden'));
  [...d.querySelectorAll('button')].find(b=>b.textContent==='对话分屏').click();assert(earth.isSplit());assert(d.querySelector('#agent-main').classList.contains('earth-chat-split'));
  assert(earth.showWithConversation('p'));assert.equal(d.querySelector('iframe'),f);assert(!earth.showWithConversation('other'));
- earth.reset();assert.equal(d.querySelector('iframe'),null);await earth.restore();assert(d.querySelector('iframe'));assert(earth.isSplit());earth.hide();await earth.restore();assert.equal(d.querySelector('iframe'),null);
+ earth.reset();assert(streams[0].closed);assert.equal(d.querySelector('iframe'),null);await earth.restore();assert(d.querySelector('iframe'));assert(earth.isSplit());earth.hide();await earth.restore();assert.equal(d.querySelector('iframe'),null);
  // Late responses from a former project/account must never recreate the canvas.
  deferred=true;const opening=earth.open({id:'q',name:'Other'});await flush();agent.identityEpoch++;earth.reset();deferred(scene);await opening;assert.equal(d.querySelector('iframe'),null);assert(d.querySelector('.keeper-earth').classList.contains('hidden'));
  dom.window.close();console.log('PASS Earth UI: origin/source checks, rendered acknowledgment, split, stale account response and iframe teardown');

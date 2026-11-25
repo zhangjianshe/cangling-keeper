@@ -20,12 +20,49 @@ pub(crate) fn key(s: &Store, project: &str) -> Result<String, String> {
 }
 pub(crate) fn get(s: &Store, project: &str) -> Result<Value, String> {
     let key = key(s, project)?;
-    match s.get_setting(&key)? {
+    let mut scene: Value = match s.get_setting(&key)? {
         Some(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string()),
         None => Ok(
             json!({"revision":0,"camera":{"longitude":108.9398,"latitude":34.3416,"height":16000000.,"heading":0.,"tilt":0.},"layers":{"boundaries":true,"graticule":false,"source":0},"overlays":[],"images":[],"models":[],"selection":null,"renderedRevision":null}),
         ),
+    }?;
+    let camera_key = format!("{key}:camera");
+    if let Some(raw) = s.get_setting(&camera_key)? {
+        let camera: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
+        for field in ["camera", "cameraRevision", "cameraCommandRevision", "renderedCameraCommandRevision"] { scene[field] = camera[field].clone(); }
+    } else {
+        scene["cameraRevision"] = json!(0);
+        scene["cameraCommandRevision"] = json!(0);
+        scene["renderedCameraCommandRevision"] = json!(0);
     }
+    Ok(scene)
+}
+// Metadata-only notifications: each subscriber checks current account/project before delivery.
+#[derive(Clone)]
+pub(crate) struct EarthChange { pub owner: String, pub project: String, pub value: Value }
+pub(crate) fn changes() -> &'static tokio::sync::broadcast::Sender<EarthChange> {
+    static CHANNEL: std::sync::OnceLock<tokio::sync::broadcast::Sender<EarthChange>> = std::sync::OnceLock::new();
+    CHANNEL.get_or_init(|| tokio::sync::broadcast::channel(128).0)
+}
+fn notify(s: &Store, project: &str, scene: &Value) -> Result<(), String> {
+    let _ = changes().send(EarthChange { owner: crate::agent_account::owner(s)?, project: project.into(), value: json!({"revision":scene["revision"],"cameraRevision":scene["cameraRevision"],"cameraCommandRevision":scene["cameraCommandRevision"]}) });
+    Ok(())
+}
+fn save_camera(s: &Store, project: &str, args: &Value, command: bool) -> Result<Value, String> {
+    let mut scene = get(s, project)?;
+    if command {
+        if args["expectedRevision"] != scene["revision"] { return Err("场景已变化，请刷新后重试".into()); }
+    } else if args["expectedCameraCommandRevision"] != scene["cameraCommandRevision"] {
+        return Err("定位命令已更新，请同步后重试".into());
+    }
+    scene["camera"] = args["camera"].clone();
+    validate(&scene)?;
+    scene["cameraRevision"] = json!(scene["cameraRevision"].as_u64().unwrap_or(0)+1);
+    if command { scene["cameraCommandRevision"] = json!(scene["cameraCommandRevision"].as_u64().unwrap_or(0)+1); }
+    let value = json!({"camera":scene["camera"],"cameraRevision":scene["cameraRevision"],"cameraCommandRevision":scene["cameraCommandRevision"],"renderedCameraCommandRevision":scene["renderedCameraCommandRevision"]});
+    s.set_setting(&format!("{}:camera",key(s,project)?), &value.to_string())?;
+    notify(s,project,&scene)?;
+    Ok(scene)
 }
 pub(crate) fn validate(v: &Value) -> Result<(), String> {
     for (k, min, max) in [
@@ -77,8 +114,10 @@ pub(crate) fn save(s: &Store, project: &str, args: &Value) -> Result<Value, Stri
     validate(&v)?;
     crate::agent_earth_models::validate(s,project,&v["models"])?;
     if let Some(images)=v["images"].as_array(){if !images.is_empty(){image_table(s)?;let owner=crate::agent_account::owner(s)?;for image in images{let valid:bool=s.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_earth_images WHERE id=?1 AND owner=?2 AND project=?3)",rusqlite::params![image["id"].as_str(),owner,project],|r|r.get(0)).map_err(|e|e.to_string())?;if !valid{return Err("图片不属于当前账户和项目".into());}}}}
-    v = json!({"camera":v["camera"],"layers":v["layers"],"overlays":v["overlays"],"images":v.get("images").cloned().unwrap_or(json!([])),"models":v.get("models").cloned().unwrap_or(json!([])),"selection":v["selection"],"revision":old["revision"].as_u64().unwrap_or(0)+1,"renderedRevision":null});
+    v = json!({"camera":old["camera"],"layers":v["layers"],"overlays":v["overlays"],"images":v.get("images").cloned().unwrap_or(json!([])),"models":v.get("models").cloned().unwrap_or(json!([])),"selection":v["selection"],"revision":old["revision"].as_u64().unwrap_or(0)+1,"renderedRevision":null});
     s.set_setting(&key(s, project)?, &v.to_string())?;
+    let v = get(s, project)?;
+    notify(s, project, &v)?;
     Ok(v)
 }
 pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, String> {
@@ -114,14 +153,23 @@ pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, St
         "agent_earth_fly_to" => {
             let mut scene = get(s, project)?;
             set_location(&mut scene, args)?;
-            save(s, project, &json!({"expectedRevision":args["expectedRevision"],"scene":scene}))
+            save_camera(s, project, &json!({"expectedRevision":args["expectedRevision"],"camera":scene["camera"]}), true)
         }
+        "agent_earth_camera_save" => save_camera(s, project, args, false),
         "agent_earth_get" => get(s, project),
         "agent_earth_save" => save(s, project, args),
         "agent_earth_ack" => {
             let mut v = get(s, project)?;
             if args["revision"] != v["revision"] {
                 return Err("场景版本已变化".into());
+            }
+            if args["cameraCommandRevision"] == v["cameraCommandRevision"] {
+                if let Some(raw) = s.get_setting(&format!("{}:camera",key(s,project)?))? {
+                    let mut camera: Value = serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+                    camera["renderedCameraCommandRevision"] = v["cameraCommandRevision"].clone();
+                    s.set_setting(&format!("{}:camera",key(s,project)?), &camera.to_string())?;
+                    v["renderedCameraCommandRevision"] = v["cameraCommandRevision"].clone();
+                }
             }
             v["renderedRevision"] = v["revision"].clone();
             v["renderedAt"] = json!(chrono::Utc::now().timestamp_millis());
@@ -238,7 +286,7 @@ pub(crate) fn execute(
     match tool {
         "earth_get_view" => {
             return Ok(
-                json!({"camera":scene["camera"],"layers":scene["layers"],"modelLayers":scene.get("models").cloned().unwrap_or(json!([])),"imageLayers":scene.get("images").cloned().unwrap_or(json!([])),"businessLayers":scene["overlays"].as_array().unwrap().iter().map(|v|json!({"path":v["path"],"visible":v["visible"]})).collect::<Vec<_>>(),"revision":scene["revision"],"renderedRevision":scene["renderedRevision"],"renderedAt":scene["renderedAt"]}),
+                json!({"camera":scene["camera"],"layers":scene["layers"],"modelLayers":scene.get("models").cloned().unwrap_or(json!([])),"imageLayers":scene.get("images").cloned().unwrap_or(json!([])),"businessLayers":scene["overlays"].as_array().unwrap().iter().map(|v|json!({"path":v["path"],"visible":v["visible"]})).collect::<Vec<_>>(),"revision":scene["revision"],"renderedRevision":scene["renderedRevision"],"cameraRevision":scene["cameraRevision"],"cameraCommandRevision":scene["cameraCommandRevision"],"renderedCameraCommandRevision":scene["renderedCameraCommandRevision"],"renderedAt":scene["renderedAt"]}),
             );
         }
         "earth_get_selection" => {
@@ -274,13 +322,13 @@ pub(crate) fn execute(
         }
         _ => return Err("未知地球工具".into()),
     }
-    let saved = save(
+    let saved = if tool == "earth_fly_to" { save_camera(s, &project, &json!({"expectedRevision":scene["revision"],"camera":scene["camera"]}), true)? } else { save(
         s,
         &project,
         &json!({"expectedRevision":scene["revision"],"scene":scene}),
-    )?;
+    )? };
     Ok(
-        json!({"status":"saved_not_rendered","projectId":project,"revision":saved["revision"],"message":"场景已保存；打开项目三维地球后应用。请用 earth_get_view 核对 renderedRevision，不能声称已经显示。"}),
+        json!({"status":"saved_not_rendered","projectId":project,"revision":saved["revision"],"cameraCommandRevision":saved["cameraCommandRevision"],"message":"场景已保存；打开项目三维地球后应用。请用 earth_get_view 核对 renderedRevision 和 renderedCameraCommandRevision，不能声称已经显示。"}),
     )
 }
 
