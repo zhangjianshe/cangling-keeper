@@ -1,0 +1,12 @@
+const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<canvas tabindex="0"></canvas>',{url:'http://localhost/earth/index.html',runScripts:'outside-only'}),w=dom.window;
+let walking=false;const calls=[];
+w.keeper_command=(method,raw)=>{const a=JSON.parse(raw);calls.push([method,a]);if(method==='navigation_mode'){if(typeof a.walking==='boolean')walking=a.walking;return JSON.stringify({walking});}return 'true';};
+w.eval(fs.readFileSync('ui/earth/navigation-mode.js','utf8').replace("import {keeper_command} from './pkg/cangling_desktop.js';",'const keeper_command=window.keeper_command;'));
+const button=w.document.querySelector('button');assert(button.disabled);w.dispatchEvent(new w.Event('cangling-earth-ready'));assert(!button.disabled);button.click();assert(walking);assert.equal(button.textContent,'返回地球浏览');
+w.dispatchEvent(new w.KeyboardEvent('keydown',{code:'KeyW',bubbles:true}));assert.equal(calls.at(-1)[1].forward,1);
+w.dispatchEvent(new w.KeyboardEvent('keydown',{code:'ShiftLeft',bubbles:true}));assert.equal(calls.at(-1)[1].sprint,true);
+w.dispatchEvent(new w.Event('blur'));assert.equal(calls.at(-1)[1].forward,0);assert.equal(calls.at(-1)[1].sprint,false);
+button.click();assert(!walking);assert.equal(button.textContent,'地面漫游');assert(w.document.querySelector('span').hidden);
+const before=calls.length;w.dispatchEvent(new w.KeyboardEvent('keydown',{code:'KeyW',bubbles:true}));assert.equal(calls.length,before);
+dom.window.close();console.log('PASS mode switch, WASD, sprint, blur release, orbit input isolation');

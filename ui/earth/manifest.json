@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-25T07:39:17.784328+00:00",
+  "builtAt": "2026-11-25T09:29:20.596556+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -27,7 +27,7 @@
     "src/administration.rs": "10101bb2e00da11f8a842a183f8bd296fcd3ca6d8284931449ec149237f8c04b",
     "src/boundary.rs": "8d7d918b0bd15b46d8e145feedd90e2d1d066d2e37e9872df34e6ee48352f69e",
     "src/boundary.wgsl": "0625842c2980cb96abf24e030d486287e88be2b192963b60bdbb798fda601bba",
-    "src/camera.rs": "7af33f9e170e970df0df7531baf47adc510a47b271accfcbe62eff6caceb53c1",
+    "src/camera.rs": "2f3c63c9add20f613a2814aa0b710961bce79826b1f1cb37396e2093b80092c2",
     "src/geo.rs": "ffca893c825b9f5b771499501479644c643f75477a2f1732b40d0b296b09b3e0",
     "src/graticule.rs": "05e003f07a964ee0cc79086e9081df75e5a5f5281b0949286a1df6c44f2b6fa7",
     "src/graticule.wgsl": "8ceb948c6abf68145e1ac16f82dd8be3d3b0049ca28b4b814638c9d4507868ba",
@@ -36,8 +36,8 @@
     "src/image_layer.rs": "82667c5c8c463fb6e572df62478279fa99c2cc7f254c7a6e39cc17f41c618be3",
     "src/image_layer.wgsl": "f47dcc9885c10bf0eebc7b57518477783bd7b8f3f5892e21c6893da5bdcbad0f",
     "src/keeper_bridge.rs": "56028c019d76a6d0d00ac4e9b32c44f7de7963fa264c454fcb3b7db010f25dc7",
-    "src/keeper_camera.rs": "b5b33f9752df7981a53a557ea8051fba59cf57a69b9e387a89cd0961259124e6",
-    "src/keeper_renderer.rs": "38f0bf41bddd8668e5ad7c4c98b7cd5dc1bdb701f5f0475411c98e774c50dedb",
+    "src/keeper_camera.rs": "30d2841b99dfa0b15cc0d1d76aae7424d53f237de7cf690655febc542039f52e",
+    "src/keeper_renderer.rs": "7a7288da84e4df8b780a61a3bc9d6d5642ca2ed704d27949a271585638d12515",
     "src/lib.rs": "525cb578110f63b2171b7ca340f88af5fec8e688b31db8a0c3369e92dc424d73",
     "src/main.rs": "743eef96991f9cd516e336c9a4bf974dff0ad20e2fb0eb2e506161a467ad6601",
     "src/marker.rs": "c585c407ab2ce1917e7bd2cfbab9eedc5ab84f1843c6bd155819a683fa0b013b",
@@ -49,19 +49,21 @@
     "src/navigation.wgsl": "1842570208a54741f7a41e1fbce008ac8cbec675dfacc21afb84e475b012f865",
     "src/placenames.rs": "a241c516ff1b31df7d4b02155a6cd06369bbc7a8556b226f84107b15a64d9a77",
     "src/profile.rs": "46079037c1318ab3027c1d31b5f048498e735a074bc4fad6497ac3057f00eea2",
-    "src/renderer.rs": "e83a3873738761ce4ff4db871aed638ca45959a381090d51825be15b0e6b3ea7",
+    "src/renderer.rs": "833789b2e66b2b6b1c6541f3fb7a9929efa725ad129415f9cded4cf7c2e054bd",
     "src/terrain.rs": "a31bde910ac01d570fb6896b677f40aabfb692dc6ba3a2bccc8a6d7110a40dc2",
     "src/tile.rs": "0cbbc27eb4d8cdb966d703a2779146e38e6e03b7c53be91baa15616c087b3c3f",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
     "src/tiles3d.rs": "d1e6a1f50e074131af2b10be22261024e36704b012bdfd0bac7912d44d690d43",
     "src/vector_layer.rs": "35125410a9c39095d77bf4ea2296a6d3d5ed39a3185a783e782a058d68385259",
     "src/vector_layer.wgsl": "ae0918515338d06b618aa6629419f79c42aea768145c19628cba7405eb827bae",
+    "src/walk_camera.rs": "0457f31f276bc552b24848ecf578a6f22a0f8bcd2481fa8ea29a66d650fb76f0",
     "src/web.rs": "398976e8087e6641e00e9180927ef0b60df28b1aaaa7e963361c2ea455d71b94",
-    "src/web_cache.rs": "2a39ab694f39b8d31fb3f23cc77709ff3597e47908912634958e0a801d461f90"
+    "src/web_cache.rs": "2a39ab694f39b8d31fb3f23cc77709ff3597e47908912634958e0a801d461f90",
+    "web/navigation-mode.js": "30d6df75b23a960096e550de1664e3ee81676b8c1482cbbeffca6e5651dc094a"
   },
   "artifacts": {
-    "pkg/cangling_desktop.js": "b5164790e49d8a6c3258580f1bf9868542c5eb160d5b5048481dfe43ae113e50",
-    "pkg/cangling_desktop_bg.wasm": "f49bd86742ac5dc2845101ca1b512f9eeba5cdb698aeab7cb5024197bfc55db1"
+    "pkg/cangling_desktop.js": "cef398759823a102997eb14035b5688ff362c49f37632ef18aa6ec0adc957d43",
+    "pkg/cangling_desktop_bg.wasm": "630030e6f7a75726ea0590b773e85a6f4a2fbde69215ee3b2d97bdf3855c586e"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }

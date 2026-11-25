@@ -1,0 +1,20 @@
+import {keeper_command} from './pkg/cangling_desktop.js';
+const call=(method,args={})=>JSON.parse(keeper_command(method,JSON.stringify(args)));
+const panel=document.createElement('section');panel.className='earth-navigation-mode';panel.setAttribute('aria-label','地球视图模式');
+const button=document.createElement('button');button.type='button';button.textContent='地面漫游';button.disabled=true;button.setAttribute('aria-pressed','false');
+const hint=document.createElement('span');hint.hidden=true;hint.textContent='点击画面控制方向 · WASD 行走 · Shift 加速 · Esc 释放鼠标（暂不含建筑碰撞）';hint.setAttribute('role','status');panel.append(button,hint);document.body.append(panel);
+let walking=false,ready=false,dragging=false,busy=false,lastCheck=0;const keys=new Set();
+const controls=(x=0,y=0)=>{if(!walking)return;try{call('walk_controls',{forward:Number(keys.has('KeyW'))-Number(keys.has('KeyS')),right:Number(keys.has('KeyD'))-Number(keys.has('KeyA')),sprint:keys.has('ShiftLeft')||keys.has('ShiftRight'),x,y});}catch{}};
+const stop=()=>{keys.clear();dragging=false;controls();};
+function state(value){if(walking&&!value){stop();if(document.pointerLockElement)document.exitPointerLock();}walking=value;button.textContent=value?'返回地球浏览':'地面漫游';button.setAttribute('aria-pressed',String(value));hint.hidden=!value;}
+button.onclick=()=>{if(!ready||busy)return;busy=true;try{state(call('navigation_mode',{walking:!walking}).walking);if(walking)document.querySelector('canvas')?.focus();}catch(e){hint.hidden=false;hint.textContent=String(e);}finally{busy=false;}};
+window.addEventListener('cangling-earth-ready',()=>{ready=true;button.disabled=false;});
+window.addEventListener('cangling-earth-frame',()=>{if(!ready||performance.now()-lastCheck<300)return;lastCheck=performance.now();try{const value=call('navigation_mode').walking;if(value!==walking)state(value);}catch{}});
+const movement=new Set(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight']);
+window.addEventListener('keydown',e=>{if(!walking||e.ctrlKey||e.metaKey||e.altKey||e.target.closest?.('input,textarea,select,[contenteditable="true"]'))return;if(movement.has(e.code)){e.preventDefault();e.stopImmediatePropagation();keys.add(e.code);controls();}if(e.code==='Escape')stop();},true);
+window.addEventListener('keyup',e=>{if(movement.has(e.code)){keys.delete(e.code);controls();}},true);
+window.addEventListener('blur',stop);document.addEventListener('visibilitychange',()=>{if(document.hidden)stop();});
+document.addEventListener('pointerlockchange',()=>{if(!document.pointerLockElement)stop();});
+document.addEventListener('pointerdown',e=>{if(!walking||e.target.tagName!=='CANVAS'||e.button!==0)return;dragging=true;e.target.focus();try{const request=e.target.requestPointerLock?.();request?.catch(()=>{});}catch{}});
+document.addEventListener('pointerup',()=>{dragging=false;});
+document.addEventListener('pointermove',e=>{if(walking&&(document.pointerLockElement?.tagName==='CANVAS'||dragging))controls(e.movementX,e.movementY);});
