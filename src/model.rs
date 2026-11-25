@@ -288,9 +288,10 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         if !profile.is_null()&&profile["mcpTools"].as_array().unwrap().iter().any(|n|!mcp.iter().any(|t|t["function"]["name"]==*n)){return Err("智能体关联 MCP 工具不可用，请重新连接或编辑配置".into());}
         mcp.retain(|t|crate::agent_profiles::includes(&profile,"mcpTools",t["function"]["name"].as_str().unwrap_or("")));tools.extend(mcp);tools};
     let mut deadline=tokio::time::Instant::now()+std::time::Duration::from_secs(crate::agent_runtime::ACTIVE_SECONDS);
-    let evidence_base_prompt=messages[0]["content"].as_str().unwrap_or("").to_string();
+    let mut evidence_base_prompt=messages[0]["content"].as_str().unwrap_or("").to_string();
     // Keep the saved canonical snapshot intact; compaction is local to this generation.
     let root=project_root;
+    let mut evidence_corrected=false;
     let mut visible=String::new();let mut total_calls=0;let mut loop_guard=loop_guard::LoopGuard::default();let mut refusals=loop_guard::RefusalGuard::default();
     for round in 1..=max_rounds {
         if crate::agent_actions::is_shutting_down(){return Err("Keeper 正在关闭，任务不会自动重放。".into());}
@@ -311,6 +312,21 @@ pub(crate) async fn reply(core:&std::sync::Arc<crate::AppState>,session:&str,res
         visible.push_str(&turn.content);
         if turn.calls.is_empty(){
             if visible.trim().is_empty(){return Err("LLM Server 未返回文字内容".into());}
+            if crate::agent_evidence::unsupported_claim(&visible,&evidence) {
+                let blocked=evidence_corrected || round==max_rounds;
+                {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_evidence::record_validation(&store.conn,session,response_id,if blocked {"blocked"} else {"correcting"})?;}
+                visible.clear();
+                progress("执行证据校验：模型的操作声明缺少本轮工具执行证据，正在核实。")?;
+                if blocked {
+                    progress("执行证据不足：未获得支持操作声明的本轮工具结果，不能确认查询或操作已经完成。")?;
+                    return Err(crate::agent_runtime::termination_error(core,response_id,"unsupported_execution_claim","模型再次给出缺少执行证据的操作声明，已停止；请检查可用工具或重试。".into()));
+                }
+                evidence_corrected=true;
+                messages.push(json!({"role":"assistant","content":turn.content}));
+                evidence_base_prompt.push_str("\n运行时校验发现上一条草稿声称已查询或执行，但本轮没有支持声明的成功执行记录。该草稿不是真实工具结果。请使用当前已提供的相关工具获取证据；不要为了通过校验调用无关工具。没有可用工具时，明确说明尚未执行、无法核实。不得重复无证据的查询结果或完成声明。仅有这一次纠正机会，原任务预算和审批规则不变。");
+                continue;
+            }
+            if evidence_corrected {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_evidence::record_validation(&store.conn,session,response_id,"corrected")?;}
             progress(&visible)?;return Ok(ReplyFinish::Complete);
         }
         total_calls+=turn.calls.len();if total_calls>crate::agent_runtime::MAX_TOOL_CALLS{return Err(crate::agent_runtime::termination_error(core,response_id,"tool_limit",format!("Agent 已达到 {} 次工具调用上限，执行记录已保存。",crate::agent_runtime::MAX_TOOL_CALLS)));}

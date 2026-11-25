@@ -43,9 +43,43 @@ pub(crate) fn prompt(evidence: &Value) -> String {
     )
 }
 
+/// Conservative claim guard, not a semantic proof that a user's goal was achieved.
+/// Plan/skill calls and unsuccessful calls cannot substantiate external execution.
+pub(crate) fn unsupported_claim(text: &str, evidence: &Value) -> bool {
+    let supported = evidence["calls"].as_array().is_some_and(|calls| calls.iter().any(|c|
+        c["status"] == "succeeded" && !matches!(c["tool"].as_str(), Some("load_skill" | "update_plan"))));
+    if supported { return false; }
+    let mut fenced = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") { fenced = !fenced; continue; }
+        if fenced || line.trim_start().starts_with('>') { continue; }
+        for clause in line.split(['。', '！', '？', ';', '；', '\n']) {
+            let clause = clause.to_lowercase().replace("**", "");
+            if ["未执行", "尚未", "没有执行", "没有查询", "未查询", "无法核实", "不能确认", "不能声称", "不要", "不得", "例如", "示例", "如果", "假设", "i have not", "i haven't", "did not", "cannot verify", "for example"].iter().any(|v| clause.contains(v)) { continue; }
+            if ["已查询", "查询了", "检索了", "已检索", "查询都返回", "查询返回空", "检索结果为空", "已执行", "执行了命令", "已运行", "已写入", "已创建", "已保存", "已删除", "已加载", "已部署", "已安装", "测试已通过", "测试通过了", "i searched", "i queried", "i executed", "i ran ", "i created", "i saved", "i deleted", "i loaded", "i deployed", "i have searched", "i have created"].iter().any(|v| clause.contains(v)) { return true; }
+        }
+    }
+    false
+}
+
+pub(crate) fn record_validation(conn: &Connection, session: &str, response: &str, status: &str) -> Result<(), String> {
+    conn.execute("UPDATE agent_messages SET model_metadata=json_set(model_metadata,'$.evidenceValidation',json(?3)) WHERE id=?1 AND session_id=?2",
+        params![response,session,json!({"status":status,"reason":"unsupported_execution_claim","maxCorrections":1}).to_string()]).map_err(|e|e.to_string())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rejects_unsupported_claims_but_allows_questions_and_limitations() {
+        let empty=json!({"calls":[]});
+        for text in ["两个查询都返回空结果。", "检索了郑州及按范围筛选，均无结果。", "文件已写入。", "I searched the dataset catalog."] { assert!(unsupported_claim(text,&empty),"{text}"); }
+        for text in ["你好，我是助手。", "我尚未查询，无法确认。", "例如：已创建文件。", "```text\n已删除\n```", "> 已查询", "I have not searched the catalog."] { assert!(!unsupported_claim(text,&empty),"{text}"); }
+        for tool in ["update_plan","load_skill"] { assert!(unsupported_claim("已查询目录",&json!({"calls":[{"tool":tool,"status":"succeeded"}]}))); }
+        for status in ["failed","pending_approval","rejected","stopped"] { assert!(unsupported_claim("已查询目录",&json!({"calls":[{"tool":"list_directory","status":status}]}))); }
+        assert!(!unsupported_claim("已查询目录",&json!({"calls":[{"tool":"list_directory","status":"succeeded"}]})));
+    }
     #[test]
     fn evidence_is_scoped_persisted_and_does_not_infer_success() {
         let c = Connection::open_in_memory().unwrap();
