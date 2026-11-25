@@ -1,10 +1,10 @@
 {
-  "builtAt": "2026-11-24T09:51:41.861820+00:00",
+  "builtAt": "2026-11-25T02:09:11.359506+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
-    "Cargo.lock": "7db599e092f4ffe5fa9cd04aaaab7e65d29668377fce8b3b077afc7058b736d6",
-    "Cargo.toml": "6145aad98c436b3a543f5024d320ea6bf5ee3b7a32af72eef5e1a166a6650eec",
+    "Cargo.lock": "71ead7d340132d9c501bb5f4f37c8ba1f4087de4437ce067e949e3be0093467d",
+    "Cargo.toml": "49f3a5c41bdce7d57e123301db5ccc19303d19b7f5355906630d95a85e0535ff",
     "assets/CanglingHudCjk.otf": "37fb421ee4cd7c914b770e4b0c98095a6a94b67355f84b3d2c7ac837a936100f",
     "assets/CanglingPlaceNamesCjk.otf": "4f0576bf509c424e06fa89ebba1745c71ac9bf2b83d97a874baadda0f2f0e9e4",
     "assets/DejaVu-LICENSE.txt": "e81d9dced49fea2a7d576cbea283873de58563c5d488f954deb282843c3ea79c",
@@ -35,19 +35,21 @@
     "src/hud.rs": "615f6a84db853fdeef0e7c1d958e767e8fdcdbc398ece26c0c84cd3e13de4360",
     "src/image_layer.rs": "82667c5c8c463fb6e572df62478279fa99c2cc7f254c7a6e39cc17f41c618be3",
     "src/image_layer.wgsl": "f47dcc9885c10bf0eebc7b57518477783bd7b8f3f5892e21c6893da5bdcbad0f",
-    "src/keeper_bridge.rs": "7aa2b41ea88ce851bd6f73efb21a0aa56cc6b6e96de59be8a9e6ad018cb20816",
+    "src/keeper_bridge.rs": "e3982a89c47203e9defdba79339dea23c4b712c4a6bfede1b777ebb3b55efc93",
     "src/keeper_camera.rs": "b5b33f9752df7981a53a557ea8051fba59cf57a69b9e387a89cd0961259124e6",
-    "src/keeper_renderer.rs": "52549507833988a4d6bc0d249f088ab55067bc6b56e10dec083a48c17921e4ef",
-    "src/lib.rs": "67721371a7106b51629de456193c92045c2c5fefe36e98c4b2b19779ab6898ff",
+    "src/keeper_renderer.rs": "c7bb8f2dd062ff057986fbf36027871503daf6bd8a5af15f73220a84f19669dd",
+    "src/lib.rs": "9dbf41deaa616184542caec0e53ea08e83a725ab68c92be9492086d71c572ced",
     "src/main.rs": "743eef96991f9cd516e336c9a4bf974dff0ad20e2fb0eb2e506161a467ad6601",
     "src/marker.rs": "c585c407ab2ce1917e7bd2cfbab9eedc5ab84f1843c6bd155819a683fa0b013b",
     "src/marker.wgsl": "bdca2b98dad15ada41c92ec8183683192b2193083659fb6775454d63bee1e534",
     "src/mesh.rs": "6f393a87b1fe719b2b4675601a8241d78761e4068fc48383faf19d0896c84f1c",
+    "src/model_layer.rs": "a8d201af7a8b5538b0d74257d7818d51b4c75f16728252f2c64017f994bc3e63",
+    "src/model_layer.wgsl": "f47dcc9885c10bf0eebc7b57518477783bd7b8f3f5892e21c6893da5bdcbad0f",
     "src/navigation.rs": "d911de94d04c508e67d7c72e966505630949d4c2f383fea41ab4ea4e70b58ce5",
     "src/navigation.wgsl": "1842570208a54741f7a41e1fbce008ac8cbec675dfacc21afb84e475b012f865",
     "src/placenames.rs": "a241c516ff1b31df7d4b02155a6cd06369bbc7a8556b226f84107b15a64d9a77",
     "src/profile.rs": "46079037c1318ab3027c1d31b5f048498e735a074bc4fad6497ac3057f00eea2",
-    "src/renderer.rs": "23f834682d866efcaafbcfe4f243edb0f35e1250c88efaa6cb150e6ff8b0de35",
+    "src/renderer.rs": "60b1c3ff389001dd1d9a7197e105f881ef697319db0e32c1c128b2b6e86fe4a1",
     "src/terrain.rs": "a31bde910ac01d570fb6896b677f40aabfb692dc6ba3a2bccc8a6d7110a40dc2",
     "src/tile.rs": "382a65336529271a66c82d4501d101ba40e0f36b9cf6a515b520ca47fbe6c723",
     "src/tile.wgsl": "d4d8e595c61e2bb2934ef1aa9b1fa17c5f00062b19bc94a862378d0f362d0231",
@@ -57,8 +59,8 @@
     "src/web_cache.rs": "71cc9c8b07a49b8d66c8c3775d033dea43cd024d4b3600ab6033a7140ab7fc97"
   },
   "artifacts": {
-    "pkg/cangling_desktop.js": "dd81e26a99eb70073aa33501fee863f250e535a73c1eed196d25aa5ea2e6ae85",
-    "pkg/cangling_desktop_bg.wasm": "aa0997546e7d6412291c969001c7789eec5fcc996e5f084a031fbb497b8938e0"
+    "pkg/cangling_desktop.js": "d5b6e9b5fa15cdc4a2618048220483a01d82b51490cca63c335bb5f2fd48d476",
+    "pkg/cangling_desktop_bg.wasm": "e573b92414653f95910a6e2f3cbbf289a27a0628c4621189a9c9fa183f8461c3"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }

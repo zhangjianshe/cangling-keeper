@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+let loads=0,uploads=0,scenes=[];
+const sandbox={window:{},Uint8Array,AbortController,setTimeout,clearTimeout,fetch:async url=>{assert(url.startsWith('/api/earth/models/'));loads++;return {ok:true,arrayBuffer:async()=>new Uint8Array([1,2,3]).buffer};}};
+vm.runInNewContext(fs.readFileSync('ui/earth/model-overlay.js','utf8'),sandbox);
+(async()=>{const renderer=sandbox.window.createKeeperModelOverlay({upload(id,bytes,polygon){uploads++;assert.equal(bytes.length,3);assert.equal(JSON.parse(polygon).longitude,120);},scene(value){scenes.push(value);}});
+const layers=[{id:'fixture',visible:true,longitude:120,latitude:30,height:0,scale:1,heading:0}];
+await renderer.prepare(layers);await renderer.prepare(layers);assert.equal(loads,1);assert.equal(uploads,1);
+layers[0].visible=false;await renderer.prepare(layers);assert.equal(loads,1);
+await renderer.prepare([]);layers[0].visible=true;await renderer.prepare(layers);assert.equal(loads,2);
+assert.equal(scenes.at(-1),layers);console.log('PASS native model transport: cache, binary upload, visibility, cleanup; no DOM or Canvas');})().catch(e=>{console.error(e);process.exitCode=1;});

@@ -51,7 +51,7 @@ pub(crate) fn managed(s: &Store) -> Result<Vec<Value>, String> {
     q.query_map([owner],|r|{let id:String=r.get(0)?;let profile:String=r.get(1)?;let scope=if profile.is_empty(){"account"}else{"agent"};Ok(json!({"id":id,"ref":format!("{scope}:{id}"),"scope":scope,"profileId":profile,"name":r.get::<_,String>(2)?,"description":r.get::<_,String>(3)?,"revision":r.get::<_,String>(4)?}))}).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
 }
 const EARTH_SKILL:&str=include_str!("../skills/earth-workbench/SKILL.md");
-fn builtin()->Value{json!({"id":"system-earth-workbench","ref":"system:earth-workbench","scope":"system","name":"earth-workbench","description":"地球定位、项目图片和GeoJSON原生叠加、选中要素、图片下载与渲染核验","revision":format!("{:x}",Sha256::digest(EARTH_SKILL.as_bytes())),"readonly":true})}
+fn builtin()->Value{json!({"id":"system-earth-workbench","ref":"system:earth-workbench","scope":"system","name":"earth-workbench","description":"地球定位、项目图片与GeoJSON叠加、GLB模型加载、资源下载及渲染核验","revision":format!("{:x}",Sha256::digest(EARTH_SKILL.as_bytes())),"readonly":true})}
 pub(crate) fn catalog(s: &Store, session: &str, guidance: &Value) -> Result<Vec<Value>, String> {
     let project = project(s, session)?;
     let mut out = vec![builtin()];

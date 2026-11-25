@@ -194,3 +194,45 @@ GeoJSON 业务图层使用 Rust `VectorLayerRenderer`，不再创建 SVG / DOM �
 列表包含 GeoJSON 与图片，可点击“显示／隐藏”切换可见状态，也可点击对应“删除”或“清空图层”。可见状态随项目场景保存，刷新及独立标签页同步后仍保持。只修改当前项目场景的 overlays/images 并清除旧选择，不删除项目文件、图片快照、下载链接或底图。
 场景通过账户校验和版本锁保存，其他地球标签页自动同步；原生渲染器移除网格/纹理引用。
 输入框、编辑器内及带 Ctrl/Alt/Meta 的组合键不触发，父页面 Esc 关闭面板。
+
+## Static GLB models
+
+`earth_publish_model` publishes a project `.glb` as an immutable, SHA-256-deduplicated,
+current-account download snapshot. `earth_add_model` adds/updates its placement.
+Both are available to the chat agent through the system Earth skill. HTTP equivalents:
+`POST /api/invoke/agent_earth_publish_model` and `agent_earth_add_model`; provide
+`projectId`, `accountKey`, `path`, and for mutation the current `expectedRevision`.
+Download routes: `/api/earth/models/{id}` and `?download=1` (local account only).
+
+On an open project Earth page:
+
+```js
+await keeperEarth.addModel({
+  path: '3dmodules/Duck.glb',
+  longitude: 111.6452, latitude: 32.7489,
+  height: 5, heading: 0, scale: 30,
+  altitudeMode: 'relativeToGround'
+});
+```
+
+Coordinates are WGS84 degrees; height is metres relative to sampled ground by default,
+or ellipsoid height with `absolute`. glTF uses metres, Y up; X maps east and Z south
+at heading 0. Placement is at the model origin (not automatically its lowest vertex).
+Re-adding the same content updates its existing layer. Models participate in the L-key
+layer list, visibility, deletion, clear, revision checks and detached-tab refresh.
+An empty model list is compatible with older saved scenes. Snapshots remain downloadable
+after layer removal, just like images; deletion does not delete project source files.
+
+Rendering is native Rust/wgpu, using node transforms, triangle geometry, base colour
+and embedded PNG/JPEG textures with the globe camera/depth buffer. No DOM model overlay.
+This first version is not a full PBR renderer: no lighting model, metallic/roughness,
+normal maps, animation, skins, morphs, required compression extensions or external URIs.
+Bounds: 16 MiB per GLB, 8 models, 250k vertices, 64 primitives, 32 MiB decoded texture
+budget per model, 128 MiB snapshot budget per account. Unsupported geometry and required extensions fail explicitly; additional PBR material channels are ignored.
+
+Checks: `python3 scripts/test-earth-http.py`, `node scripts/test-earth-model-overlay.cjs`.
+Native renderer fixture check (in cangling-desktop):
+`EARTH_TEST_GLB=/path/to/Duck.glb cargo test --lib model_layer -- --ignored`.
+The sample downloaded to `general/3dmodules/Duck.glb` is from KhronosGroup/glTF-Sample-Assets,
+credited to Sony (2006), SCEA Shared Source License 1.0; its README and license are stored
+beside the sample. The sample is not bundled in Keeper's executable.

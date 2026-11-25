@@ -1,10 +1,12 @@
 import './image-overlay.js';
-import {keeper_command,keeper_image} from './pkg/cangling_desktop.js';
+import './model-overlay.js';
+import {keeper_command,keeper_image,keeper_model} from './pkg/cangling_desktop.js';
 const bridgeOrigin=new URL(document.baseURI).origin;
 let ready=false,applied=null,measuring=false,points=[];
 const call=(method,args={})=>JSON.parse(keeper_command(method,JSON.stringify(args)));
 const send=(event,value)=>parent.postMessage({earth:true,event,value},bridgeOrigin);
 const images=window.createKeeperImageOverlay({upload:keeper_image,scene:layers=>call('image_scene',layers)});
+const models=window.createKeeperModelOverlay({upload:keeper_model,scene:layers=>call('model_scene',layers)});
 function report(value){send('selection',value);}
 function nextFrame(callback){return new Promise((resolve,reject)=>{const timeout=setTimeout(()=>{window.removeEventListener('cangling-earth-frame',run);reject(Error('等待GPU画面超时'));},5000);function run(){clearTimeout(timeout);window.removeEventListener('cangling-earth-frame',run);try{resolve(callback?.());}catch(e){reject(e);}}window.addEventListener('cangling-earth-frame',run);});}
 async function screenshot(){const output=document.createElement('canvas');output.width=innerWidth;output.height=innerHeight;const ctx=output.getContext('2d');await nextFrame(()=>ctx.drawImage(document.querySelector('canvas'),0,0,output.width,output.height));return output.toDataURL('image/png');}
@@ -13,7 +15,7 @@ window.addEventListener('message',async e=>{
  if(e.origin!==bridgeOrigin||e.source!==parent||!e.data?.earth||typeof e.data.id!=='string')return;
  const {id,method,args}=e.data;try{
   if(!ready)throw Error('地球尚未就绪');let result;
-  if(method==='apply'){call('set_view',args.camera);call('layers',args.layers);call('vector_scene',args.overlays||[]);applied=args;await images.prepare(args.images||[]);await nextFrame();result=call('get_view');}
+  if(method==='apply'){call('set_view',args.camera);call('layers',args.layers);call('vector_scene',args.overlays||[]);applied=args;await images.prepare(args.images||[]);await models.prepare(args.models||[]);await nextFrame();result=call('get_view');}
   else if(['get_view','pick','pause'].includes(method))result=call(method,args);
   else if(method==='measure'){measuring=!!args;points=[];result=true;}
   else if(method==='screenshot')result=await screenshot();

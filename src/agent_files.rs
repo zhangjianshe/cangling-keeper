@@ -20,6 +20,8 @@ pub(crate) fn definitions() -> Vec<Value> {
 }
 pub(crate) fn title(name: &str) -> &str {
     match name {
+        "earth_publish_model"=>"生成模型下载链接",
+        "earth_add_model"=>"加载三维模型",
         "earth_publish_image"=>"生成图片下载链接",
         "earth_add_image_layer"=>"叠加地理图片",
         "earth_get_view"=>"读取地球视图",
@@ -649,4 +651,14 @@ pub(crate) fn image_bytes(root:&Dir,raw:&str)->Result<Vec<u8>,String>{
     if !meta.is_file() || meta.len()>4*1024*1024{return Err("图片须为不超过4 MiB的普通文件".into());}
     let mut bytes=Vec::new();file.take(4*1024*1024+1).read_to_end(&mut bytes).map_err(|_|"读取图片失败")?;
     if bytes.len()>4*1024*1024{return Err("图片超过4 MiB".into());}Ok(bytes)
+}
+
+pub(crate) fn model_bytes(root:&Dir,raw:&str)->Result<Vec<u8>,String>{
+    let scope=Scope{dir:root.try_clone().map_err(|_|"无法打开项目")?,cancel:Arc::new(AtomicBool::new(false)),deadline:Instant::now()+Duration::from_secs(8),visited:0,bytes:0};
+    let path=scope.path(raw)?;
+    let file=scope.dir.open(&path).map_err(|_|"无法读取模型")?;
+    let meta=file.metadata().map_err(|_|"无法读取模型信息")?;
+    if !meta.is_file() || meta.len()>16*1024*1024{return Err("模型须为不超过16 MiB的普通文件".into());}
+    let mut bytes=Vec::new();file.take(16*1024*1024+1).read_to_end(&mut bytes).map_err(|_|"读取模型失败")?;
+    if bytes.len()>16*1024*1024{return Err("模型超过16 MiB".into());}Ok(bytes)
 }

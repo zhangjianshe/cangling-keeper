@@ -1,6 +1,6 @@
 ---
 name: earth-workbench
-description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、读取选中要素及提供图片下载链接。用于地理展示任务，不用于普通图片编辑。
+description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、加载 GLB 三维模型、读取选中要素及提供资源下载链接。用于地理展示任务，不用于普通图片编辑。
 ---
 
 # 地球工作台
@@ -27,6 +27,13 @@ description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、
 
 限制：单张4 MiB、边长8192、24M像素；显示纹理最大2048；最多8个图片图层。原始分析数据和预览图是不同产物。
 用 earth_set_layer_visibility 的 layer 指定 GeoJSON 路径或图片 ID 控制显隐。
+
+## GLB 三维模型
+
+用 earth_publish_model({"path":"3dmodules/Duck.glb"}) 获得当前账户的真实下载URL。
+用 earth_add_model({"path":"3dmodules/Duck.glb","longitude":116.4,"latitude":39.9,"height":0,"heading":0,"scale":1,"altitudeMode":"relativeToGround"}) 加载；示例坐标不能替代用户要求的位置。longitude/latitude是WGS84度，height是米，relativeToGround表示模型原点相对地形的高度；absolute表示椭球高。模型使用glTF的Y向上、米单位，scale等比缩放，heading为绕竖直方向旋转的度数。
+第一版支持静态、纹理与缓冲区内嵌的GLB 2.0三角网格、节点变换、基础颜色及纹理；不支持动画、蒙皮、Draco等必需扩展或完整PBR。单文件16MiB、8个模型；不要把这种支持描述为完整glTF渲染器。earth_get_view返回modelLayers，可用模型ID控制显隐。更新位置使用同一文件再次调用earth_add_model，不重复增加图层。
+核对revision/renderedRevision后再报告加载状态，不通过DOM模拟模型渲染。
 
 ## 完成核验
 
