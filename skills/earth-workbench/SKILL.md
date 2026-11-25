@@ -11,7 +11,7 @@ description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、
 
 - earth_fly_to：WGS84 longitude、latitude，height 为相机高度（米）。经纬度须来自用户或可信地理数据，不能猜测。
 - earth_get_selection：读取地球选点、矢量属性或测量结果。地名不等同于精确坐标。
-- earth_get_view：读取相机、businessLayers、imageLayers、revision 与 renderedRevision。
+- earth_get_view：读取相机、businessLayers、imageLayers、revision 与 renderedRevision，以及 cameraCommandRevision 与 renderedCameraCommandRevision。
 
 ## GeoJSON 矢量
 
@@ -40,3 +40,5 @@ description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、
 以本轮工具返回值为证据，不能把历史回复中的文件名、版本号或“已完成”当事实。
 核对文件存在、目标图层出现在列表中，然后核对新版本 revision 与 renderedRevision。旧场景已绘制不代表新图层已添加；没有工具执行就不能声称生成或加载成功。
 场景保存但未确认绘制时说明“已保存，等待地球页面加载”，不要循环重复添加。绘制确认也不是目视验收，不保证图层在当前相机可见范围内；需要时定位到真实范围中心再核对。
+
+视角独立同步：手动拖动不会改变图层 revision。使用 earth_fly_to 后须核对 renderedCameraCommandRevision == cameraCommandRevision；只有图层 renderedRevision 相等不能证明定位已显示。
