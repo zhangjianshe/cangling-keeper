@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-25T10:36:23.416717+00:00",
+  "builtAt": "2026-11-25T10:40:37.231080+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -48,7 +48,7 @@
     "src/marker.wgsl": "bdca2b98dad15ada41c92ec8183683192b2193083659fb6775454d63bee1e534",
     "src/mesh.rs": "6f393a87b1fe719b2b4675601a8241d78761e4068fc48383faf19d0896c84f1c",
     "src/model_collision.rs": "3dcc6e629c97d9eed8317ceecaf470b70aa5265cf7391718d1615134938b460b",
-    "src/model_layer.rs": "27caf1ec2d695700436ae4142c64b5bd412fd2352c2eeb0d5feb4ebe1b8fe643",
+    "src/model_layer.rs": "a2ef24314c2582e7cd7ea836e5edef54d95d5828b23d5cac97165c65002d9a56",
     "src/model_layer.wgsl": "87cdc0d9a4770bbd4b5025b82911a11bf72470ee30d500e7afc08c7990ee6ffb",
     "src/model_material.rs": "d678d075ba9d6103c6fc30e0b58082c7af8f15f118360c9e6e34517c53132722",
     "src/navigation.rs": "d911de94d04c508e67d7c72e966505630949d4c2f383fea41ab4ea4e70b58ce5",
@@ -72,8 +72,8 @@
     "web/navigation-mode.js": "a67d125bb249af351202c657a25b2615012d584ad11bf873006137acb4cd87e9"
   },
   "artifacts": {
-    "pkg/cangling_desktop.js": "71bcb23567d48bc8f49eeec87261f86dbfd46c6e3b853326dbf7f52d63af8370",
-    "pkg/cangling_desktop_bg.wasm": "19095d25042cce6252cd20145de92eb1b9fad592a8b0a589a34739b6c6927e37"
+    "pkg/cangling_desktop.js": "bc138374b7abef28a12946849b70fdcaacf08a09fabfd623e7b896a3224d4353",
+    "pkg/cangling_desktop_bg.wasm": "5bc2a7520cb8d5cfb7d96c510bb323651a6af26605dbe3e6b8bad7c8b022700a"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }
