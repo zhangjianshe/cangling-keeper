@@ -1,5 +1,5 @@
 {
-  "builtAt": "2026-11-25T10:47:17.300900+00:00",
+  "builtAt": "2026-11-25T10:53:51.840998+00:00",
   "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
   "dirtyWorkingTree": true,
   "sourceSha256": {
@@ -23,8 +23,10 @@
     "assets/navigation/source/compass-needle.svg": "595777fdb7ba9adda0599b2b2d7a3633e07a6e47f44cada2c91fc3fe5cc23a09",
     "assets/navigation/source/slider-thumb.svg": "816331562d13dbbe8bdb21918614d776f51d352e7147f450725dcbb1d16800d2",
     "assets/navigation/source/slider-track.svg": "482b2d59b7c17908023f2d58ebad4c65deaecd512afea6ebb72424e70b6aa557",
+    "assets/pbr-building.glb": "0442b69518f25858d4f167979aed2ab7d667d0b2c53b576803dbc41000cb4205",
     "assets/textured-building.glb": "d7715b1e9f74c16e8e645f95d51157bbb4c96ecfe23c7e2e14960b98e5b1cd65",
     "assets/walker.glb": "53146d9f6c0084a032b124fd5dc06f722c8fc659fc4e2dadb2876cdc2474c4a8",
+    "scripts/build-pbr-building.py": "5f16006bee9ded7f8709e72d8b0f8a05d9b55e0b256f14eae7c09be63d5591e8",
     "scripts/build-textured-building.py": "2fa3a61d02ea4ae596db46365ac9c783406027dac43a656198748ddf145725df",
     "scripts/build-walker.py": "f95fb91efca7cf9b623039436e1d4fb4f69af08ecd40d3317a410e37aaf4721f",
     "scripts/build-web.sh": "57d67b51b6a499eb7ab5fd4e410f6b2a180913b1e9c4b62a8fadab9d8b865909",
@@ -48,9 +50,9 @@
     "src/marker.wgsl": "bdca2b98dad15ada41c92ec8183683192b2193083659fb6775454d63bee1e534",
     "src/mesh.rs": "6f393a87b1fe719b2b4675601a8241d78761e4068fc48383faf19d0896c84f1c",
     "src/model_collision.rs": "3dcc6e629c97d9eed8317ceecaf470b70aa5265cf7391718d1615134938b460b",
-    "src/model_layer.rs": "a2ef24314c2582e7cd7ea836e5edef54d95d5828b23d5cac97165c65002d9a56",
-    "src/model_layer.wgsl": "87cdc0d9a4770bbd4b5025b82911a11bf72470ee30d500e7afc08c7990ee6ffb",
-    "src/model_material.rs": "d678d075ba9d6103c6fc30e0b58082c7af8f15f118360c9e6e34517c53132722",
+    "src/model_layer.rs": "0ec43c5fb1a964e2f2b61e492b3c19995ee8128bafe9adcbd63cf602c6c94304",
+    "src/model_layer.wgsl": "a61889a6f02218f48474d311b15b5e77cacc665bf33fb011acbfb47e1e5215dc",
+    "src/model_material.rs": "4dfef3d101510bfe394626d8b19be3ec353b641180a1b0c10a92528f2dd0350c",
     "src/navigation.rs": "d911de94d04c508e67d7c72e966505630949d4c2f383fea41ab4ea4e70b58ce5",
     "src/navigation.wgsl": "1842570208a54741f7a41e1fbce008ac8cbec675dfacc21afb84e475b012f865",
     "src/placenames.rs": "a241c516ff1b31df7d4b02155a6cd06369bbc7a8556b226f84107b15a64d9a77",
@@ -72,8 +74,8 @@
     "web/navigation-mode.js": "a67d125bb249af351202c657a25b2615012d584ad11bf873006137acb4cd87e9"
   },
   "artifacts": {
-    "pkg/cangling_desktop.js": "47ac033965c7efea3a8744b76d4bbd10171b6af095c4312d8f72f323d82c3bd8",
-    "pkg/cangling_desktop_bg.wasm": "37758b53b86659e4e6157a2479b758f0923daa043ae7096eac4e77c5b2a56549"
+    "pkg/cangling_desktop.js": "81ae422758fd0d46bf141e100569b0cbb709945f61b4ca1e6ef2743c75315761",
+    "pkg/cangling_desktop_bg.wasm": "e43932f27f53eda9d1cae6548ff1ca541898a00aec0f00597b6c5d948b790983"
   },
   "wasmBindgen": "wasm-bindgen 0.2.129"
 }
