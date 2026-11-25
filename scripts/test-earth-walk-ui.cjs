@@ -14,6 +14,7 @@ key('KeyM');assert(walking);assert.equal(indicator.dataset.mode,'first');
 key('KeyM',{repeat:true});assert(walking);
 blocked='terrain_pending';w.dispatchEvent(new w.Event('cangling-earth-frame'));assert.equal(indicator.dataset.blocked,'true');assert(indicator.title.includes('地形加载中'));
 clock+=400;blocked='steep';w.dispatchEvent(new w.Event('cangling-earth-frame'));assert(indicator.title.includes('坡度或台阶过高'));
+clock+=400;blocked='building';w.dispatchEvent(new w.Event('cangling-earth-frame'));assert(indicator.title.includes('建筑或模型阻挡'));
 clock+=400;blocked=null;w.dispatchEvent(new w.Event('cangling-earth-frame'));assert.equal(indicator.dataset.blocked,'false');
 key('Space');assert.equal(calls.at(-1)[0],'walk_jump');const jumps=calls.length;
 key('Space',{repeat:true});assert.equal(calls.length,jumps);
