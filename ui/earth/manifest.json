@@ -1,6 +1,6 @@
 {
-  "builtAt": "2026-11-25T10:53:51.840998+00:00",
-  "sourceCommit": "c08eb85a3705f2771009761657c04394ab21b924",
+  "builtAt": "2026-11-25T11:01:10.512786+00:00",
+  "sourceCommit": "bfdb04aa8d291696f4fcb4968c94a5ea1da917f4",
   "dirtyWorkingTree": true,
   "sourceSha256": {
     "Cargo.lock": "71ead7d340132d9c501bb5f4f37c8ba1f4087de4437ce067e949e3be0093467d",
