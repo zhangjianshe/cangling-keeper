@@ -380,6 +380,8 @@
       const native=tools.filter(t=>t.kind),ordinary=tools.filter(t=>!t.kind),chosen=tools.filter(checked),nativeSelected=native.filter(t=>t.enabled===true).length;
       const row=element('div','llm-server-row'),info=element('div','llm-server-info');
       info.append(element('strong','',server.name),element('div','llm-server-meta',(server.enabled?'已启用':'未启用')+' · 工具 '+chosen.filter(t=>!t.kind).length+'/'+ordinary.length+(native.length?' · 资料与模板 '+nativeSelected+'/'+native.length:'')+' · '+(server.connectedSessions?'连接会话 '+server.connectedSessions:'按需连接')),element('div','llm-server-url',server.command));
+      if(server.defaultService)info.append(element('div','mcp-server-scope','默认地图服务 · 可编辑、停用或删除'));
+      if(server.discoveryError)info.append(element('div','mcp-server-scope',String(server.discoveryError)));
       const scope=Array.isArray(server.projectIds)?'指定项目：'+server.projectIds.map(id=>agent.projects.find(p=>p.id===id)?.name || id).join('、'):'所有项目';
       info.append(element('div','mcp-server-scope',scope+(server.environmentKeys?.length?' · 环境变量 '+server.environmentKeys.length+' 项':'')));
       if(server.plugin?.manifest){const p=server.plugin.manifest;info.append(element('div','mcp-server-scope','插件 '+p.id+' · '+p.version+' · 来源声明（未验证）：'+p.source),element('div','mcp-server-scope','原始清单 SHA-256：'+server.plugin.sha256+'；以当前连接配置为准'));}

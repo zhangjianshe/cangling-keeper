@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-mcp-project-env-') as folder:
   return result
  def start():
   global proc
-  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder,'KEEPER_HOST_ONLY_SECRET':HOST_SECRET},stdout=log,stderr=log)
+  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'KEEPER_MAP_MCP_URL':'','TMPDIR':folder,'KEEPER_HOST_ONLY_SECRET':HOST_SECRET},stdout=log,stderr=log)
   for _ in range(150):
    if proc.poll() is not None:raise AssertionError(('Keeper exited',proc.returncode,(root/'keeper.log').read_text(errors='replace')[-4000:]))
    try:call('agent_bootstrap');return

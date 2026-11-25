@@ -51,7 +51,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   assert status==code,(name,status,v);return v.get('result',v)
  def start():
   global proc
-  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',tmp,'--no-open'],env={**os.environ,'TMPDIR':tmp,'KEEPER_EARTH_MAP_URL':f'http://127.0.0.1:{model.server_port}/'},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',tmp,'--no-open'],env={**os.environ,'KEEPER_MAP_MCP_URL':'','TMPDIR':tmp,'KEEPER_EARTH_MAP_URL':f'http://127.0.0.1:{model.server_port}/'},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
   for _ in range(100):
    try:call('agent_bootstrap');return
    except Exception:time.sleep(.05)

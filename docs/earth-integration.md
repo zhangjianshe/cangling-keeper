@@ -348,3 +348,25 @@ Keeper 通过 `KEEPER_EARTH_MAP_URL` 设置Map服务根地址（保留反向代�
 系统技能指导按“查询→核对范围→加载→定位→核对浏览器报告”执行。
 场景已保存与模型已绘制分别报告；不添加按业务关键词猜测是否成功的运行时规则。
 新增HTTP目录能力需要先升级Map；旧Map返回404时工具明确报告，不虚构数据或静默改用硬编码URL。
+
+### 默认 Cangling Map MCP
+
+Map提供 `/mcp`（Streamable HTTP，兼容2025-03-26/2025-06-18/2025-11-25协议），
+提供`search_3d_datasets`和`get_3d_dataset`只读工具。地球场景、定位、加载报告仍由Keeper本地工具执行。
+系统earth-workbench技能优先选择已声明的Cangling Map MCP工具，旧HTTP内置工具保留兼容。
+
+Keeper首次打开账户时添加默认服务并通过initialize/tools/list发现工具；默认地址
+`https://train.cangling.cn/geoserver/mcp`。可用`KEEPER_MAP_MCP_URL`覆盖；
+未设置时从`KEEPER_EARTH_MAP_URL`服务根地址派生；显式空值关闭自动添加，便于隔离测试。
+本机联调使用`http://127.0.0.1:4310/mcp`。本次仅本机运行，公网端点需要部署新Map后才可用。
+配置按账户存SQLite，`map_mcp_default_v1:<owner>`记录一次性安装状态；删除后不重新添加，
+修改/停用后不覆盖。相同URL的已有HTTP服务保留原配置。初次发现最多等待3秒，
+失败不阻止打开会话，设置页显示错误；重试至少间隔60秒，可手动“连接并发现”。
+发现成功后使用缓存工具声明，无每轮自动扫描。账户切换或配置修改会阻止旧发现结果覆盖新配置。
+MCP调用继续使用现有审批、停止、账户隔离和连接池逻辑，readOnlyHint不会绕过审批。
+
+验证：`scripts/test-map-mcp.py`连接真实本机Map，隔离Keeper数据库并使用模拟模型，
+通过默认发现、两次MCP审批、查询/详情、Earth加载/定位/状态、重启、删除保持和账户隔离。
+测试前启动Map、发布郑州样例并设置`MAP_PUBLIC_BASE_URL=http://127.0.0.1:4310/`。
+自定义智能体仍遵守其MCP工具关联清单；新增默认服务不会自动扩大已有智能体的权限，
+需要在智能体的MCP配置中关联这两个工具。通用助手可直接使用已启用服务。

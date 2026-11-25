@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-mcp-test-') as folder:
    time.sleep(.025)
   raise AssertionError('timed out')
  try:
-  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder},stdout=log,stderr=log)
+  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'KEEPER_MAP_MCP_URL':'','TMPDIR':folder},stdout=log,stderr=log)
   for _ in range(100):
    try:call('agent_bootstrap');break
    except Exception:time.sleep(.05)

@@ -437,7 +437,7 @@ pub(crate) async fn dispatch(
         "agent_cis_models_refresh" => crate::cis_models::refresh(&core).await,
         "agent_history_backup" => {let core=core.clone();tokio::task::spawn_blocking(move ||{let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_backup::export(&store)}).await.map_err(|_|"备份失败".to_string())?}
         "agent_plugin_preview" | "agent_plugin_install" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_plugins::dispatch(&store,&args,command=="agent_plugin_install")},
-        "agent_mcp_list" => {let store=core.store.lock().map_err(|e|e.to_string())?;core.mcp_pool.annotate(&crate::agent_account::owner(&store)?,crate::agent_mcp::list(&store)?)}
+        "agent_mcp_list" => {if let Err(error)=crate::agent_map_mcp::ensure(&core).await{crate::log_error(&format!("默认地图 MCP 初始化失败：{error}"));}let store=core.store.lock().map_err(|e|e.to_string())?;core.mcp_pool.annotate(&crate::agent_account::owner(&store)?,crate::agent_mcp::list(&store)?)}
         "agent_mcp_disconnect" => {core.mcp_pool.clear()?;let store=core.store.lock().map_err(|e|e.to_string())?;core.mcp_pool.annotate(&crate::agent_account::owner(&store)?,crate::agent_mcp::list(&store)?)}
         "agent_mcp_save" => {let store=core.store.lock().map_err(|e|e.to_string())?;let result=crate::agent_mcp::save(&store,&args)?;core.mcp_pool.clear()?;Ok(result)}
         "agent_mcp_tools" => {let store=core.store.lock().map_err(|e|e.to_string())?;let result=crate::agent_mcp::selection(&store,&text(&args,"id")?,&args["tools"])?;core.mcp_pool.clear()?;Ok(result)}
@@ -450,7 +450,7 @@ pub(crate) async fn dispatch(
             if crate::agent_account::owner(&store)?!=owner {return Err("账号已切换，请重试".into());}
             if !crate::agent_mcp::list(&store)?.as_array().unwrap().iter().any(|current|current==&server){return Err("MCP 服务配置已变更，请重试".into());}
             let updated=store.conn.execute("UPDATE agent_mcp_servers SET tools=?1,enabled=1 WHERE id=?2 AND owner_key=?3 AND command=?4 AND args=?5 AND transport=?6 AND environment_revision=?7 AND project_ids=?8",params![json!(tools).to_string(),id,owner,server["command"].as_str().unwrap(),server["args"].to_string(),server["transport"].as_str().unwrap(),server["environmentRevision"].as_str().unwrap_or(""),server["projectIds"].to_string()]).map_err(|e|e.to_string())?;
-            if updated!=1{return Err("MCP 服务配置已变更，请重试".into());}core.mcp_pool.clear()?;crate::agent_mcp::list(&store)
+            if updated!=1{return Err("MCP 服务配置已变更，请重试".into());}crate::agent_map_mcp::user_changed(&store,&id)?;core.mcp_pool.clear()?;crate::agent_mcp::list(&store)
         }
         "agent_model_config" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::config(&store)}
         "agent_library_skill_save" | "agent_library_skill_read" => {
@@ -504,6 +504,7 @@ pub(crate) async fn dispatch(
         }
         "agent_model_select" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::select(&store,&text(&args,"id")?)}
         "agent_bootstrap" => {
+            if let Err(error)=crate::agent_map_mcp::ensure(&core).await{crate::log_error(&format!("默认地图 MCP 初始化失败：{error}"));}
             let store = core.store.lock().map_err(|e| e.to_string())?;
             let page=crate::agent_history::list(&store,&json!({}))?;
             let pinned=crate::agent_history::list(&store,&json!({"pinned":true,"limit":100}))?;

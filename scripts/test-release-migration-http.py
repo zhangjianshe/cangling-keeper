@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-drafts-') as folder:
         except urllib.error.HTTPError:
             assert not ok,name
     def start():
-        proc=subprocess.Popen([str(Path(os.environ.get('KEEPER_TEST_BINARY','target/debug/cangling-keeper')).resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder,'TMP':folder,'TEMP':folder},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        proc=subprocess.Popen([str(Path(os.environ.get('KEEPER_TEST_BINARY','target/debug/cangling-keeper')).resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'KEEPER_MAP_MCP_URL':'','TMPDIR':folder,'TMP':folder,'TEMP':folder},stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for _ in range(100):
             try: call('agent_bootstrap');return proc
             except (OSError,AssertionError):time.sleep(.1)

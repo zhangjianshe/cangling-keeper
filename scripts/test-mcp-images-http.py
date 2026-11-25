@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-mcp-test-') as folder:
    time.sleep(.025)
   raise AssertionError('timed out')
  try:
-  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder},stdout=log,stderr=log)
+  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'KEEPER_MAP_MCP_URL':'','TMPDIR':folder},stdout=log,stderr=log)
   for _ in range(100):
    try:call('agent_bootstrap');break
    except Exception:time.sleep(.05)
@@ -90,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-mcp-test-') as folder:
   pending=wait(plain,lambda d:any(r['status']=='pending_approval' for r in d['runs']));run=pending['runs'][-1];call('agent_review_tool',{'sessionId':plain,'runId':run['id'],'reviewHash':run['review']['hash'],'approved':True});wait(plain,lambda d:not d['modelPending'])
   assert not any(isinstance(m.get('content'),list) for m in requests[-1]['messages']);assert 'mcpImages' in requests[-1]['messages'][-1]['content']
   proc.terminate();proc.wait(10)
-  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'TMPDIR':folder},stdout=log,stderr=log)
+  proc=subprocess.Popen([str(Path('target/debug/cangling-keeper').resolve()),'--listen',f'127.0.0.1:{port}','--data-dir',folder,'--no-open'],env={**os.environ,'KEEPER_MAP_MCP_URL':'','TMPDIR':folder},stdout=log,stderr=log)
   for _ in range(100):
    try:call('agent_bootstrap');break
    except OSError:time.sleep(.05)

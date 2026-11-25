@@ -57,6 +57,12 @@ HTTPS 页面须使用 HTTPS 资源，无登录凭证和查询参数，子资源�
 
 ## 查找并加载已发布建筑数据集
 
+优先使用本轮声明的 **Cangling Map MCP** 的 `search_3d_datasets` 和 `get_3d_dataset`。
+实际工具名由Keeper按服务生成，不要自行拼接mcp工具名。获取真实tilesetUrl后，调用本地
+`earth_add_tileset`，再按bounds定位及查询渲染状态；Map只返回数据，不会替你操作地球窗口。
+仅返回相对tilesetPath时，不猜测公网地址，需根据明确的服务根地址解析；可配置Map的
+MAP_PUBLIC_BASE_URL以提供完整URL。MCP工具未启用时，才使用下面兼容的内置目录工具。
+
 - 用户要求显示某地区建筑或现有三维数据时，先 `earth_search_datasets` 按名称 query 查询；已知可信范围可用 bounds `[西,南,东,北]` 筛选，不跨日期变更线。
 - 目录只列出已发布且启用的数据。没有结果时说明缺少覆盖，不编造 ID、URL 或建筑信息。名称匹配不等于覆盖整个行政区；检查 bounds，未知范围不要猜测定位。
 - 用返回的 id 调用 `earth_load_dataset({"datasetId":"..."})`。工具解析当前版本并保存版本化 URL；同一版本重复加载复用图层。版本更新不会悄悄改变已加载图层。

@@ -49,8 +49,10 @@ pub(crate) fn list(store: &Store) -> Result<Value, String> {
     let owner = crate::agent_account::owner(store)?;
     let mut stmt=store.conn.prepare("SELECT id,name,command,args,enabled,tools,transport,environment,environment_revision,project_ids,plugin_manifest FROM agent_mcp_servers WHERE owner_key=?1 ORDER BY rowid").map_err(|e|e.to_string())?;
     let rows=stmt.query_map([owner],|r|Ok((json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"command":r.get::<_,String>(2)?,"args":serde_json::from_str::<Value>(&r.get::<_,String>(3)?).unwrap_or(json!([])),"enabled":r.get::<_,bool>(4)?,"tools":serde_json::from_str::<Value>(&r.get::<_,String>(5)?).unwrap_or(json!([])),"transport":r.get::<_,String>(6)?,"plugin":serde_json::from_str::<Value>(&r.get::<_,String>(10)?).unwrap_or(json!({})),"environmentRevision":r.get::<_,String>(8)?}),r.get::<_,String>(7)?,r.get::<_,String>(9)?))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+    let default:Value=store.get_setting(&format!("map_mcp_default_v1:{}",crate::agent_account::owner(store)?))?.and_then(|raw|serde_json::from_str(&raw).ok()).unwrap_or(Value::Null);
     let mut result=Vec::new();
     for (mut item,raw_environment,raw_projects) in rows {
+        if item["id"]==default["id"] {item["defaultService"]=json!(true);item["discoveryError"]=default["error"].clone();}
         let values:Value=serde_json::from_str(&raw_environment).map_err(|_|"MCP 环境配置无效")?;
         let validated=settings::environment(&values,None)?;
         item["environmentKeys"]=json!(validated.as_object().ok_or("MCP 环境配置无效")?.keys().cloned().collect::<Vec<_>>());
@@ -128,6 +130,7 @@ pub(crate) fn save(store: &Store, args: &Value) -> Result<Value, String> {
     let requested_enabled=match args.get("enabled") {None=>existing.as_ref().is_some_and(|s|s["enabled"]==true),Some(v)=>v.as_bool().ok_or("MCP 启用状态必须是布尔值")?};
     let enabled = unchanged && requested_enabled;
     store.conn.execute("INSERT INTO agent_mcp_servers(id,owner_key,name,command,args,enabled,tools,transport,environment,environment_revision,project_ids) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO UPDATE SET name=excluded.name,command=excluded.command,args=excluded.args,enabled=excluded.enabled,tools=excluded.tools,transport=excluded.transport,environment=excluded.environment,environment_revision=excluded.environment_revision,project_ids=excluded.project_ids WHERE owner_key=excluded.owner_key",params![id,owner,name,command,json!(argv).to_string(),enabled,tools,transport,next_environment.to_string(),environment_revision,projects.to_string()]).map_err(|e|e.to_string())?;
+    crate::agent_map_mcp::user_changed(store,&id)?;
     Ok(json!({"id":id,"servers":list(store)?}))
 }
 pub(crate) fn delete(store: &Store, id: &str) -> Result<Value, String> {
@@ -143,6 +146,7 @@ pub(crate) fn delete(store: &Store, id: &str) -> Result<Value, String> {
     {
         return Err("MCP 服务不存在".into());
     }
+    crate::agent_map_mcp::user_changed(store,id)?;
     list(store)
 }
 
