@@ -13,7 +13,7 @@ const tiles=window.createKeeperTilesOverlay({call,upload:keeper_tile,report:valu
 function report(value){send('selection',value);}
 function nextFrame(callback){return new Promise((resolve,reject)=>{const timeout=setTimeout(()=>{window.removeEventListener('cangling-earth-frame',run);reject(Error('等待GPU画面超时'));},5000);function run(){clearTimeout(timeout);window.removeEventListener('cangling-earth-frame',run);try{resolve(callback?.());}catch(e){reject(e);}}window.addEventListener('cangling-earth-frame',run);});}
 async function screenshot(){const output=document.createElement('canvas');output.width=innerWidth;output.height=innerHeight;const ctx=output.getContext('2d');await nextFrame(()=>ctx.drawImage(document.querySelector('canvas'),0,0,output.width,output.height));return output.toDataURL('image/png');}
-window.addEventListener('cangling-earth-ready',()=>{ready=true;send('ready');});
+window.addEventListener('cangling-earth-ready',()=>{call('layers',{boundaries:false,graticule:false});ready=true;send('ready');});
 window.addEventListener('message',async e=>{
  if(e.origin!==bridgeOrigin||e.source!==parent||!e.data?.earth||typeof e.data.id!=='string')return;
  const {id,method,args}=e.data;try{

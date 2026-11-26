@@ -26,6 +26,11 @@ pub(crate) fn get(s: &Store, project: &str) -> Result<Value, String> {
             json!({"revision":0,"camera":{"longitude":108.9398,"latitude":34.3416,"height":16000000.,"heading":0.,"tilt":0.},"layers":{"boundaries":false,"graticule":false,"source":0},"overlays":[],"images":[],"models":[],"selection":null,"renderedRevision":null}),
         ),
     }?;
+    // One-time migration: old scenes inherited visible reference layers.
+    // A per-scene marker preserves subsequent explicit user choices.
+    if migrate_reference_layers(&mut scene) {
+        s.set_setting(&key, &scene.to_string())?;
+    }
     let camera_key = format!("{key}:camera");
     if let Some(raw) = s.get_setting(&camera_key)? {
         let camera: Value = serde_json::from_str(&raw).map_err(|e| e.to_string())?;
@@ -43,6 +48,28 @@ pub(crate) fn get(s: &Store, project: &str) -> Result<Value, String> {
     scene["tilesetStatus"]=Value::Null;
     scene["windows"]=crate::agent_earth_receipts::views(s,project,&scene)?;
     Ok(scene)
+}
+fn migrate_reference_layers(scene: &mut Value) -> bool {
+    if scene["referenceLayersDefaultsVersion"] == json!(1) { return false; }
+    scene["layers"]["boundaries"] = json!(false);
+    scene["layers"]["graticule"] = json!(false);
+    scene["referenceLayersDefaultsVersion"] = json!(1);
+    true
+}
+
+#[cfg(test)]
+mod reference_layer_tests {
+    use super::*;
+    #[test]
+    fn migrates_old_defaults_once_and_preserves_explicit_choices() {
+        let mut scene = json!({"layers":{"boundaries":true,"graticule":true,"source":1},"images":[{"id":"keep"}]});
+        assert!(migrate_reference_layers(&mut scene));
+        assert_eq!(scene["layers"], json!({"boundaries":false,"graticule":false,"source":1}));
+        assert_eq!(scene["images"][0]["id"], "keep");
+        scene["layers"]["graticule"] = json!(true);
+        assert!(!migrate_reference_layers(&mut scene));
+        assert_eq!(scene["layers"]["graticule"], true);
+    }
 }
 // Metadata-only notifications: each subscriber checks current account/project before delivery.
 #[derive(Clone)]
@@ -122,7 +149,7 @@ pub(crate) fn save(s: &Store, project: &str, args: &Value) -> Result<Value, Stri
     crate::agent_earth_tiles::validate(&v["tilesets"])?;
     crate::agent_earth_models::validate(s,project,&v["models"])?;
     if let Some(images)=v["images"].as_array(){if !images.is_empty(){image_table(s)?;let owner=crate::agent_account::owner(s)?;for image in images{let valid:bool=s.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_earth_images WHERE id=?1 AND owner=?2 AND project=?3)",rusqlite::params![image["id"].as_str(),owner,project],|r|r.get(0)).map_err(|e|e.to_string())?;if !valid{return Err("图片不属于当前账户和项目".into());}}}}
-    v = json!({"camera":old["camera"],"layers":v["layers"],"overlays":v["overlays"],"images":v.get("images").cloned().unwrap_or(json!([])),"tilesets":v.get("tilesets").cloned().unwrap_or(json!([])),"models":v.get("models").cloned().unwrap_or(json!([])),"selection":v["selection"],"revision":old["revision"].as_u64().unwrap_or(0)+1,"renderedRevision":null});
+    v = json!({"referenceLayersDefaultsVersion":1,"camera":old["camera"],"layers":v["layers"],"overlays":v["overlays"],"images":v.get("images").cloned().unwrap_or(json!([])),"tilesets":v.get("tilesets").cloned().unwrap_or(json!([])),"models":v.get("models").cloned().unwrap_or(json!([])),"selection":v["selection"],"revision":old["revision"].as_u64().unwrap_or(0)+1,"renderedRevision":null});
     s.set_setting(&key(s, project)?, &v.to_string())?;
     let v = get(s, project)?;
     notify(s, project, &v)?;
