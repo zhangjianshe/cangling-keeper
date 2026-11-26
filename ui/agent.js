@@ -933,7 +933,7 @@
   window.__KEEPER__.event.listen('keeper-account-changed',()=>refreshAccountSessions());
   window.__KEEPER__.event.listen('keeper-model-catalog',()=>bootstrap().then(()=>agent.selected && select(agent.selected)).catch(error=>notice(String(error))));
   invoke('get_login_status').then(login=>{updateAccount(login);if(login.loggedIn)invoke('agent_cis_models_refresh').then(()=>bootstrap().then(()=>agent.selected && select(agent.selected))).catch(()=>{});if(loginIdentity===null)loginIdentity=JSON.stringify([login.loggedIn,login.serverUrl,login.userId,login.username]);}).catch(()=>updateAccount());
-  $('#agent-account').onclick=()=>openSettings('profile');
+  $('#agent-account').onclick=()=>{if($('#agent-shell').classList.contains('agent-sidebar-collapsed')){if($('#agent-settings-menu').hidden)openAccountMenu();else closeAccountMenu(true);}else openSettings('profile');};
   $('#agent-settings-toggle').onclick=()=>{if($('#agent-settings-menu').hidden)openAccountMenu();else closeAccountMenu(true);};
   $('#agent-settings-toggle').oncontextmenu=event=>{event.preventDefault();openAccountMenu();};
   $('#agent-menu-account').onclick=()=>openSettings('profile');

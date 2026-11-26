@@ -3,6 +3,8 @@
   const shell = document.getElementById('agent-shell');
   const button = document.getElementById('agent-sidebar-toggle');
   const content = document.getElementById('agent-sidebar-content');
+  const foot = content.querySelector('.agent-sidebar-foot');
+  if (foot) content.after(foot);
   const key = 'keeper-sidebar-collapsed';
   function apply(collapsed) {
     shell.classList.toggle('agent-sidebar-collapsed', collapsed);

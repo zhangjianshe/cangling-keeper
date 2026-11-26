@@ -8,22 +8,18 @@
     const active=()=>document.body.classList.contains('earth-workbench');
     const entry=button('地球工作台',()=>{const p=agent.projects.find(p=>p.id===(agent.detail.session?.projectId||agent.project));if(p)agent.earth.openWorkbench(p);});
     entry.className='guidance-trigger earth-workbench-launcher';$('.agent-header-tools').append(entry);
-    const browse=button('项目 / 会话',()=>openPicker());browse.classList.add('earth-workbench-action','earth-project-browse');
-    const collapse=button('收起消息',()=>{document.body.classList.add('earth-chat-collapsed');remember();});collapse.classList.add('earth-workbench-action','earth-messages-collapse');
-    const reopen=button('显示消息',()=>{document.body.classList.remove('earth-chat-collapsed');remember();});reopen.className='btn earth-chat-reopen';$('.earth-toolbar').append(browse,collapse,reopen);
     const picker=node('section','earth-project-picker');picker.hidden=true;picker.setAttribute('role','dialog');picker.setAttribute('aria-label','查询项目和会话');
     const search=node('input','');search.type='search';search.placeholder='搜索项目或会话';search.setAttribute('aria-label','搜索项目或会话');
     const dismiss=button('关闭',()=>closePicker());const heading=node('header','');heading.append(search,dismiss);
     const results=node('div','earth-project-results');picker.append(heading,results);main.append(picker);
     let revision=0, debounce, page=null, filter=null, cursor=null, selected=0, command=false, items=[];
     const key=()=> 'keeper-earth-window:'+(agent.ownerKey||'guest');
-    const remember=()=>{if(!active())return;try{localStorage.setItem(key(),JSON.stringify({collapsed:document.body.classList.contains('earth-chat-collapsed')}));}catch{}};
     const composer=$('.agent-compose-area');
     function measureComposer(){if(active()&&composer)main.style.setProperty('--earth-compose-height',Math.ceil(composer.getBoundingClientRect().height)+'px');}
     window.addEventListener('earth-layout',()=>{
       closePicker(false);
       for(const k of ['width','height','left','top'])main.style[k]='';
-      if(active()){let saved={};try{saved=JSON.parse(localStorage.getItem(key())||'{}');}catch{}document.body.classList.toggle('earth-chat-collapsed',!!saved.collapsed);measureComposer();}
+      if(active()){document.body.classList.remove('earth-chat-collapsed');measureComposer();}
       else main.style.removeProperty('--earth-compose-height');
     });
     window.addEventListener('resize',measureComposer);

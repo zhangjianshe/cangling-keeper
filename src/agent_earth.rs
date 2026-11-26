@@ -23,7 +23,7 @@ pub(crate) fn get(s: &Store, project: &str) -> Result<Value, String> {
     let mut scene: Value = match s.get_setting(&key)? {
         Some(raw) => serde_json::from_str(&raw).map_err(|e| e.to_string()),
         None => Ok(
-            json!({"revision":0,"camera":{"longitude":108.9398,"latitude":34.3416,"height":16000000.,"heading":0.,"tilt":0.},"layers":{"boundaries":true,"graticule":false,"source":0},"overlays":[],"images":[],"models":[],"selection":null,"renderedRevision":null}),
+            json!({"revision":0,"camera":{"longitude":108.9398,"latitude":34.3416,"height":16000000.,"heading":0.,"tilt":0.},"layers":{"boundaries":false,"graticule":false,"source":0},"overlays":[],"images":[],"models":[],"selection":null,"renderedRevision":null}),
         ),
     }?;
     let camera_key = format!("{key}:camera");

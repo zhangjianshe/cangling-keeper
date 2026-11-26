@@ -615,10 +615,33 @@
 .agent-content-workspace .earth-close{order:9;width:30px;height:30px;padding:0;font-size:20px}
 @media(max-width:700px){.agent-content-workspace.has-earth{flex-direction:column}.agent-content-workspace.has-earth>.agent-chat-column{flex:1;min-height:180px;border-right:0;border-bottom:1px solid #e5e7eb}.agent-content-workspace.has-earth>.keeper-earth{flex:1;min-height:180px}}
 
-.earth-mode-options{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid #e2e8f0;border-radius:8px;flex:none}
-.earth-mode-option{display:inline-flex;align-items:center;justify-content:center;width:32px;height:30px;padding:6px;border:0;border-radius:5px;background:transparent;color:#737984;cursor:pointer}
-.earth-mode-option svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
-.earth-mode-option:hover{background:#edf4ef;color:#27883e}
-.earth-mode-option[aria-pressed=true]{background:#e8f0ff;color:#2563eb}
+/* Compact segmented view controls. */
+.earth-mode-options{display:inline-flex;align-items:center;gap:3px;padding:4px;box-sizing:border-box;border:1px solid #e8ebf0;border-radius:12px;background:#f7f8fa;flex:none}
+.earth-mode-option{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;box-sizing:border-box;padding:6px;border:1px solid transparent;border-radius:8px;background:transparent;color:#7b8492;cursor:pointer;transition:background-color .15s,color .15s,box-shadow .15s,border-color .15s}
+.earth-mode-option svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
+.earth-mode-option:hover{background:#eaf0f7;color:#3f5c82}
+.earth-mode-option[aria-pressed=true]{background:#fff;border-color:#dce7f8;color:#3473df;box-shadow:0 1px 3px #244d8514}
 .earth-mode-option:focus-visible{outline:2px solid #84adff;outline-offset:2px}
+.earth-mode-option:active{background:#e1eaff}
+@media(prefers-reduced-motion:reduce){.earth-mode-option{transition:none}}
 .earth-toolbar>.earth-mode-legacy{display:none!important}
+
+/* Float Earth controls over the canvas without consuming map height. */
+.keeper-earth>.earth-toolbar{position:absolute;top:12px;left:50%;right:auto;transform:translateX(-50%);z-index:4;display:flex;justify-content:center;flex-wrap:nowrap;gap:4px;width:max-content;max-width:calc(100% - 24px);min-height:0;padding:4px;box-sizing:border-box;border:1px solid #ffffffa6;border-radius:12px;background:#ffffffe0;backdrop-filter:blur(12px);box-shadow:0 3px 14px #14243c26}
+.keeper-earth>.earth-toolbar>.btn{height:32px;padding:0 12px;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap;border:0;border-radius:8px;background:transparent;color:#334155;font-size:13px}
+.keeper-earth>.earth-toolbar>.btn:hover{background:#e7f3eb;color:#237944}
+.keeper-earth>.earth-toolbar>.btn[aria-expanded="true"]{background:#e7f3eb;color:#237944}
+.keeper-earth>.earth-toolbar>.btn[hidden]{display:none}
+
+.agent-sidebar>.agent-sidebar-foot{margin-top:auto;flex:none}
+.agent-sidebar-collapsed .agent-account-details,.agent-sidebar-collapsed .agent-settings-toggle{display:none!important}
+.agent-sidebar-collapsed .agent-account-row{display:flex;justify-content:center}
+.agent-sidebar-collapsed .agent-account-row .agent-account{padding:0;width:30px;min-width:30px;justify-content:center}
+.agent-sidebar-collapsed .agent-avatar{width:28px;height:28px;box-sizing:border-box;font-size:11px}
+.agent-sidebar-collapsed .agent-settings-menu{left:0;right:auto;width:210px;max-width:calc(100vw - 32px)}
+
+/* Map actions sit below the header's view controls, along the right edge. */
+.keeper-earth>.earth-toolbar{top:52px;left:auto;right:16px;transform:none;flex-direction:column;width:28px;max-width:28px;gap:8px;padding:0;border:0;border-radius:4px;background:transparent;box-shadow:none;backdrop-filter:none}
+.keeper-earth>.earth-toolbar>.earth-layers-toggle{width:28px;height:28px;padding:5px;box-sizing:border-box;border-radius:4px;background:#ffffffd9;color:#64748b}
+.earth-layers-toggle svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.earth-layers-toggle:focus-visible{outline:2px solid #84adff;outline-offset:2px}
