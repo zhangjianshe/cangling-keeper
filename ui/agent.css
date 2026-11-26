@@ -534,3 +534,16 @@
 .agent-options-dialog .modal-actions{margin:0;padding:16px 24px;background:#f6f8fb;border-top:1px solid #dbe4f0}
 .agent-options-dialog .llm-dialog-head{display:flex;align-items:center;justify-content:space-between;padding:20px 24px;border-bottom:1px solid #dbe4f0}
 .agent-options-dialog .llm-dialog-head h2{margin:0;font-size:18px;font-weight:600}
+/* Shared sizing and interaction for composer controls, including injected attachments. */
+.agent-compose-toolbar{gap:6px;align-items:center}
+.agent-compose-toolbar :is(.agent-attachment-add,.agent-tool-toggle,.agent-security-picker,.agent-options-open,#agent-model-picker){box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:6px;height:36px;min-height:36px;margin-top:0;margin-bottom:0;padding:0 10px;border:0;border-radius:8px;background:transparent;color:#666670;font:inherit;font-size:13px;line-height:1;vertical-align:middle;cursor:pointer}
+.agent-compose-toolbar :is(.agent-attachment-add,.agent-options-open){width:36px;min-width:36px;padding:8px;flex:none}
+.agent-compose-toolbar :is(.agent-attachment-add,.agent-tool-toggle,.agent-security-picker,.agent-options-open,#agent-model-picker)>svg{width:18px;height:18px;flex:none;stroke-width:1.7}
+.agent-compose-toolbar #agent-model-picker>svg{width:14px;height:14px}
+.agent-compose-toolbar :is(.agent-attachment-add,.agent-tool-toggle,.agent-security-picker,.agent-options-open,#agent-model-picker):hover:not(:disabled),.agent-compose-toolbar :is(.agent-security-picker,#agent-model-picker)[aria-expanded=true]{background:#edf4ef;color:#27883e}
+.agent-compose-toolbar :is(.agent-attachment-add,.agent-tool-toggle,.agent-security-picker,.agent-options-open,#agent-model-picker):focus-visible{outline:2px solid #84adff;outline-offset:2px;box-shadow:0 0 0 3px #3b82f61a}
+.agent-compose-toolbar :is(.agent-attachment-add,.agent-tool-toggle,.agent-security-picker,.agent-options-open,#agent-model-picker):disabled{opacity:.45;cursor:default}
+.agent-compose-toolbar .agent-security-picker[data-mode=full]{color:#e86312;background:#fff1e8}
+.agent-compose-toolbar :is(.agent-send,.agent-stop){box-sizing:border-box;display:inline-grid;place-items:center;flex:none;width:36px;height:36px;padding:0;line-height:1;border-radius:50%;background:#242426;color:#fff}
+.agent-compose-toolbar .agent-send{font-size:21px}
+.agent-compose-toolbar .agent-stop{font-size:13px}
