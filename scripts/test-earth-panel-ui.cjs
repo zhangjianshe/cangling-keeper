@@ -1,5 +1,5 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
-const dom=new JSDOM('<!doctype html><main id="agent-main"></main>',{url:'http://localhost',runScripts:'outside-only'}),w=dom.window,d=w.document;
+const dom=new JSDOM('<!doctype html><main id="agent-main"><header class="agent-header">会话标题</header><div class="agent-thread-body"></div><footer class="agent-compose-area"></footer></main>',{url:'http://localhost',runScripts:'outside-only'}),w=dom.window,d=w.document;
 const streams=[];w.EventSource=class {constructor(url){this.url=url;this.listeners={};streams.push(this);}addEventListener(n,f){this.listeners[n]=f;}close(){this.closed=true;}emit(value){this.listeners.scene({data:JSON.stringify(value)});}};
 w.eval(fs.readFileSync('ui/earth-panel.js','utf8'));
 const scene={revision:0,camera:{longitude:108,latitude:34,height:1000000},layers:{source:0,boundaries:true,graticule:false},overlays:[{path:'demo.geojson',visible:true}],images:[{id:'image1',name:'preview.png',visible:true}]};
@@ -8,7 +8,7 @@ const earth=w.createKeeperEarth({agent,showConversation(){},invoke:async(name,ar
 const flush=()=>new Promise(r=>setTimeout(r,0));
 function send(frame,data,origin='http://localhost',source=frame.contentWindow){w.dispatchEvent(new w.MessageEvent('message',{origin,source,data:{earth:true,...data}}));}
 (async()=>{
- await earth.open({id:'p',name:'Project'});const f=d.querySelector('iframe');assert(f);assert.equal(new URL(f.src).searchParams.get('backend'),'webgl2');assert.equal(d.querySelectorAll('.earth-toolbar input,.keeper-earth select,.earth-controls,.earth-capture').length,0);assert.deepEqual([...d.querySelectorAll('.earth-toolbar button')].map(b=>b.textContent),['← 返回会话','图层（L）','对话分屏','地球新标签页']);assert(d.querySelector('#agent-main').classList.contains('hidden'));
+ await earth.open({id:'p',name:'Project'});const f=d.querySelector('iframe');assert(f);assert.equal(new URL(f.src).searchParams.get('backend'),'webgl2');assert.equal(d.querySelectorAll('.earth-toolbar input,.keeper-earth select,.earth-controls,.earth-capture').length,0);assert.deepEqual([...d.querySelectorAll('.earth-toolbar button')].map(b=>b.textContent),['图层（L）','仅地球','×','地球新标签页']);assert(!d.querySelector('#agent-main').classList.contains('hidden'));assert(d.querySelector('#agent-main .agent-content-workspace>.keeper-earth'));assert(d.querySelector('#agent-main>.agent-header'));assert(d.querySelector('.agent-chat-column>.agent-compose-area'));assert(d.querySelector('.agent-chat-column>.agent-thread-body'));assert.equal(d.querySelector('.earth-toolbar strong'),null);
  const commands=[];f.contentWindow.postMessage=msg=>{commands.push(msg);setTimeout(()=>send(f,{id:msg.id,result:msg.method==='get_view'?scene.camera:true}),0);};
  send(f,{event:'ready'},'https://attacker.invalid');await flush();assert.equal(commands.length,0);
  send(f,{event:'ready'},'http://localhost',w);await flush();assert.equal(commands.length,0);
@@ -34,7 +34,7 @@ function send(frame,data,origin='http://localhost',source=frame.contentWindow){w
  d.querySelector('.earth-layer-row button:last-child').click();for(let i=0;i<12;i++)await flush();assert.equal(scene.tilesets.length,0);
  w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'Escape'}));assert(d.querySelector('.earth-layer-panel').classList.contains('hidden'));
  send(f,{event:'layers_toggle'},'https://attacker.invalid');assert(d.querySelector('.earth-layer-panel').classList.contains('hidden'));send(f,{event:'layers_toggle'});assert(!d.querySelector('.earth-layer-panel').classList.contains('hidden'));
- [...d.querySelectorAll('button')].find(b=>b.textContent==='对话分屏').click();assert(earth.isSplit());assert(d.querySelector('#agent-main').classList.contains('earth-chat-split'));
+ [...d.querySelectorAll('button')].find(b=>b.textContent==='仅地球').click();assert(!earth.isSplit());[...d.querySelectorAll('button')].find(b=>b.textContent==='对话分屏').click();assert(earth.isSplit());assert(d.querySelector('#agent-main').classList.contains('earth-chat-split'));
  assert(earth.showWithConversation('p'));assert.equal(d.querySelector('iframe'),f);assert(!earth.showWithConversation('other'));
  earth.reset();assert(streams[0].closed);assert.equal(d.querySelector('iframe'),null);await earth.restore();assert(d.querySelector('iframe'));assert(earth.isSplit());earth.hide();await earth.restore();assert.equal(d.querySelector('iframe'),null);
  // Late responses from a former project/account must never recreate the canvas.
