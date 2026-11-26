@@ -575,3 +575,5 @@
 
 .agent-compose-toolbar #agent-profile-picker{align-self:center;line-height:1;margin:0;vertical-align:middle}
 #agent-profile-picker .profile-picker-chevron{display:block;width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
+/* Top-level conversations align with section headings, without project indentation. */
+#agent-pinned>.agent-session-row .agent-session,#agent-sessions>.agent-session-row .agent-session{padding-left:12px}
