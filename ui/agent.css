@@ -600,3 +600,5 @@
  .agent-main>.agent-header .agent-title-button{max-width:none}
  .agent-main>.agent-header .agent-header-tools>button,.agent-main>.agent-header #thread-directory-toggle{font-size:12px;padding:0 8px}
 }
+/* Temporarily hide the Earth workbench entry. */
+.agent-header-tools>.earth-workbench-launcher{display:none!important}
