@@ -1,0 +1,17 @@
+/* Shared native single-choice control. Important declarations deliberately
+   replace legacy page/ID styles; layout width remains owned by each form. */
+:root{--select-height:38px;--select-radius:8px;--select-border:#dbe4f0;--select-text:#374151;--select-bg:#fff}
+select:not([multiple]):not([size]),select[size="1"]:not([multiple]){
+  appearance:none!important;-webkit-appearance:none!important;box-sizing:border-box!important;
+  height:var(--select-height)!important;min-height:var(--select-height)!important;
+  padding:0 36px 0 12px!important;border:1px solid var(--select-border)!important;border-radius:var(--select-radius)!important;
+  font-family:inherit!important;font-size:14px!important;font-weight:400!important;line-height:1.4!important;color:var(--select-text)!important;
+  background-color:var(--select-bg)!important;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2364748b' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E")!important;
+  background-position:right 12px center!important;background-size:14px 14px!important;background-repeat:no-repeat!important;
+  box-shadow:none!important;text-overflow:ellipsis;cursor:pointer;max-width:100%;transition:border-color .15s,box-shadow .15s;
+}
+select:not([multiple]):hover:not(:disabled){border-color:#a9b8cb!important}
+select:not([multiple]):focus{border-color:#76a4f7!important;outline:none!important;box-shadow:0 0 0 3px #3b82f626!important}
+select:disabled{color:#94a3b8!important;background-color:#f4f6f9!important;border-color:#e2e8f0!important;opacity:1!important;cursor:not-allowed!important}
+@media(forced-colors:active){select:not([multiple]){appearance:auto!important;background-image:none!important}select:focus{outline:2px solid Highlight!important}}
