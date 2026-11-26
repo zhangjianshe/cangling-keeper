@@ -61,7 +61,7 @@ assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(doc
 (async()=>{
  const captured=[];context.invoke=async(name,args)=>{captured.push({name,args});};context.select=async()=>{};
  let tones=0;context.approvalTone=()=>tones++;
- const current=context.agent.detail.runs.find(r=>r.id==='new-run');current.status='pending_approval';current.review={kind:'file',hash:'immutable-review',path:'README.md',newFile:false,changeSummary:{addedLines:1,removedLines:1},diff:'--- README.md\n+++ README.md\n-old\n+<script>new</script>\n'};
+ const current=context.agent.detail.runs.find(r=>r.id==='new-run');current.step=1;context.agent.detail.messages.find(m=>m.id==='new').modelMetadata.presentation={version:1,sequence:1,segments:[{step:1,start:0,kind:'commentary'}]};current.status='pending_approval';current.review={kind:'file',hash:'immutable-review',path:'README.md',newFile:false,changeSummary:{addedLines:1,removedLines:1},diff:'--- README.md\n+++ README.md\n-old\n+<script>new</script>\n'};
  context.agent.detail.modelPending=true;context.agent.detail.tasks[0].status='approval';context.renderConversation();assert.match(document.querySelector('#agent-messages').textContent,/新增 1 行 · 删除 1 行/);
  assert.match(document.querySelector('.agent-stream-status').textContent,/等待你确认/);
  assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>b.hidden),'regenerate stays hidden during approval');
@@ -83,5 +83,24 @@ assert.equal(document.querySelector('#agent-stop').hidden,true);assert.equal(doc
  await context.reviewAgentTool(current,false);assert.equal(captured[1].args.approved,false);
  context.agent.detail.stopRequested=true;context.renderPending(document.querySelector('#agent-messages'));assert.ok([...document.querySelectorAll('.agent-review-actions button')].every(b=>b.disabled));await context.reviewAgentTool(current,true);assert.equal(captured.length,2,'stop blocks stale approval');
  context.agent.detail.runs=[];context.renderPending(document.querySelector('#agent-messages'));assert.equal(document.querySelector('#agent-approval-dock'),null,'resolved or account-cleared approvals disappear');
+// Round text and tools interleave; a JSON reload and version switch keep the layout.
+context.agent.detail.messages=[{id:'flow',role:'assistant',content:'先检查🙂\n\n再验证\n\n总结',createdAt:10,modelMetadata:{presentation:{version:1,sequence:4,segments:[{step:1,start:0,kind:'commentary'},{step:2,start:7,kind:'commentary'},{step:3,start:12,kind:'final'}]}}}];
+context.agent.detail.replyGroups=[];context.agent.detail.runs=[{...run('flow-a','flow'),step:1},{...run('flow-b','flow'),step:2,status:'pending_approval'}];context.agent.detail.tasks=[];context.agent.detail.modelPending=true;context.agent.detail.streamingMessageId='flow';
+context.renderConversation();
+let flow=document.querySelector('.agent-response-flow');assert(flow);
+assert.deepEqual([...flow.children].map(n=>n.tagName),['DIV','DETAILS','DIV','DETAILS','DIV']);
+assert.equal(flow.children[0].textContent,'先检查🙂\n\n');assert.equal(flow.children[2].textContent,'再验证\n\n');assert.equal(flow.lastElementChild.textContent,'总结');assert.equal(flow.lastElementChild.getAttribute('aria-label'),'最终答复');
+assert.equal(document.querySelectorAll('[data-run-id="flow-a"]').length,1);
+context.agent.detail.messages[0].content+='继续';context.renderConversation();assert.equal(document.querySelector('.agent-response-flow').lastElementChild.textContent,'总结继续');
+context.agent.detail=JSON.parse(JSON.stringify(context.agent.detail));context.agent.detail.modelPending=false;context.renderConversation();assert.equal(document.querySelector('.agent-response-flow').lastElementChild.textContent,'总结继续');
+context.agent.detail.modelPending=true;
+vm.runInContext(source.slice(source.indexOf("  window.__KEEPER__.event.listen('agent-model-stream'"),source.indexOf("  window.__KEEPER__.event.listen('agent-model-finished'")),context);
+listeners['agent-model-stream']({payload:{sessionId:'session',messageId:'flow',content:'更正后的说明',presentation:{version:1,sequence:5,segments:[{step:1,start:0,kind:'commentary'}]}}});
+assert.equal(document.querySelector('.agent-response-flow .agent-message-body').textContent,'更正后的说明');
+listeners['agent-model-stream']({payload:{sessionId:'session',messageId:'flow',content:'过期的流式内容不得覆盖',presentation:{version:1,sequence:4,segments:[{step:1,start:0,kind:'commentary'}]}}});
+assert.equal(context.agent.detail.messages[0].content,'更正后的说明');
+context.agent.detail.messages[0].modelMetadata.presentation.segments[0].start=-1;context.renderConversation();assert.equal(document.querySelector('.agent-response-flow'),null);assert(document.querySelector('.agent-message-body').textContent.includes('更正后的说明'));
+console.log('PASS ordered response: commentary/tools/final, UTF-16 offsets, incremental text, reload and invalid legacy fallback');
+
  dom.window.close();console.log('Agent UI checks passed: version isolation, live updates, snapshot restore, stop, safe file diff/command previews and explicit hash-bound review decisions.');
 })().catch(error=>{console.error(error);dom.window.close();process.exitCode=1;});

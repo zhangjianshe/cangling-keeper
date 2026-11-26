@@ -361,10 +361,10 @@ fn launch_model(core:Arc<AppState>,session:String,response_id:String,cancel_rx:t
                 let model_core=core;let model_session=session;
                 tokio::spawn(async move{
                     let progress_sink=sink.clone();
-                    let response=crate::model::reply(&model_core,&model_session,&response_id,cancel_rx,sink.clone(),|content|{
+                    let response=crate::model::reply(&model_core,&model_session,&response_id,cancel_rx,sink.clone(),|content,presentation|{
                         let store=model_core.store.lock().map_err(|e|e.to_string())?;
-                        store.conn.execute("UPDATE agent_messages SET content=?2 WHERE id=?1 AND session_id=?3",params![response_id,content,model_session]).map_err(|e|e.to_string())?;
-                        progress_sink.emit_json("agent-model-stream",json!({"sessionId":model_session,"messageId":response_id,"content":content}));Ok(())
+                        store.conn.execute("UPDATE agent_messages SET content=?2,model_metadata=json_set(model_metadata,'$.presentation',json(?4)) WHERE id=?1 AND session_id=?3",params![response_id,content,model_session,presentation.to_string()]).map_err(|e|e.to_string())?;
+                        progress_sink.emit_json("agent-model-stream",json!({"sessionId":model_session,"messageId":response_id,"content":content,"presentation":presentation}));Ok(())
                     }).await;
                     if let Ok(store)=model_core.store.lock(){
                         if let Ok(tx)=store.conn.unchecked_transaction(){

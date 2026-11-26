@@ -507,3 +507,11 @@
 @media(max-width:560px){.agent-sidebar:not(:has(#agent-sidebar-content[hidden])){width:100px}.agent-sidebar-toggle-row{top:24px;right:4px}}
 .earth-tiles-form { display:flex; gap:8px; padding:8px 0; }
 .earth-tiles-form input { flex:1; min-width:0; }
+
+/* Ordered response text and existing compact tool cards share one flow. */
+.agent-response-flow>.agent-message-body:empty{display:none}
+.agent-response-flow>.agent-message-body{margin:12px 0}
+.agent-response-flow>.agent-message-body:first-child{margin-top:0}
+.agent-response-flow>.agent-compact-run{margin:2px 0}
+.agent-message.streaming .agent-response-flow>.agent-message-body:after{display:none}
+.agent-message.streaming .agent-response-flow>.agent-message-body:last-child:after{display:inline-block}

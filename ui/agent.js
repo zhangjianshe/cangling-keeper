@@ -487,6 +487,22 @@
     catch(error){notice(String(error));}finally{agent.switchingVersion=false;}
   }
   function renderConversation(){
+  function presentationSegments(entry){
+    const p=entry.modelMetadata?.presentation,content=entry.content||'';
+    if(p?.version!==1 || !Array.isArray(p.segments) || !p.segments.length || p.segments.length>32)return null;
+    if(p.segments[0].start!==0)return null;
+    let previous=-1,step=0;
+    for(const segment of p.segments){if(!Number.isSafeInteger(segment.start)||segment.start<0||segment.start<previous||segment.start>content.length||!Number.isSafeInteger(segment.step)||segment.step<=step||!['commentary','final'].includes(segment.kind))return null;previous=segment.start;step=segment.step;}
+    return p.segments;
+  }
+  function refreshMessageBodies(message,entry){
+    for(const body of message.querySelectorAll('.agent-message-body')){
+      const start=body.dataset.segmentStart,end=body.dataset.segmentEnd;
+      const text=start===undefined?entry.content:(entry.content||'').slice(Number(start),end===undefined?undefined:Number(end));
+      window.keeperMarkdown.render(body,text,entry.role==='assistant');
+    }
+  }
+
     if($('#agent-max-rounds'))$('#agent-max-rounds').disabled=!agent.selected||agent.detail.modelPending;
     if($('#agent-context-budget'))$('#agent-context-budget').disabled=!agent.selected||agent.detail.modelPending;
     const container=$('#agent-messages'),timeline=$('#agent-timeline');
@@ -494,9 +510,9 @@
     const follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<90;
     const draft=container.querySelector('.agent-run-form');
     const toolOpen=new Map([...container.querySelectorAll('.agent-compact-run')].map(node=>[node.dataset.runId,node.open]));
-    const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata,m.attachments]),agent.detail.replyGroups,agent.detail.runs,agent.detail.tasks,agent.editing?.session===agent.selected?agent.editing.id:null]);
+    const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata?{...m.modelMetadata,presentation:m.modelMetadata.presentation?{...m.modelMetadata.presentation,sequence:0}:undefined}:null,m.attachments]),agent.detail.replyGroups,agent.detail.runs,agent.detail.tasks,agent.editing?.session===agent.selected?agent.editing.id:null]);
     if(!draft && container.dataset.signature===signature){
-      for(const entry of agent.detail.messages){const body=container.querySelector('[data-message-id="'+entry.id+'"] .agent-message-body');if(body)window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');}
+      for(const entry of agent.detail.messages){const message=container.querySelector('[data-message-id="'+entry.id+'"]');if(message)refreshMessageBodies(message,entry);}
       renderPending(container);if(follow)timeline.scrollTop=timeline.scrollHeight;window.keeperThreadNav?.update({messages:visibleMessages(),detail:agent.detail});return;
     }
     container.dataset.signature=signature;container.replaceChildren();
@@ -559,12 +575,26 @@
           }
           const visibleRuns=runs.filter(run=>!isSkillPreparation(run));
           const preparationRuns=runs.filter(isSkillPreparation);
-          if(visibleRuns.length){const steps=element('div','agent-tool-steps');steps.setAttribute('aria-label','工具执行过程');for(const run of visibleRuns)steps.append(runCard(run,toolOpen));message.append(steps);}
+          if(visibleRuns.length && !presentationSegments(entry)){const steps=element('div','agent-tool-steps');steps.setAttribute('aria-label','工具执行过程');for(const run of visibleRuns)steps.append(runCard(run,toolOpen));message.append(steps);}
           // Keep preparation records available in the existing collapsed task summary.
           if(preparationRuns.length){const summary=message.querySelector('.agent-task-summary');if(summary){const records=element('details','agent-skill-preparation');records.append(element('summary','',`技能准备记录 · ${preparationRuns.length} 次`));for(const run of preparationRuns)records.append(runCard(run,toolOpen));summary.append(records);}}
 
         }
-        const body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');body.hidden=entry.role==='user' && !entry.content?.trim();message.append(body);agent.attachments?.decorate(message,entry);
+        let body;const segments=entry.role==='assistant'?presentationSegments(entry):null;
+        if(segments){
+          const flow=element('div','agent-response-flow');flow.setAttribute('aria-label','按时间顺序的执行过程');
+          const runs=agent.detail.runs.filter(run=>run.responseId===entry.id&&!isSkillPreparation(run));const placed=new Set();
+          for(let i=0;i<segments.length;i++){
+            const segment=segments[i],end=segments[i+1]?.start;
+            // Keep any earlier recorded tools visible when a corrected draft was withdrawn.
+            for(const run of runs.filter(r=>Number(r.step)<segment.step&&!placed.has(r.id))){flow.append(runCard(run,toolOpen));placed.add(run.id);}
+            body=element('div','agent-message-body agent-'+segment.kind);body.dataset.segmentStart=String(segment.start);if(end!==undefined)body.dataset.segmentEnd=String(end);body.setAttribute('aria-label',segment.kind==='final'?'最终答复':'执行说明');flow.append(body);
+            for(const run of runs.filter(r=>Number(r.step)===segment.step&&!placed.has(r.id))){flow.append(runCard(run,toolOpen));placed.add(run.id);}
+          }
+          for(const run of runs)if(!placed.has(run.id))flow.append(runCard(run,toolOpen));
+          message.append(flow);refreshMessageBodies(message,entry);
+        }else{body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');body.hidden=entry.role==='user' && !entry.content?.trim();message.append(body);}
+        agent.attachments?.decorate(message,entry);
         if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id){
           body.hidden=true;message.classList.add('is-editing');const form=element('form','agent-message-edit'),input=element('textarea');input.value=agent.editing.content;input.setAttribute('aria-label','编辑消息');input.rows=Math.max(3,Math.min(10,input.value.split('\n').length));const resizeEdit=()=>{input.style.height='auto';input.style.height=input.scrollHeight+'px';};input.oninput=()=>{agent.editing.content=input.value;resizeEdit();};Promise.resolve().then(()=>{if(input.isConnected)resizeEdit();});
           const actions=element('div','agent-edit-actions'),cancel=element('button','btn','取消'),save=element('button','btn primary','保存并重新生成');cancel.type='button';save.type='submit';
@@ -611,7 +641,7 @@
   window.__KEEPER__.event.listen('agent-model-stream' ,event=>{
     const update=event.payload;if(update.sessionId!==agent.selected || !agent.detail.modelPending)return;
     const entry=agent.detail.messages.find(m=>m.id===update.messageId);
-    if(entry && update.content.length>=entry.content.length){entry.content=update.content;renderConversation();}
+    if(entry && (update.presentation?.version===1?Number(update.presentation.sequence)>Number(entry.modelMetadata?.presentation?.sequence||0):!entry.modelMetadata?.presentation && update.content.length>=entry.content.length)){entry.content=update.content;if(update.presentation){entry.modelMetadata ||= {};entry.modelMetadata.presentation=update.presentation;}renderConversation();}
   });
   window.__KEEPER__.event.listen('agent-model-finished',event=>{if(event.payload.sessionId===agent.selected)select(agent.selected);});
   function updateAgentRun(event){

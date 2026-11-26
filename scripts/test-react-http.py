@@ -47,6 +47,10 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'content':'Partial answer preserved'})
     if user=='tool cutoff fixture':event({'tool_calls':[{'index':0,'id':'cutoff','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'cutoff.txt','content':'must not write'})}}]})
     event({},'content_filter' if user=='filtered output fixture' else 'length');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if 'ordered flow fixture' in user:
+    if len(results)==0:event({'content':'先检查🙂。'});tools([('list_directory',{})]);return
+    if len(results)==1:event({'content':'再读取文件。'});tools([('read_file',{'path':'README.md'})]);return
+    event({'content':'总结：读取结果已核对。'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'batch read fixture' in user:
     if not results:tools([('read_files',{'files':[{'path':'README.md','lineCount':1},{'path':'missing.txt'},{'path':'context.txt'}]})]);return
     value=json.loads(results[-1]['content']);assert value['completedFiles']==3 and value['failedFiles']==1
@@ -180,7 +184,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
   assert detail['messages'][-1]['modelMetadata']['taskBudget']=={'maxRounds':16,'maxToolCalls':32,'activeSeconds':180}
   assert len({r['toolCallId'] for r in detail['runs']})==3
   assert all(r['responseId']==detail['streamingMessageId'] for r in detail['runs'])
-  fresh=call('agent_session',{'sessionId':normal});assert fresh['runs']==detail['runs'];assert fresh['messages'][-1]['modelMetadata']['taskBudget']==detail['messages'][-1]['modelMetadata']['taskBudget']
+  fresh=call('agent_session',{'sessionId':normal});assert fresh['runs']==detail['runs'];assert fresh['messages'][-1]['modelMetadata']['presentation']==detail['messages'][-1]['modelMetadata']['presentation'];assert fresh['messages'][-1]['modelMetadata']['taskBudget']==detail['messages'][-1]['modelMetadata']['taskBudget']
   assert any(e['event']=='agent-tool-update' and e['payload']['status']=='running' for e in events)
   assert any(e['event']=='agent-tool-update' and e['payload']['status']=='succeeded' for e in events)
   assert not any(e['event'].startswith('agent-') for e in untrusted_events),'cross-origin WebSocket must not receive file contents'
@@ -201,7 +205,14 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
      assert len(requests)==before,'reconnect must not replay model requests'
    asyncio.run(reconnect())
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
-   stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
+   stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];assert stopped['messages'][-1]['modelMetadata']['presentation']['segments'][-1]['kind']=='commentary';release.set()
+   ordered=session('ordered flow fixture');ordered_detail=wait_for(ordered,lambda d:not d['modelPending'])
+   answer=next(m for m in ordered_detail['messages'] if m['role']=='assistant');layout=answer['modelMetadata']['presentation'];assert layout['version']==1
+   assert [x['kind'] for x in layout['segments']]==['commentary','commentary','final']
+   assert [r['step'] for r in ordered_detail['runs']]==[1,2]
+   raw=answer['content'].encode('utf-16-le');parts=[raw[x['start']*2:(layout['segments'][i+1]['start']*2 if i+1<len(layout['segments']) else len(raw))].decode('utf-16-le').strip() for i,x in enumerate(layout['segments'])]
+   assert parts==['先检查🙂。我先检查项目文件。','再读取文件。我先检查项目文件。','总结：读取结果已核对。'],parts
+   restored=call('agent_session',{'sessionId':ordered});assert next(m for m in restored['messages'] if m['id']==answer['id'])['modelMetadata']['presentation']==layout
    (root/'context.txt').write_text('中文前文\nneedle here\nafter')
    batch=session('batch read fixture');batch_detail=wait_for(batch,lambda d:not d['modelPending']);assert batch_detail['tasks'][-1]['status']=='complete' and len(batch_detail['runs'])==1
    assert call('agent_session',{'sessionId':batch})['runs']==batch_detail['runs']
@@ -283,7 +294,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='user_stopped' for m in stopped['messages'])
    release.clear();broken=session('broken');partial=wait_for(broken,lambda d:bool(d['messages'][-1]['content']));call('agent_stop_generation',{'sessionId':broken,'messageId':partial['streamingMessageId']});assert wait_for(broken,lambda d:not d['modelPending'])['runs']==[]
    interrupted=session('阅读项目并总结 restart');persisted=wait_for(interrupted,lambda d:len(d['runs'])==3 and '正在整理' in d['messages'][-1]['content']);count=len(requests)
-   process.terminate();process.wait(timeout=10);start();restored=call('agent_session',{'sessionId':interrupted});assert not restored['modelPending'] and restored['tasks'][-1]['status']=='interrupted';assert len(restored['runs'])==3
+   process.terminate();process.wait(timeout=10);start();restored=call('agent_session',{'sessionId':interrupted});assert not restored['modelPending'] and restored['tasks'][-1]['status']=='interrupted';assert len(restored['runs'])==3;assert next(m for m in restored['messages'] if m['id']==persisted['messages'][-1]['id'])['modelMetadata']['presentation']==persisted['messages'][-1]['modelMetadata']['presentation']
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='interrupted' for m in restored['messages'])
    assert call('agent_session',{'sessionId':custom})['executionBudget']['maxRounds']==2
    time.sleep(.1);assert len(requests)==count,'restart must not replay tools or model calls'
