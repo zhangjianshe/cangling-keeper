@@ -12,11 +12,15 @@ use std::{
 };
 
 pub(crate) fn definitions() -> Vec<Value> {
-    [
+    let mut values: Vec<Value> = [
         ("list_directory", "分页列出当前项目目录，返回名称、类型和大小。path 默认为 .；有 nextList 时使用其完整参数续读。offset 从0开始，expectedSha256 校验目录列表，变化时须从首页重新读取。", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":0},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}), json!([])),
         ("read_file", "读取项目 UTF-8 文本文件，返回带行号内容；每页最多200行，每行片段最多1000字节。结果有 nextRead 时使用其完整参数续读，避免遗漏长行；startColumn 为首行从1开始的Unicode字符列，expectedSha256 用于拒绝跨文件版本续读。", json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"startColumn":{"type":"integer","minimum":1},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
         ("search_files", "在项目相对文件路径和 UTF-8 内容中搜索字面字符串；mode 为 all（默认）、filename 或 content；extensions 可限制后缀，如 [rs,py]，不带点，不区分大小写。内容结果包含命中行/字符列、附近片段及可直接调用 read_file 的 readArgs。maxResults 可选1–50（默认50）；truncationReasons 说明截断原因，可缩小范围继续搜索。contextLines 可选0–5（默认0），返回前后相邻行；contextReadArgs 用于读取同一版本的完整上下文。递归搜索 path（默认 .），跳过链接、私密文件及构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"},"contextLines":{"type":"integer","minimum":0,"maximum":5},"maxResults":{"type":"integer","minimum":1,"maximum":50},"mode":{"type":"string","enum":["all","filename","content"]},"extensions":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string","minLength":1,"maxLength":16}}}), json!(["query"])),
-    ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_earth::definitions()).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect()
+    ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_earth::definitions()).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect();
+    let mut item=values.iter().find(|d|d["function"]["name"]=="read_file").unwrap()["function"]["parameters"].clone();
+    item["properties"]["path"]["maxLength"]=json!(1024);
+    values.push(json!({"type":"function","function":{"name":"read_files","description":"批量读取1–8个已知的项目UTF-8文本文件；files每项使用read_file的参数。逐文件返回status及result/error，部分失败不表示全部失败或全部成功。总输出有界；deferred为本次未返回结果的完整参数，可作为下一次files。每个result的nextRead用于继续该文件，sha256保护版本；不是跨文件原子快照。优先用于已知相关文件，勿读取无关技能。","parameters":{"type":"object","properties":{"files":{"type":"array","minItems":1,"maxItems":8,"items":item}},"required":["files"],"additionalProperties":false}}}));
+    values
 }
 pub(crate) fn title(name: &str) -> &str {
     match name {
@@ -35,6 +39,7 @@ pub(crate) fn title(name: &str) -> &str {
         "earth_add_geojson_layer"=>"加载GeoJSON图层",
         "list_directory" => "列出项目目录",
         "read_file" => "读取项目文件",
+        "read_files" => "批量读取项目文件",
         "search_files" => "搜索项目文件",
         "load_skill" => "加载技能",
         "read_skill_file" => "读取技能资源",
@@ -213,6 +218,30 @@ pub(crate) fn execute(
     cancel: Arc<AtomicBool>,
     mut progress: impl FnMut(Value),
 ) -> Result<Value, String> {
+    execute_until(root,name,args,cancel,&mut progress,Instant::now()+Duration::from_secs(8))
+}
+fn execute_until(root:&Dir,name:&str,args:&Value,cancel:Arc<AtomicBool>,progress:&mut dyn FnMut(Value),deadline:Instant)->Result<Value,String>{
+    if cancel.load(Ordering::Relaxed){return Err("操作已停止".into());}
+    if Instant::now()>=deadline{return Err("文件读取时间预算已用尽".into());}
+    if name=="read_files" {
+        crate::agent_tool_args::validate(name,args)?;
+        let files=args["files"].as_array().ok_or("files 必须为数组")?;
+        let input_bytes=args.to_string().len();if input_bytes>8192{return Err("批量读取参数超过8KiB".into());}
+        let mut results=Vec::new();let mut next=0;let mut bytes=0;let mut failed=0;let mut partial=false;
+        for (index,file) in files.iter().enumerate(){
+            if cancel.load(Ordering::Relaxed){return Err("操作已停止".into());}
+            if Instant::now()>=deadline || bytes>18000 {break;}
+            let entry=match execute_until(root,"read_file",file,cancel.clone(),&mut |_|{},deadline){
+                Ok(result)=>{partial|=result["truncated"]==true;json!({"index":index,"path":file["path"],"status":"succeeded","result":result})},
+                Err(error)=>{if cancel.load(Ordering::Relaxed){return Err("操作已停止".into());}json!({"index":index,"path":file["path"],"status":"failed","error":error})}
+            };
+            if bytes+entry.to_string().len()+input_bytes>36000 {break;}
+            failed+=usize::from(entry["status"]=="failed");bytes+=entry.to_string().len();results.push(entry);next=index+1;
+            progress(json!({"completedFiles":next,"totalFiles":files.len(),"failedFiles":failed}));
+        }
+        if cancel.load(Ordering::Relaxed){return Err("操作已停止".into());}
+        return Ok(json!({"results":results,"requestedFiles":files.len(),"completedFiles":next,"failedFiles":failed,"partialFailure":failed>0,"truncated":partial||next<files.len(),"deferred":&files[next..],"deferredReason":if next==files.len(){Value::Null}else if Instant::now()>=deadline{json!("time_limit")}else{json!("output_limit")}}));
+    }
     let properties = definitions()
         .into_iter()
         .find(|d| d["function"]["name"] == name)
@@ -227,7 +256,7 @@ pub(crate) fn execute(
     let mut scope = Scope {
         dir,
         cancel,
-        deadline: Instant::now() + Duration::from_secs(8),
+        deadline,
         visited: 0,
         bytes: 0,
     };
@@ -424,6 +453,34 @@ mod tests {
     }
     fn run(dir: &Dir, name: &str, args: Value) -> Result<Value, String> {
         execute(dir, name, &args, Arc::new(AtomicBool::new(false)), |_| {})
+    }
+    #[test]
+    fn batch_reads_preserve_per_file_errors_versions_and_boundaries(){
+        let (root,dir)=fixture();
+        let args=json!({"files":[{"path":"README.md","lineCount":1},{"path":"missing.txt"},{"path":"../secret.txt"},{"path":".env"},{"path":"src/main.rs"}]});
+        let result=run(&dir,"read_files",args).unwrap();
+        assert_eq!(result["completedFiles"],5);assert_eq!(result["failedFiles"],3);assert_eq!(result["partialFailure"],true);
+        assert_eq!(result["results"][0]["result"]["lines"][0]["text"],"# Demo");
+        let next=result["results"][0]["result"]["nextRead"].clone();
+        assert_eq!(run(&dir,"read_files",json!({"files":[next.clone()]})).unwrap()["results"][0]["status"],"succeeded");
+        std::fs::write(root.join("README.md"),"changed").unwrap();
+        assert_eq!(run(&dir,"read_files",json!({"files":[next]})).unwrap()["results"][0]["status"],"failed");
+        assert!(run(&dir,"read_files",json!({"files":[]})).is_err());
+        assert!(run(&dir,"read_files",json!({"files":vec![json!({"path":"README.md"});9]})).is_err());
+        assert!(run(&dir,"read_files",json!({"files":[{"path":"README.md","lineCount":0}]})).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn batch_reads_defer_without_losing_items_and_stop_between_files(){
+        let (root,dir)=fixture();
+        for i in 0..8 {std::fs::write(root.join(format!("{i}.txt")),"中文\n".repeat(200)).unwrap();}
+        let mut files:Vec<Value>=(0..8).map(|i|json!({"path":format!("{i}.txt")})).collect();let mut total=0;
+        while !files.is_empty(){let value=run(&dir,"read_files",json!({"files":files})).unwrap();assert!(value.to_string().len()<40000);let n=value["completedFiles"].as_u64().unwrap();assert!(n>0);total+=n;files=value["deferred"].as_array().unwrap().clone();}
+        assert_eq!(total,8);
+        let flag=Arc::new(AtomicBool::new(false));let copy=flag.clone();let mut events=0;
+        assert!(execute(&dir,"read_files",&json!({"files":[{"path":"README.md"},{"path":"src/main.rs"}]}),flag,|_|{events+=1;copy.store(true,Ordering::Relaxed);}).is_err());assert_eq!(events,1);
+        assert!(execute_until(&dir,"read_files",&json!({"files":[{"path":"README.md"}]}),Arc::new(AtomicBool::new(false)),&mut |_|{},Instant::now()).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn lists_reads_and_searches_with_line_numbers() {

@@ -41,7 +41,7 @@ fn shortened_tool_output(content: &str, max_bytes: usize) -> Value {
                 output[key]=json!(if head==tail {text.to_string()} else {format!("{}\n[上下文省略 {} 字节]\n{}",&text[..head],tail-head,&text[tail..])});
             }
         }
-        for key in ["keeperResult","nextList","nextRead"] {
+        for key in ["keeperResult","nextList","nextRead","partialFailure","failedFiles","completedFiles","requestedFiles","deferredReason","deferred"] {
             if let Some(value)=original.get(key).filter(|v|v.to_string().len()<=2048){output[key]=value.clone();}
         }
         if output["keeperResult"].is_object(){output["keeperResult"]["truncated"]=json!(true);if output["keeperResult"]["status"]=="succeeded"{output["keeperResult"]["outcome"]=json!("truncated");}}
@@ -376,6 +376,11 @@ mod tests {
     fn shortened_results_keep_bounded_continuations_and_status(){
         let result=shortened_tool_output(&json!({"entries":["x".repeat(2000)],"keeperResult":{"status":"succeeded","outcome":"success","automaticRetry":false},"nextList":{"offset":200,"expectedSha256":"a".repeat(64)}}).to_string(),64);
         assert_eq!(result["nextList"]["offset"],200);assert_eq!(result["keeperResult"]["outcome"],"truncated");assert_eq!(result["contextTruncated"],true);assert!(result["preview"].as_str().unwrap().len()<=64);
+    }
+    #[test]
+    fn shortened_batch_keeps_failure_and_deferred_evidence(){
+        let result=shortened_tool_output(&json!({"results":[{"result":{"lines":["x".repeat(4000)]}}],"partialFailure":true,"failedFiles":1,"completedFiles":2,"requestedFiles":3,"deferred":[{"path":"next.rs"}],"deferredReason":"output_limit"}).to_string(),64);
+        assert_eq!(result["partialFailure"],true);assert_eq!(result["failedFiles"],1);assert_eq!(result["deferred"][0]["path"],"next.rs");assert_eq!(result["contextTruncated"],true);
     }
     #[test]
     fn language_estimate_is_not_utf8_bytes_and_keeps_framing(){

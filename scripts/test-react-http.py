@@ -47,6 +47,12 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'content':'Partial answer preserved'})
     if user=='tool cutoff fixture':event({'tool_calls':[{'index':0,'id':'cutoff','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'cutoff.txt','content':'must not write'})}}]})
     event({},'content_filter' if user=='filtered output fixture' else 'length');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if 'batch read fixture' in user:
+    if not results:tools([('read_files',{'files':[{'path':'README.md','lineCount':1},{'path':'missing.txt'},{'path':'context.txt'}]})]);return
+    value=json.loads(results[-1]['content']);assert value['completedFiles']==3 and value['failedFiles']==1
+    assert value['results'][0]['status']=='succeeded' and value['results'][1]['status']=='failed'
+    assert value['results'][2]['result']['lines'][0]['text']=='中文前文'
+    event({'content':'Batch results verified; missing file reported separately'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'context search fixture' in user:
     if not results:tools([('search_files',{'query':'needle','path':'context.txt','mode':'content','contextLines':1})]);return
     if len(results)==1:
@@ -197,6 +203,8 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    call('agent_stop_generation',{'sessionId':normal,'messageId':detail['streamingMessageId']})
    stopped=wait_for(normal,lambda d:not d['modelPending']);assert stopped['tasks'][-1]['status']=='stopped';assert '正在整理' in stopped['messages'][-1]['content'];release.set()
    (root/'context.txt').write_text('中文前文\nneedle here\nafter')
+   batch=session('batch read fixture');batch_detail=wait_for(batch,lambda d:not d['modelPending']);assert batch_detail['tasks'][-1]['status']=='complete' and len(batch_detail['runs'])==1
+   assert call('agent_session',{'sessionId':batch})['runs']==batch_detail['runs']
    context=session('context search fixture');context_detail=wait_for(context,lambda d:not d['modelPending']);assert context_detail['tasks'][-1]['status']=='complete' and len(context_detail['runs'])==2
    assert call('agent_session',{'sessionId':context})['runs']==context_detail['runs']
    (root/'late.txt').write_text('中'*1200+'target-word'+'后'*100)
