@@ -515,3 +515,9 @@
 .agent-response-flow>.agent-compact-run{margin:2px 0}
 .agent-message.streaming .agent-response-flow>.agent-message-body:after{display:none}
 .agent-message.streaming .agent-response-flow>.agent-message-body:last-child:after{display:inline-block}
+
+.agent-task-handoff{margin:16px 0;padding:12px 0;border-top:1px solid #e5e7eb;color:#64748b;font-size:14px}
+.agent-task-handoff>strong{color:inherit;font-weight:600}
+.agent-task-handoff>small{display:block;margin-top:4px}
+.agent-task-handoff ul{padding-left:20px;margin:8px 0;overflow-wrap:anywhere}
+.agent-task-handoff li{margin:2px 0}

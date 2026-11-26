@@ -435,6 +435,7 @@
   function renderPending(container){
     const readonly=!!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);
     for(const button of container.querySelectorAll('.agent-regenerate')){button.hidden=!!agent.detail.modelPending || !!agent.regenerating || !!agent.sending;button.disabled=readonly || button.hidden || button.dataset.available!=='true';}
+    for(const button of container.querySelectorAll('.agent-prepare-continuation')){button.hidden=readonly || !!agent.detail.modelPending || !!agent.sending;button.disabled=button.hidden;}
     $('#agent-send').disabled=readonly || agent.sending || !!agent.detail.modelPending;
     $('#agent-send').hidden=!!agent.detail.modelPending;$('#agent-stop').hidden=!agent.detail.modelPending;
     $('#agent-stop').disabled=!!agent.stopping || !!agent.detail.stopRequested;
@@ -594,6 +595,34 @@
           for(const run of runs)if(!placed.has(run.id))flow.append(runCard(run,toolOpen));
           message.append(flow);refreshMessageBodies(message,entry);
         }else{body=element('div','agent-message-body');window.keeperMarkdown.render(body,entry.content,entry.role==='assistant');body.hidden=entry.role==='user' && !entry.content?.trim();message.append(body);}
+        if(entry.role==='assistant'){
+          const task=agent.detail.tasks?.find(t=>t.responseId===entry.id);
+          const planned=[...agent.detail.runs].reverse().find(r=>r.responseId===entry.id && r.tool==='update_plan' && r.status==='succeeded');
+          if(task && ['complete','failed','stopped','interrupted'].includes(task.status) && planned){
+            try{
+              const plan=JSON.parse(planned.output).plan;
+              const remaining=Array.isArray(plan)?plan.slice(0,12).filter(s=>s && typeof s.step==='string' && ['pending','in_progress','blocked','skipped'].includes(s.status)):[];
+              if(remaining.length){
+                const box=element('section','agent-task-handoff');box.setAttribute('aria-label','剩余工作');
+                box.append(element('strong','','剩余工作'),element('small','','依据模型报告的计划；继续前请核实已执行操作。'));
+                const list=element('ul');for(const step of remaining){list.append(element('li','',`${({pending:'待处理',in_progress:'待核实',blocked:'受阻',skipped:'已跳过'})[step.status]} · ${step.step.slice(0,200)}${typeof step.reason==='string' && step.reason?'：'+step.reason.slice(0,300):''}`));}box.append(list);
+                const actionable=remaining.filter(s=>s.status!=='skipped');
+                if(actionable.length){
+                  const prepare=element('button','btn agent-prepare-continuation','准备继续');prepare.type='button';
+                  const session=agent.selected,identity=agent.identityEpoch;
+                  prepare.onclick=()=>{
+                    if(session!==agent.selected || identity!==agent.identityEpoch || agent.detail.modelPending || agent.sending || agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview)return;
+                    const input=$('#agent-input');if(!input)return;
+                    if(input.value.trim()){notice('输入框已有草稿，请先处理草稿后再准备继续。');input.focus();return;}
+                    input.value='请继续以下剩余工作。先核实此前操作是否已执行或部分完成，避免重复修改；受阻步骤先检查条件，未解决时说明原因；已跳过或被拒绝的操作不要自动恢复。\n'+actionable.map((s,i)=>`${i+1}. ${s.step.slice(0,200)}${typeof s.reason==='string' && s.reason?'（'+s.reason.slice(0,300)+'）':''}`).join('\n');
+                    input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();
+                  };box.append(prepare);
+                }
+                message.append(box);
+              }
+            }catch{}
+          }
+        }
         agent.attachments?.decorate(message,entry);
         if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id){
           body.hidden=true;message.classList.add('is-editing');const form=element('form','agent-message-edit'),input=element('textarea');input.value=agent.editing.content;input.setAttribute('aria-label','编辑消息');input.rows=Math.max(3,Math.min(10,input.value.split('\n').length));const resizeEdit=()=>{input.style.height='auto';input.style.height=input.scrollHeight+'px';};input.oninput=()=>{agent.editing.content=input.value;resizeEdit();};Promise.resolve().then(()=>{if(input.isConnected)resizeEdit();});
