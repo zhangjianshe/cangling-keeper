@@ -547,3 +547,7 @@
 .agent-compose-toolbar :is(.agent-send,.agent-stop){box-sizing:border-box;display:inline-grid;place-items:center;flex:none;width:36px;height:36px;padding:0;line-height:1;border-radius:50%;background:#242426;color:#fff}
 .agent-compose-toolbar .agent-send{font-size:21px}
 .agent-compose-toolbar .agent-stop{font-size:13px}
+
+.agent-profile-model-label{display:inline-flex;align-items:center;min-height:36px;padding:0 10px;color:#666670;font-size:13px;line-height:1.5;max-width:300px;overflow-wrap:anywhere;cursor:default}
+.agent-profile-model-label[hidden],.agent-compose-toolbar #agent-model-picker[hidden]{display:none!important}
+@media(max-width:560px){.agent-profile-model-label{max-width:180px}}

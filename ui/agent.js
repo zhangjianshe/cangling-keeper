@@ -249,6 +249,10 @@
     const picker=$('#agent-model-picker'),menu=$('#agent-model-menu');
     const available=(config.servers || []).filter(server=>server.enabled && server.hasApiKey);
     $('#agent-model-label').textContent=enabled?config.name+' · '+config.model:available.length?'选择模型':'本地工具模式';
+    const followsProfile=!!agent.detail.agentProfile,profileLabel=$('#agent-profile-model-label');
+    picker.hidden=followsProfile;profileLabel.hidden=!followsProfile;
+    profileLabel.textContent=followsProfile?(config.model || config.name || '模型不可用')+' · 跟随智能体':'';
+    profileLabel.title=followsProfile?((config.name || 'LLM')+' · '+(config.model || '模型不可用')+'；在智能体配置中修改模型'+(enabled?'':'（当前模型不可用）')):'';
     picker.dataset.available=String(available.length);picker.disabled=!available.length || !!agent.detail.modelPending || !!agent.detail.agentProfile;
     picker.title=available.length?'选择当前对话使用的 LLM Server':'到账户 → 模型服务，启用并配置模型';
     menu.replaceChildren(element('div','agent-model-menu-title','选择模型'));
@@ -307,7 +311,7 @@
       const session=await ensureSession();
       await invoke('agent_session_model',{sessionId:session,id});
       await bootstrap();if(agent.selected===session)await select(session);
-    }catch(error){notice(String(error));}finally{picker.disabled=picker.dataset.available==='0' || !!agent.detail.modelPending;}
+    }catch(error){notice(String(error));}finally{picker.disabled=picker.dataset.available==='0' || !!agent.detail.modelPending || !!agent.detail.agentProfile;}
   }
   $('#agent-model-picker').onclick=()=>$('#agent-model-menu').hidden?openModelMenu():closeModelMenu(true);
   $('#agent-model-picker').onkeydown=event=>{if(event.key==='ArrowDown' || event.key==='ArrowUp'){event.preventDefault();openModelMenu(event.key==='ArrowUp');}};
@@ -461,7 +465,7 @@
     $('#agent-send').hidden=!!agent.detail.modelPending;$('#agent-stop').hidden=!agent.detail.modelPending;
     $('#agent-stop').disabled=!!agent.stopping || !!agent.detail.stopRequested;
     $('#agent-stop').title=agent.detail.stopRequested?'正在停止…':'停止生成';
-    $('#agent-model-picker').disabled=$('#agent-model-picker').dataset.available==='0' || !!agent.detail.modelPending;
+    $('#agent-model-picker').disabled=$('#agent-model-picker').dataset.available==='0' || !!agent.detail.modelPending || !!agent.detail.agentProfile;
     $('#agent-security-picker').disabled=!!agent.detail.modelPending || !!agent.changingSecurity;
     if(agent.detail.modelPending){closeModelMenu();$('#agent-security-menu').hidden=true;$('#agent-security-picker').setAttribute('aria-expanded','false');}
     for(const node of container.querySelectorAll('.agent-message'))node.classList.toggle('streaming',agent.detail.modelPending && node.dataset.messageId===agent.detail.streamingMessageId);
