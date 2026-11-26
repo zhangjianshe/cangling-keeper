@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Isolated Earth storage, account, capability-path and fake-model integration checks."""
-import json,os,tempfile,subprocess,socket,sqlite3,time,urllib.request,urllib.error,threading,http.server
+import uuid,json,os,tempfile,subprocess,socket,sqlite3,time,urllib.request,urllib.error,threading,http.server
 from pathlib import Path
 calls=[]
 action_index=0
@@ -67,7 +67,8 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   scene['camera']['longitude']=121.;saved=call('agent_earth_save',{**args,'expectedRevision':0,'scene':scene});assert saved['renderedRevision'] is None
   call('agent_earth_save',{**args,'expectedRevision':0,'scene':scene},400)
   call('agent_earth_ack',{**args,'revision':0},400)
-  assert call('agent_earth_ack',{**args,'revision':1})['renderedRevision']==1
+  window=str(uuid.uuid4());call('agent_earth_ack',{**args,'windowId':window,'phase':'open'})
+  assert call('agent_earth_ack',{**args,'windowId':window,'phase':'applied','revision':1,'cameraCommandRevision':0})['appliedRevision']==1
   # Camera persistence never increments the layer revision; stale layer saves cannot rewind it.
   initial=call('agent_earth_get',args)
   cam={**initial['camera'],'longitude':118.}
@@ -143,7 +144,8 @@ with tempfile.TemporaryDirectory(prefix='keeper-earth-') as tmp:
   lid=placed['tilesets'][0]['id'];rev=placed['revision']
   for extra in [{'accountKey':'stale'},{'expectedRevision':0},{'url':'file:///tmp/tileset.json'}]:
    call('agent_earth_add_tileset',{**args,'expectedRevision':rev,'url':'http://localhost:8080/3dtiles/other/tileset.json',**extra},400)
-  report=call('agent_earth_tiles_status',{**args,'revision':rev,'layers':[{'id':lid,'drawing':2,'pending':0,'errors':[]}]})
+  call('agent_earth_ack',{**args,'windowId':window,'phase':'applied','revision':rev,'cameraCommandRevision':placed['cameraCommandRevision']})
+  report=call('agent_earth_ack',{**args,'windowId':window,'phase':'layers','revision':rev,'cameraCommandRevision':placed['cameraCommandRevision'],'layers':[{'kind':'tilesets','id':lid,'state':'draw_submitted','drawing':2}]})
   assert call('agent_earth_get',args)['revision']==rev
   call('agent_earth_tiles_status',{**args,'revision':0,'layers':[]},400)
   call('agent_earth_tiles_status',{**args,'revision':rev,'layers':[{'id':'other'}]},400)

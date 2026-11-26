@@ -12,7 +12,7 @@ function send(frame,data,origin='http://localhost',source=frame.contentWindow){w
  const commands=[];f.contentWindow.postMessage=msg=>{commands.push(msg);setTimeout(()=>send(f,{id:msg.id,result:msg.method==='get_view'?scene.camera:true}),0);};
  send(f,{event:'ready'},'https://attacker.invalid');await flush();assert.equal(commands.length,0);
  send(f,{event:'ready'},'http://localhost',w);await flush();assert.equal(commands.length,0);
- send(f,{event:'ready'});for(let i=0;i<8;i++)await flush();assert.equal(calls.filter(c=>c[0]==='agent_earth_ack').length,1);assert.equal(calls.at(-1)[1].accountKey,'guest');
+ send(f,{event:'ready'});for(let i=0;i<8;i++)await flush();send(f,{event:'scene_applied',value:{revision:scene.revision,cameraCommandRevision:0}});for(let i=0;i<4;i++)await flush();assert.equal(calls.filter(c=>c[0]==='agent_earth_ack').length,2);assert.equal(calls.at(-1)[1].accountKey,'guest');
  // A layer notification preserves this window's camera, while explicit fly-to synchronizes it.
  assert.equal(streams.length,1);scene.revision++;streams[0].emit({revision:scene.revision,cameraCommandRevision:0});for(let i=0;i<12;i++)await flush();assert.equal(commands.filter(c=>c.method==='apply').at(-1).args.preserveCamera,true);
  scene.cameraCommandRevision=1;streams[0].emit({revision:scene.revision,cameraCommandRevision:1});for(let i=0;i<12;i++)await flush();assert.equal(commands.filter(c=>c.method==='apply').at(-1).args.preserveCamera,false);

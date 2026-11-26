@@ -36,7 +36,12 @@ pub(crate) fn get(s: &Store, project: &str) -> Result<Value, String> {
         scene["renderedCameraCommandRevision"] = json!(0);
     }
     if scene.get("tilesets").is_none(){scene["tilesets"]=json!([]);}
-    if let Some(raw)=s.get_setting(&format!("{key}:tiles-status"))?{let status:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;if status["revision"]==scene["revision"]{scene["tilesetStatus"]=status;}}
+    // Never reuse a receipt produced by a different browser window (or old versions).
+    scene["renderedRevision"]=Value::Null;
+    scene["renderedCameraCommandRevision"]=Value::Null;
+    scene["renderedAt"]=Value::Null;
+    scene["tilesetStatus"]=Value::Null;
+    scene["windows"]=crate::agent_earth_receipts::views(s,project,&scene)?;
     Ok(scene)
 }
 // Metadata-only notifications: each subscriber checks current account/project before delivery.
@@ -132,14 +137,7 @@ pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, St
     }
     match command {
         "agent_earth_add_tileset" => {let mut scene=get(s,project)?;crate::agent_earth_tiles::add(&mut scene,args)?;save(s,project,&json!({"expectedRevision":args["expectedRevision"],"scene":scene}))}
-        "agent_earth_tiles_status" => {
-            let scene=get(s,project)?;
-            let layers=args["layers"].as_array().filter(|a|a.len()<=4).ok_or("无效图层状态")?;
-            if args["revision"]!=scene["revision"]||args["layers"].to_string().len()>32768{return Err("场景版本已变化或状态过大".into());}
-            for layer in layers {if !scene["tilesets"].as_array().unwrap().iter().any(|l|l["id"]==layer["id"]){return Err("未知图层".into());}}
-            let value=json!({"revision":scene["revision"],"reportedAt":chrono::Utc::now().timestamp_millis(),"layers":layers});
-            s.set_setting(&format!("{}:tiles-status",key(s,project)?),&value.to_string())?;Ok(value)
-        }
+        "agent_earth_tiles_status" => Err("请使用带窗口ID的图层报告".into()),
         "agent_earth_add_model" | "agent_earth_publish_model" | "agent_earth_import" | "agent_earth_publish_image" | "agent_earth_add_image" => {
             let directory: String = s
                 .conn
@@ -170,24 +168,7 @@ pub(crate) fn invoke(s: &Store, command: &str, args: &Value) -> Result<Value, St
         "agent_earth_camera_save" => save_camera(s, project, args, false),
         "agent_earth_get" => get(s, project),
         "agent_earth_save" => save(s, project, args),
-        "agent_earth_ack" => {
-            let mut v = get(s, project)?;
-            if args["revision"] != v["revision"] {
-                return Err("场景版本已变化".into());
-            }
-            if args["cameraCommandRevision"] == v["cameraCommandRevision"] {
-                if let Some(raw) = s.get_setting(&format!("{}:camera",key(s,project)?))? {
-                    let mut camera: Value = serde_json::from_str(&raw).map_err(|e|e.to_string())?;
-                    camera["renderedCameraCommandRevision"] = v["cameraCommandRevision"].clone();
-                    s.set_setting(&format!("{}:camera",key(s,project)?), &camera.to_string())?;
-                    v["renderedCameraCommandRevision"] = v["cameraCommandRevision"].clone();
-                }
-            }
-            v["renderedRevision"] = v["revision"].clone();
-            v["renderedAt"] = json!(chrono::Utc::now().timestamp_millis());
-            s.set_setting(&key(s, project)?, &v.to_string())?;
-            Ok(v)
-        }
+        "agent_earth_ack" => crate::agent_earth_receipts::report(s,project,args,&get(s,project)?),
         _ => Err("未知地球操作".into()),
     }
 }
@@ -202,10 +183,10 @@ pub(crate) fn definitions() -> Vec<Value> {
     [("earth_search_datasets","查询已配置Cangling Map公开发布的3D Tiles数据集，按名称关键词或WGS84范围筛选。返回真实ID、版本、覆盖范围及URL。范围未知时不猜测；无结果不能编造数据集。",json!({"query":{"type":"string","maxLength":128},"bounds":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"number"}}}),json!([])),
     ("earth_load_dataset","按查询所得数据集ID加载当前发布版本到当前账户项目。重复调用同一版本复用图层；不自动定位，使用返回范围调用earth_fly_to，再用earth_get_view确认tilesetStatus。保存不代表绘制成功。",json!({"datasetId":{"type":"string","minLength":1,"maxLength":64}}),json!(["datasetId"])),
     ("earth_remove_tileset","按图层ID移除当前项目的3D Tiles场景引用，不删除服务端数据。",json!({"layer":{"type":"string","maxLength":64}}),json!(["layer"])),
-    ("earth_add_tileset","添加原生3D Tiles图层。URL为允许CORS的公开HTTP(S) tileset.json（如Cangling Map发布地址）；支持显式瓦片树、GLB/b3dm，不支持隐式瓦片及点云。浏览器异步LOD加载；earth_get_view的tilesetStatus报告加载、绘制及错误，renderedRevision只代表场景已应用，不能据此声称瓦片已显示。",json!({"url":{"type":"string","maxLength":2048},"name":{"type":"string","maxLength":128},"maximumScreenSpaceError":n(2.,128.)}),json!(["url"])),
+    ("earth_add_tileset","添加原生3D Tiles图层。URL为允许CORS的公开HTTP(S) tileset.json（如Cangling Map发布地址）；支持显式瓦片树、GLB/b3dm，不支持隐式瓦片及点云。浏览器异步LOD加载；earth_get_view的windows逐窗口报告加载、绘制提交及错误，sceneApplied只代表场景已应用，不能据此声称瓦片已显示。",json!({"url":{"type":"string","maxLength":2048},"name":{"type":"string","maxLength":128},"maximumScreenSpaceError":n(2.,128.)}),json!(["url"])),
     ("earth_publish_model","发布项目内静态GLB下载URL，内嵌纹理/缓冲区，最多16MiB，当前账户本机可访问。",json!({"path":{"type":"string","maxLength":200}}),json!(["path"])),
     ("earth_add_model","将项目静态GLB加载到WGS84经纬度，height米默认0，altitudeMode默认relativeToGround离地高，absolute为椭球高；heading度默认0，scale默认1（米），GLB的Y轴朝上。保存后等地球页面确认。",json!({"path":{"type":"string","maxLength":200},"longitude":n(-180.,180.),"latitude":n(-90.,90.),"height":n(-10000.,100000.),"heading":n(-360.,360.),"scale":n(0.001,10000.),"altitudeMode":{"type":"string","enum":["relativeToGround","absolute"]}}),json!(["path","longitude","latitude"])),
-    ("earth_get_view","读取当前项目已保存地球视图、图层及浏览器最后渲染确认时间。未确认不代表地球已显示。",json!({}),json!([])),
+    ("earth_get_view","读取已保存视图及各Earth窗口独立的应用和图层状态。windows按windowId区分；online和layerReportCurrent必须为true才能使用报告。sceneApplied不代表加载完成；draw_submitted只证明该窗口最近帧提交绘制，不保证屏幕像素可见。多个窗口必须指明哪个窗口，不得用一个窗口替其他窗口确认。",json!({"windowId":{"type":"string","description":"可选：指定Earth窗口ID；不指定时列出所有窗口，不推断成功"}}),json!([])),
     ("earth_fly_to","设置项目地球定位，经纬度为WGS84度，高度为米，可省略以保留当前高度；保存后由打开的地球页面应用。结果saved_not_rendered不是已完成渲染。",json!({"longitude":n(-180.,180.),"latitude":n(-90.,90.),"height":n(20.,100000000.)}),json!(["longitude","latitude"])),
     ("earth_set_layer_visibility","设置行政边界boundaries、经纬网graticule、已导入图层路径或图片/模型图层ID的可见性。",json!({"layer":{"type":"string","maxLength":200},"visible":{"type":"boolean"}}),json!(["layer","visible"])),
     ("earth_publish_image","将项目PNG/JPEG/WebP图片发布为当前账户可下载的本机URL快照，最多4MiB；不公开到互联网。",json!({"path":{"type":"string","maxLength":200}}),json!(["path"])),
@@ -302,7 +283,7 @@ pub(crate) fn execute(
     match tool {
         "earth_get_view" => {
             return Ok(
-                json!({"camera":scene["camera"],"layers":scene["layers"],"tilesetLayers":scene["tilesets"],"tilesetStatus":scene["tilesetStatus"],"modelLayers":scene.get("models").cloned().unwrap_or(json!([])),"imageLayers":scene.get("images").cloned().unwrap_or(json!([])),"businessLayers":scene["overlays"].as_array().unwrap().iter().map(|v|json!({"path":v["path"],"visible":v["visible"]})).collect::<Vec<_>>(),"revision":scene["revision"],"renderedRevision":scene["renderedRevision"],"cameraRevision":scene["cameraRevision"],"cameraCommandRevision":scene["cameraCommandRevision"],"renderedCameraCommandRevision":scene["renderedCameraCommandRevision"],"renderedAt":scene["renderedAt"]}),
+                json!({"camera":scene["camera"],"layers":scene["layers"],"tilesetLayers":scene["tilesets"],"tilesetStatus":scene["tilesetStatus"],"modelLayers":scene.get("models").cloned().unwrap_or(json!([])),"imageLayers":scene.get("images").cloned().unwrap_or(json!([])),"businessLayers":scene["overlays"].as_array().unwrap().iter().map(|v|json!({"path":v["path"],"visible":v["visible"]})).collect::<Vec<_>>(),"windows":scene["windows"],"targetWindow":args["windowId"].as_str().and_then(|id|scene["windows"].as_array()?.iter().find(|v|v["windowId"]==id)),"evidence":"逐窗口核对在线、版本和图层状态；绘制提交不保证遮挡后像素可见，报告不含基础底图完整加载确认", "revision":scene["revision"],"renderedRevision":scene["renderedRevision"],"cameraRevision":scene["cameraRevision"],"cameraCommandRevision":scene["cameraCommandRevision"],"renderedCameraCommandRevision":scene["renderedCameraCommandRevision"],"renderedAt":scene["renderedAt"]}),
             );
         }
         "earth_get_selection" => {
@@ -348,7 +329,7 @@ pub(crate) fn execute(
         &json!({"expectedRevision":scene["revision"],"scene":scene}),
     )? };
     Ok(
-        json!({"status":"saved_not_rendered","projectId":project,"tilesetLayers":saved["tilesets"],"revision":saved["revision"],"cameraCommandRevision":saved["cameraCommandRevision"],"message":"场景已保存；打开项目三维地球后应用。请用 earth_get_view 核对 renderedRevision 和 renderedCameraCommandRevision，不能声称已经显示。"}),
+        json!({"status":"saved_not_rendered","projectId":project,"tilesetLayers":saved["tilesets"],"revision":saved["revision"],"cameraCommandRevision":saved["cameraCommandRevision"],"message":"场景已保存；打开项目三维地球后应用。请用 earth_get_view 按 windowId 核对 online、sceneApplied、cameraApplied 和 layerReportCurrent，再逐图层核对状态；未确认不可声称已显示。"}),
     )
 }
 

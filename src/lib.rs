@@ -1,5 +1,6 @@
 mod agent_evidence;
 mod agent_earth;
+mod agent_earth_receipts;
 mod agent_earth_catalog;
 mod agent_earth_tiles;
 mod agent_earth_models;

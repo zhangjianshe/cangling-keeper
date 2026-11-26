@@ -11,7 +11,7 @@ description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、
 
 - earth_fly_to：WGS84 longitude、latitude，height 为相机高度（米）。经纬度须来自用户或可信地理数据，不能猜测。
 - earth_get_selection：读取地球选点、矢量属性或测量结果。地名不等同于精确坐标。
-- earth_get_view：读取相机、businessLayers、imageLayers、revision 与 renderedRevision，以及 cameraCommandRevision 与 renderedCameraCommandRevision。
+- earth_get_view：读取相机、businessLayers、imageLayers、revision、cameraCommandRevision 以及各窗口 windows 确认。
 
 ## GeoJSON 矢量
 
@@ -33,15 +33,15 @@ description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、
 用 earth_publish_model({"path":"3dmodules/Duck.glb"}) 获得当前账户的真实下载URL。
 用 earth_add_model({"path":"3dmodules/Duck.glb","longitude":116.4,"latitude":39.9,"height":0,"heading":0,"scale":1,"altitudeMode":"relativeToGround"}) 加载；示例坐标不能替代用户要求的位置。longitude/latitude是WGS84度，height是米，relativeToGround表示模型原点相对地形的高度；absolute表示椭球高。模型使用glTF的Y向上、米单位，scale等比缩放，heading为绕竖直方向旋转的度数。
 第一版支持静态、纹理与缓冲区内嵌的GLB 2.0三角网格、节点变换、基础颜色及纹理；不支持动画、蒙皮、Draco等必需扩展或完整PBR。单文件16MiB、8个模型；不要把这种支持描述为完整glTF渲染器。earth_get_view返回modelLayers，可用模型ID控制显隐。更新位置使用同一文件再次调用earth_add_model，不重复增加图层。
-核对revision/renderedRevision后再报告加载状态，不通过DOM模拟模型渲染。
+核对目标窗口的当前图层报告后再报告加载状态，不通过DOM模拟模型渲染。
 
 ## 完成核验
 
 以本轮工具返回值为证据，不能把历史回复中的文件名、版本号或“已完成”当事实。
-核对文件存在、目标图层出现在列表中，然后核对新版本 revision 与 renderedRevision。旧场景已绘制不代表新图层已添加；没有工具执行就不能声称生成或加载成功。
+核对文件存在、目标图层出现在列表中，然后核对目标窗口的 sceneApplied 和 layerReportCurrent。旧场景已绘制不代表新图层已添加；没有工具执行就不能声称生成或加载成功。
 场景保存但未确认绘制时说明“已保存，等待地球页面加载”，不要循环重复添加。绘制确认也不是目视验收，不保证图层在当前相机可见范围内；需要时定位到真实范围中心再核对。
 
-视角独立同步：手动拖动不会改变图层 revision。使用 earth_fly_to 后须核对 renderedCameraCommandRevision == cameraCommandRevision；只有图层 renderedRevision 相等不能证明定位已显示。
+视角独立同步：手动拖动不会改变图层 revision。使用 earth_fly_to 后须核对目标窗口 online 和 cameraApplied；只有图层 renderedRevision 相等不能证明定位已显示。
 
 ## 原生 3D Tiles
 使用 `earth_add_tileset` 添加 Cangling Map 发布的 HTTP(S) `/3dtiles/<id>/tileset.json`，
@@ -51,9 +51,8 @@ description: 在 Keeper 三维地球中定位、叠加项目图片与 GeoJSON、
 暂不支持隐式瓦片、点云、i3dm/cmpt 和压缩扩展。资源服务必须允许浏览器 CORS，
 HTTPS 页面须使用 HTTPS 资源，无登录凭证和查询参数，子资源必须在数据集目录内。
 瓦片树遍历、视锥裁剪、屏幕误差 LOD、模型解码与绘制均由原生 Rust/WGPU 完成。
-使用 earth_get_view 核对 tilesetStatus.layers 的 drawing、pending、errors 和 reportedAt；
-这是最近浏览器报告，不代表浏览器仍在线。renderedRevision 只确认场景应用，
-不能证明瓦片全部加载。用 earth_set_layer_visibility 的图层 ID 控制显示或隐藏。
+使用 earth_get_view 核对目标 windows 的 online、layerReportCurrent 和逐图层状态、drawing、pending、error；
+报告只属于对应窗口，绘制提交不能证明瓦片全部加载。用 earth_set_layer_visibility 的图层 ID 控制显示或隐藏。
 
 ## 查找并加载已发布建筑数据集
 
@@ -70,3 +69,8 @@ MAP_PUBLIC_BASE_URL以提供完整URL。MCP工具未启用时，才使用下面�
 - 用 earth_get_view 核对当前场景 revision、相机确认，以及 tilesetStatus 的 reportedAt、drawing/pending/errors。没有新报告只说明已保存，不能说模型已显示；无需反复加载。
 - 用 earth_set_layer_visibility 按图层 ID 显隐；earth_remove_tileset 移除场景引用，不删除数据集或服务端文件。
 - 数据集目录不是单栋建筑查询接口，不能据此回答楼层/高度统计。模型可能来自估算拉伸，不能宣称为实测建筑。
+
+## 窗口独立确认（取代旧 renderedRevision 判定）
+每个 Earth 页面都有独立 windowId，刷新后生成新 ID。earth_get_view 返回 windows；可指定 windowId 查看目标窗口。不能将另一个窗口的成功当成当前窗口的成功。
+必须检查 online、sceneApplied、cameraApplied、layerReportCurrent。离线、过期或版本不同的报告不能作为成功证据。
+sceneApplied 仅表示场景指令已应用，不代表资源已下载或显示。layers 中逐层检查状态：loading 加载中，loaded 已加载但未确认绘制，draw_submitted 已加载并提交绘制，hidden 隐藏，error 失败。draw_submitted 不保证屏幕像素可见（可能被遮挡或在视野外）；不要宣称所有图层已显示。基础底图的全部瓦片加载不在此确认范围内。
