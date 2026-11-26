@@ -577,3 +577,8 @@
 #agent-profile-picker .profile-picker-chevron{display:block;width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 /* Top-level conversations align with section headings, without project indentation. */
 #agent-pinned>.agent-session-row .agent-session,#agent-sessions>.agent-session-row .agent-session{padding-left:12px}
+
+.agent-task-summary[hidden]{display:none}
+.agent-task-summary>summary{font-size:13px;color:#85858f}
+.agent-task-exception{color:#b45309}
+.agent-task-change-details{margin-top:12px}

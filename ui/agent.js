@@ -557,9 +557,11 @@
           if(metadata.context || metadata.usage){
             const c=metadata.context || {},u=metadata.usage || {},labels={compressing:'正在整理上下文…',compacted:'上下文已压缩',fallback:'摘要不可用，已裁剪旧上下文',stopped:'上下文压缩已停止',interrupted:'请求已中断',ready:'上下文就绪'};
             const parts=[labels[c.status] || ''];
-            if(c.estimatedTokens)parts.push('输入估算 '+c.estimatedTokens.toLocaleString()+' / '+c.limit.toLocaleString()+' token');
+            if(Number.isFinite(c.estimatedTokens)&&Number.isFinite(c.limit)&&c.limit>0)parts.push('输入估算 '+c.estimatedTokens.toLocaleString()+' / '+c.limit.toLocaleString()+' token');
             if(u.promptTokens!==undefined)parts.push('累计实际输入 '+u.promptTokens.toLocaleString()+' · 输出 '+u.completionTokens.toLocaleString()+' token（含压缩）');
-            const info=element('div','agent-context-info',parts.filter(Boolean).join(' · '));info.title='预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');replyHeader.append(info);
+            const percentage=Number.isFinite(c.estimatedTokens)&&c.estimatedTokens>=0&&Number.isFinite(c.limit)&&c.limit>0?'上下文 '+Math.round(c.estimatedTokens/c.limit*100)+'%':'上下文用量未知';
+            const exceptional=['compressing','fallback','stopped','interrupted'].includes(c.status)?labels[c.status]:'';
+            const info=element('div','agent-context-info',exceptional?percentage+' · '+exceptional:percentage);info.title=parts.filter(Boolean).join(' · ')+'。预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');replyHeader.append(info);
           }
           message.append(replyHeader);
           if(['stopped','interrupted'].includes(metadata.generationStatus))message.append(element('span','agent-generation-status',metadata.generationStatus==='stopped'?'已停止生成':'生成已中断'));
@@ -582,10 +584,14 @@
               const c={};for(const run of runs)c[run.status]=(c[run.status] || 0)+1;const label=runs.length===0?'执行记录：本轮未调用工具':`执行记录：工具成功 ${c.succeeded || 0} · 失败 ${c.failed || 0} · 拒绝 ${c.rejected || 0} · 停止/中断 ${(c.stopped || 0)+(c.interrupted || 0)} · 待处理 ${(c.pending_approval || 0)+(c.approved || 0)+(c.running || 0)}`;
               const evidenceLine=element('small','agent-execution-evidence',label);evidenceLine.title='来自本次回复的实际工具记录；调用成功不等于用户目标已完成。';message.append(evidenceLine);
             }
-            const summary=element('details','agent-task-summary'),caption=element('summary','',`${labels[task.status] || '任务记录'} · ${rounds} 轮 · 工具调用 ${calls} 次`);
+            const fileCount=new Set(runs.filter(r=>{try{return r.review?.kind==='file' && JSON.parse(r.output||'{}')?.applied===true;}catch{return false;}}).map(r=>r.review.path)).size;
+            const commandCount=runs.filter(r=>r.tool==='run_command' && !['pending_approval','approved','rejected'].includes(r.status)).length;
+            const compact=[labels[task.status] || '任务记录'];if(fileCount)compact.push('修改 '+fileCount+' 个文件');if(commandCount)compact.push('执行 '+commandCount+' 条命令');
+            const summary=element('details','agent-task-summary'),caption=element('summary','',compact.join(' · '));
+            summary.append(element('p','agent-task-counts',`${rounds} 轮 · 工具调用 ${calls} 次`));
             const terminal=['complete','failed','stopped','interrupted'].includes(task.status);
             const reason=metadata.taskReason || (task.status==='interrupted'?'服务中断，执行记录已保留；不会自动重放操作。':terminal?'历史任务未记录具体结束原因。':'任务进行中，可随时停止生成。');
-            summary.append(caption,element('p','',reason));
+            summary.prepend(caption);summary.append(element('p','',reason));
             if(validBudget){
               summary.append(element('p','agent-task-budget',`本轮上限：${budget.maxRounds} 轮、${budget.maxToolCalls} 次工具调用、${budget.activeSeconds} 秒运行预算（等待审批暂停计时）。调用数为已记录的工具调用；超限整批请求可能在执行前被拒绝。`));
               if(!terminal && ((task.step || 0)>=budget.maxRounds-1 || runs.length>=budget.maxToolCalls-4)){const warning=element('p','agent-budget-warning','执行预算即将用尽；可检查已完成内容，必要时停止并拆分剩余任务。');warning.setAttribute('role','status');summary.append(warning);caption.append(element('span','agent-budget-warning',' · 接近上限'));}
@@ -596,6 +602,12 @@
 
             const counts={succeeded:0,failed:0,rejected:0,stopped:0,interrupted:0};for(const run of runs)if(run.status in counts)counts[run.status]++;
             summary.append(element('p','',`工具结果：成功 ${counts.succeeded} · 失败 ${counts.failed} · 拒绝 ${counts.rejected} · 停止/中断 ${counts.stopped+counts.interrupted}`));
+            const exceptions=[];if(counts.failed)exceptions.push(counts.failed+' 项失败');if(counts.rejected)exceptions.push(counts.rejected+' 项拒绝');if(counts.stopped+counts.interrupted)exceptions.push((counts.stopped+counts.interrupted)+' 项停止/中断');
+            if(exceptions.length)caption.append(element('span','agent-task-exception',' · '+exceptions.join(' · ')));
+            for(const child of [...message.querySelectorAll(':scope > .agent-task-changes,:scope > .agent-task-plan,:scope > .agent-execution-evidence')]){
+              if(child.classList.contains('agent-task-changes')){const content=element('div','agent-task-change-details');for(const item of [...child.children])if(item.tagName!=='SUMMARY')content.append(item);child.remove();summary.append(content);}else summary.append(child);
+            }
+            summary.hidden=task.status==='complete' && runs.length===0;
             summary.open=!!agent.taskSummaryOpen?.has(entry.id);summary.ontoggle=()=>{agent.taskSummaryOpen ||= new Set();if(summary.open)agent.taskSummaryOpen.add(entry.id);else agent.taskSummaryOpen.delete(entry.id);};message.append(summary);
           }
           const visibleRuns=runs.filter(run=>!isSkillPreparation(run));

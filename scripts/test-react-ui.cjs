@@ -19,7 +19,7 @@ listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',
 assert.match(document.querySelector('.agent-context-info').textContent,/正在整理上下文/);
 assert.match(document.querySelector('.agent-stream-status').textContent,/正在整理上下文/);
 listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',context:{status:'compacted',estimatedTokens:10000,limit:32768},usage:{promptTokens:321,completionTokens:45}}});
-assert.match(document.querySelector('.agent-context-info').textContent,/累计实际输入 321/);
+assert.match(document.querySelector('.agent-context-info').title,/累计实际输入 321/);
 assert.equal(document.querySelector('.agent-context-info').parentElement,document.querySelector('.agent-reply-model').parentElement,'model and context share the reply header');
 assert.equal(document.querySelector('.agent-reply-number').textContent,'1','selected version retains the reply number');
 context.agent.detail.messages.push({id:'q2',role:'user',content:'next',createdAt:4},{id:'a2',role:'assistant',content:'second',createdAt:5,modelMetadata:{source:'llm',model:'fixture'}});context.renderConversation();
@@ -29,7 +29,7 @@ assert.equal(context.relativeMessageTime(1000,61000),'1分钟前');assert.equal(
 assert.ok(document.querySelector('.agent-message.user .agent-message-time'));assert.equal(document.querySelector('.agent-message.user .agent-reply-actions').firstElementChild.className,'agent-message-time');
 assert.equal(document.querySelectorAll('.agent-model-tool').length,1,'only selected reply tool history is displayed');
 assert.equal(document.querySelector('.agent-model-tool').dataset.runId,'new-run');
-assert.match(document.querySelector('.agent-stream-status').textContent,/第 2 轮/);assert.match(document.querySelector('.agent-task-summary').textContent,/执行工具中 · 2 轮 · 工具调用 1 次/);
+assert.match(document.querySelector('.agent-stream-status').textContent,/第 2 轮/);assert.match(document.querySelector('.agent-task-summary').textContent,/执行工具中2 轮 · 工具调用 1 次/);
 assert.equal(document.querySelector('#agent-stop').hidden,false);
 messages[2].modelMetadata.executionEvidence={version:1,responseId:'new',callCount:99,counts:{succeeded:99}};
 context.renderConversation();
@@ -37,8 +37,13 @@ assert.match(document.querySelector('.agent-execution-evidence').textContent,/�
 const savedRuns=context.agent.detail.runs;context.agent.detail.runs=[];
 context.agent.detail.tasks[0].status='complete';context.renderConversation();
 assert.match(document.querySelector('.agent-execution-evidence').textContent,/本轮未调用工具/);
-assert.match(document.querySelector('.agent-task-summary summary').textContent,/回复已结束/);
+assert.match(document.querySelector('.agent-task-summary summary').textContent,/回复已结束/);assert.equal(document.querySelector('.agent-task-summary').hidden,true,'ordinary answer hides execution statistics');assert.equal(document.querySelector('.agent-context-info').textContent,'上下文 31%');
 context.agent.detail.runs=savedRuns;context.agent.detail.tasks[0].status='tool';context.renderConversation();
+const compactRuns=[...savedRuns,{...run('write','new'),tool:'write_file',review:{kind:'file',path:'a.txt',diff:'change'},output:JSON.stringify({applied:true})},{...run('cmd','new'),tool:'run_command',status:'failed',output:JSON.stringify({exitCode:1})}];
+context.agent.detail.runs=compactRuns;context.agent.detail.tasks[0].status='complete';context.renderConversation();
+assert.match(document.querySelector('.agent-task-summary>summary').textContent,/修改 1 个文件 · 执行 1 条命令/);assert.match(document.querySelector('.agent-task-summary>summary').textContent,/1 项失败/);assert.equal(document.querySelector('.agent-message>.agent-task-changes'),null);assert.ok(document.querySelector('.agent-task-summary .agent-task-change-details'));assert.equal(document.querySelector('.agent-message>.agent-execution-evidence'),null);assert.equal(document.querySelector('.agent-task-summary').hidden,false);
+context.agent.detail.runs=savedRuns;context.agent.detail.tasks[0].status='tool';context.renderConversation();
+
 
 assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>dom.window.getComputedStyle(b).display==='none'),'busy regenerate must be visually hidden');
 document.querySelector('.agent-model-tool').open=true;
@@ -64,7 +69,7 @@ composer.value='';const stalePrepare=document.querySelector('.agent-prepare-cont
 context.agent.detail.modelPending=true;context.renderConversation();assert.equal(document.querySelector('.agent-prepare-continuation').hidden,true);
 context.agent.detail.tasks[0].status='tool';context.renderConversation();assert.equal(document.querySelector('.agent-task-handoff'),null);
 context.agent.detail.runs.pop();composer.value='';context.renderConversation();
-const budgetMessage=context.agent.detail.messages.find(m=>m.id==='new');budgetMessage.modelMetadata.taskBudget={maxRounds:8,maxToolCalls:32,activeSeconds:180};context.agent.detail.tasks[0].status='model';context.agent.detail.tasks[0].step=7;context.renderConversation();assert.match(document.querySelector('.agent-task-summary summary').textContent,/7 \/ 8 轮/);assert.match(document.querySelector('.agent-task-summary summary').textContent,/1 \/ 32/);assert.ok(document.querySelector('.agent-budget-warning'));context.agent.detail.tasks[0].status='complete';context.renderConversation();assert.equal(document.querySelector('.agent-budget-warning'),null);delete budgetMessage.modelMetadata.taskBudget;context.agent.detail.tasks[0].step=2;
+const budgetMessage=context.agent.detail.messages.find(m=>m.id==='new');budgetMessage.modelMetadata.taskBudget={maxRounds:8,maxToolCalls:32,activeSeconds:180};context.agent.detail.tasks[0].status='model';context.agent.detail.tasks[0].step=7;context.renderConversation();assert.match(document.querySelector('.agent-task-counts').textContent,/7 \/ 8 轮/);assert.match(document.querySelector('.agent-task-counts').textContent,/1 \/ 32/);assert.ok(document.querySelector('.agent-budget-warning'));context.agent.detail.tasks[0].status='complete';context.renderConversation();assert.equal(document.querySelector('.agent-budget-warning'),null);delete budgetMessage.modelMetadata.taskBudget;context.agent.detail.tasks[0].step=2;
 context.agent.detail.modelPending=false;context.renderPending(document.querySelector('#agent-messages'));
 assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>!b.hidden),'regenerate returns when idle');
 assert.ok([...document.querySelectorAll('.agent-regenerate')].every(b=>dom.window.getComputedStyle(b).display!=='none'),'idle regenerate is visible');
