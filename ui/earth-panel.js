@@ -1,8 +1,8 @@
 (()=>{'use strict';
  window.createKeeperEarth=({agent,invoke,showConversation})=>{
  const node=(t,c,text)=>{const e=document.createElement(t);e.className=c||'';if(text!==undefined)e.textContent=text;return e;};
- const panel=node('section','keeper-earth hidden'),bar=node('header','earth-toolbar'),title=node('strong','','三维地球'),status=node('span','hint'),split=node('button','btn','对话分屏'),close=node('button','btn','返回会话');for(const b of [split,close])b.type='button';bar.append(title,status,split,close);panel.append(bar);document.querySelector('#agent-main').after(panel);
- const detached=node('button','btn','地球新标签页');detached.type='button';detached.hidden=!!agent.detachedEarth;bar.insertBefore(detached,close);
+ const panel=node('section','keeper-earth hidden'),bar=node('header','earth-toolbar'),title=node('strong','','三维地球'),status=node('span','hint'),split=node('button','btn earth-split-toggle','对话分屏'),close=node('button','agent-nav-button','← 返回会话');for(const b of [split,close])b.type='button';bar.append(close,title,status,split);panel.append(bar);document.querySelector('#agent-main').after(panel);
+ const detached=node('button','btn','地球新标签页');detached.type='button';detached.hidden=!!agent.detachedEarth;bar.append(detached);
  detached.onclick=()=>{if(!project)return;const url=new URL('/earth-window.html',location.origin);url.searchParams.set('project',project.id);url.searchParams.set('account',owner||'guest');window.open(url.href,'_blank','noopener');hide();showConversation();};
  let windowId=null,receiptQueue=Promise.resolve();
  function closeReceipt(){if(!windowId||!project)return;const args={accountKey:owner,projectId:project.id,windowId,phase:'closed'};if(window.fetch)fetch('/api/invoke/agent_earth_ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args),keepalive:true}).catch(()=>{});else invoke('agent_earth_ack',args).catch(()=>{});}

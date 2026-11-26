@@ -41,7 +41,7 @@
   popup.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closePopup(true);}else if(e.key==='ArrowDown'||e.key==='ArrowUp'){const items=[filter,...choicesList.querySelectorAll('button')],i=items.indexOf(document.activeElement);e.preventDefault();items[(i+(e.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();}};
 
   const modal=element('section','profiles-page hidden');modal.id='agent-profiles-page';modal.setAttribute('aria-label','智能体管理');
-  const head=element('header','keeper-settings-header'),title=element('h1','','智能体管理'),close=element('button','btn','← 返回会话');close.type='button';head.append(title,close);
+  const head=element('header','keeper-settings-header'),title=element('h1','','智能体管理'),close=element('button','agent-nav-button','← 返回会话');close.type='button';head.append(close,title);
   const layout=element('div','profiles-layout'),nav=element('nav','profiles-navigation'),search=element('input'),list=element('div','profiles-list'),add=element('button','btn','＋ 新建智能体');nav.setAttribute('aria-label','智能体列表');search.type='search';search.placeholder='搜索智能体';search.setAttribute('aria-label','搜索智能体');add.type='button';nav.append(add,search,list);
   const box=element('div','profiles-content'),form=element('form','profiles-form'),fields=element('div','profiles-fields');
   const info=element('p','hint','智能体属于当前账户，可跨项目使用。按需关联技能与 MCP 工具，原有审批规则仍然有效。');
