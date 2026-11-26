@@ -14,6 +14,8 @@ use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+static MANAGED_SOCKETS:std::sync::atomic::AtomicBool=std::sync::atomic::AtomicBool::new(false);
+use axum::serve::ListenerExt;
 use futures_util::StreamExt;
 use rust_embed::Embed;
 use serde::Serialize;
@@ -70,10 +72,11 @@ impl WebState {
     }
 }
 
-pub(crate) fn run_from_args() -> Result<(), String> {
+pub(crate) fn run_from_args(listeners:crate::socket_activation::Listeners) -> Result<(), String> {
     let listen = listen_from_args()?;
     let mut data_dir = default_data_dir()?;
     let mut open = true;
+    let mut https_address = Some("127.0.0.1:443".parse::<SocketAddr>().unwrap());
     let args: Vec<String> = std::env::args().collect();
     let mut index = 1;
     while index < args.len() {
@@ -84,6 +87,8 @@ pub(crate) fn run_from_args() -> Result<(), String> {
                 data_dir = PathBuf::from(args.get(index).ok_or("--data-dir 缺少目录")?);
             }
             "--no-open" => open = false,
+            "--no-https" => https_address = None,
+            "--https-listen" => {index += 1;https_address = Some(args.get(index).ok_or("--https-listen 缺少地址")?.parse().map_err(|_|"无效 HTTPS 监听地址")?);},
             _ => {}
         }
         index += 1;
@@ -96,7 +101,9 @@ pub(crate) fn run_from_args() -> Result<(), String> {
         .enable_all()
         .build()
         .map_err(|error| error.to_string())?;
-    runtime.block_on(run(address, data_dir, open))
+    if https_address.is_some_and(|v|!v.ip().is_loopback()){return Err("HTTPS 仅允许监听本机回环地址".into());}
+    listeners.validate(address,https_address)?;
+    runtime.block_on(run(address, data_dir, open, https_address,listeners))
 }
 
 pub(crate) fn home_url_from_args() -> Result<String, String> {
@@ -111,7 +118,7 @@ pub(crate) fn home_url_from_args() -> Result<String, String> {
 
 fn listen_from_args() -> Result<String, String> {
     let args: Vec<String> = std::env::args().collect();
-    let mut listen = "127.0.0.1:4301".to_string();
+    let mut listen = "127.0.0.1:80".to_string();
     let mut index = 1;
     while index < args.len() {
         if args[index] == "--listen" {
@@ -134,7 +141,7 @@ async fn termination_signal(){
     #[cfg(not(unix))]std::future::pending::<()>().await;
 }
 
-async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), String> {
+async fn run(address: SocketAddr, data_dir: PathBuf, open: bool, https_address: Option<SocketAddr>,mut inherited:crate::socket_activation::Listeners) -> Result<(), String> {
     proxy::ensure_loopback_not_proxied();
     let core = Arc::new(create_app_state(data_dir).map_err(|error| error.to_string())?);
     let (events, _) = broadcast::channel(512);
@@ -155,9 +162,9 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
         .route("/api/invoke/{command}", post(invoke))
         .fallback(static_asset)
         .with_state(state.clone());
-    let listener = tokio::net::TcpListener::bind(address)
-        .await
-        .map_err(|error| format!("监听 {address} 失败：{error}"))?;
+    let activated=inherited.http.is_some();
+    MANAGED_SOCKETS.store(activated,std::sync::atomic::Ordering::Relaxed);
+    let listener = if let Some(listener)=inherited.http.take(){tokio::net::TcpListener::from_std(listener).map_err(|e|e.to_string())?}else{tokio::net::TcpListener::bind(address).await.map_err(|error| format!("监听 {address} 失败：{error}"))?};
     let actual = listener.local_addr().map_err(|error| error.to_string())?;
     let url = format!("http://{actual}");
     crate::logging::info(&format!("cangling-keeper Web 服务已启动：{url}"));
@@ -169,23 +176,36 @@ async fn run(address: SocketAddr, data_dir: PathBuf, open: bool) -> Result<(), S
             let _ = crate::open_with_command(&url);
         });
     }
-    let result = axum::serve(
+    let (stop_tx, stop_rx) = tokio::sync::watch::channel(false);
+    let tls_task = if let Some(address) = https_address {
+        match crate::local_https::Listener::bind(address,inherited.https.take()).await {
+            Ok(tls) => {
+                crate::logging::info(&format!("Keeper HTTPS 已启动：https://{address}（local.cangling.cn）"));
+                let router=app.clone();let mut stop=stop_rx.clone();
+                Some(tokio::spawn(async move {axum::serve(tls.tap_io(|_|{}),router.into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(async move {let _=stop.changed().await;}).await}))
+            }
+            Err(e) => {crate::logging::error(&e);None}
+        }
+    } else {None};
+    let shutdown = tokio::spawn(async move {
+        tokio::select! {_=tokio::signal::ctrl_c()=>{},_=shutdown_rx=>{},_=termination_signal()=>{}}
+        let _=stop_tx.send(true);
+        let _=state.core.mcp_pool.clear();crate::agent_actions::shutdown();
+        state.emit("server-shutdown",json!({}));crate::sync_process::shutdown();
+    });
+    let mut http_stop=stop_rx.clone();
+    let server = axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
-    .with_graceful_shutdown(async move {
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {},
-            _ = shutdown_rx => {},
-            _ = termination_signal() => {},
-        }
-        let _ = state.core.mcp_pool.clear();
-        crate::agent_actions::shutdown();
-        state.emit("server-shutdown",json!({}));
-        crate::sync_process::shutdown();
-    })
-    .await
-    .map_err(|error| error.to_string());
+    .with_graceful_shutdown(async move {let _=http_stop.changed().await;});
+    let mut stop=stop_rx;
+    let result=tokio::select! {
+        result=std::future::IntoFuture::into_future(server)=>result.map_err(|e|e.to_string()),
+        _=async {let _=stop.changed().await;tokio::time::sleep(std::time::Duration::from_secs(3)).await;}=>Ok(()),
+    };
+    if let Some(task)=tls_task{task.abort();let _=task.await;}
+    shutdown.abort();
     crate::agent_actions::shutdown();
     crate::sync_process::shutdown();
     result
@@ -363,7 +383,7 @@ fn authorize_root_install(peer: SocketAddr, headers: &HeaderMap) -> Result<(), S
     let url = reqwest::Url::parse(&format!("http://{host}"))
         .map_err(|_| "请从此电脑的 localhost 页面安装根证书")?;
     let local_host = url.host_str().is_some_and(|h| {
-        h == "localhost"
+        h == "localhost" || h == "local.cangling.cn"
             || h.trim_matches(['[', ']'])
                 .parse::<std::net::IpAddr>()
                 .is_ok_and(|ip| ip.is_loopback())
@@ -400,6 +420,10 @@ async fn dispatch(state: &WebState, command: &str, args: Value) -> Result<Value,
                 // Give the HTTP response enough time to reach the browser
                 // before stopping the listener.
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                if MANAGED_SOCKETS.load(std::sync::atomic::Ordering::Relaxed) && std::env::var("KEEPER_SYSTEMD_SERVICE").as_deref()==Ok("cangling-keeper-local.service") {
+                    let result=tokio::process::Command::new("systemctl").args(["--no-ask-password","--no-block","stop","cangling-keeper-http.socket","cangling-keeper-https.socket"]).status().await;
+                    if !result.is_ok_and(|s|s.success()){crate::logging::error("停止 systemd socket 失败，请手动停止以避免重新激活");}
+                }
                 let _ = sender.send(());
             });
             value(())
@@ -1387,6 +1411,12 @@ mod tests {
         assert!(authorize_root_install("192.0.2.10:1234".parse().unwrap(), &headers).is_err());
         headers.insert(header::ORIGIN, "https://other.example".parse().unwrap());
         assert!(authorize_root_install("127.0.0.1:1234".parse().unwrap(), &headers).is_err());
+        headers.insert(header::HOST, "local.cangling.cn".parse().unwrap());
+        headers.insert(header::ORIGIN, "https://local.cangling.cn".parse().unwrap());
+        assert!(authorize_root_install("127.0.0.1:1234".parse().unwrap(), &headers).is_ok());
+        assert!(authorize_root_install("192.0.2.10:1234".parse().unwrap(), &headers).is_err());
+        headers.insert(header::ORIGIN, "https://other.example".parse().unwrap());
+        assert!(authorize_root_install("127.0.0.1:1234".parse().unwrap(), &headers).is_err());
         headers.remove(header::ORIGIN);
         headers.insert(header::HOST, "other.example:4301".parse().unwrap());
         assert!(authorize_root_install("127.0.0.1:1234".parse().unwrap(), &headers).is_err());
@@ -1400,7 +1430,8 @@ mod tests {
 
     #[test]
     fn default_server_is_loopback_only() {
-        let address: SocketAddr = "127.0.0.1:4301".parse().unwrap();
+        let address: SocketAddr = listen_from_args().unwrap().parse().unwrap();
         assert!(address.ip().is_loopback());
+        assert_eq!(address.port(),80);
     }
 }

@@ -645,3 +645,50 @@
 .keeper-earth>.earth-toolbar>.earth-layers-toggle{width:28px;height:28px;padding:5px;box-sizing:border-box;border-radius:4px;background:#ffffffd9;color:#64748b}
 .earth-layers-toggle svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .earth-layers-toggle:focus-visible{outline:2px solid #84adff;outline-offset:2px}
+
+/* Title editing replaces the title in the same header grid cell. */
+.agent-main>.agent-header .agent-title-button[hidden]{display:none!important}
+.agent-main>.agent-header>.agent-title-editor{grid-column:1;grid-row:1;min-width:0;width:100%;max-width:none;margin:0;gap:8px}
+.agent-main>.agent-header>.agent-title-editor input{flex:1;min-width:0;width:0;box-sizing:border-box;height:34px;font-size:14px}
+
+/* Three aligned header zones: project actions, title, view modes. */
+.agent-main>.agent-header{grid-template-columns:minmax(240px,1fr) minmax(0,2fr) minmax(240px,1fr);height:64px;min-height:64px;gap:12px}
+.agent-main>.agent-header>.agent-header-tools{grid-column:1;grid-row:1;justify-content:flex-start;flex-wrap:nowrap}
+.agent-main>.agent-header>.agent-title-button{grid-column:2;grid-row:1;text-align:center;margin:0}
+.agent-main>.agent-header>.agent-title-editor{grid-column:2;grid-row:1;margin:0}
+.agent-main>.agent-header>.agent-title-editor input{text-align:center}
+.agent-header-modes{grid-column:3;grid-row:1;display:flex;justify-content:flex-end;align-items:center;min-width:0}
+@container keeper-chat (max-width:1000px){
+ .agent-main>.agent-header{grid-template-columns:minmax(0,1fr) auto;height:auto;min-height:78px;gap:4px 8px;padding:8px 16px}
+ .agent-main>.agent-header>.agent-title-button,.agent-main>.agent-header>.agent-title-editor{grid-column:1/-1;grid-row:1}
+ .agent-main>.agent-header>.agent-header-tools{grid-column:1;grid-row:2;flex-wrap:wrap}
+ .agent-header-modes{grid-column:2;grid-row:2}
+}
+
+/* Scrollbar sits on the sidebar boundary, while rows retain their inset. */
+.agent-sidebar{--sidebar-right-inset:14px}
+.agent-navigation-sections{margin-right:calc(-1 * var(--sidebar-right-inset));padding-right:var(--sidebar-right-inset);overflow-x:hidden;scrollbar-width:thin;scrollbar-color:#b7b7bf transparent}
+.agent-navigation-sections::-webkit-scrollbar{width:6px}
+.agent-navigation-sections::-webkit-scrollbar-track{background:transparent}
+.agent-navigation-sections::-webkit-scrollbar-thumb{background:#b7b7bf;border-radius:6px}
+.agent-navigation-sections::-webkit-scrollbar-thumb:hover{background:#92929c}
+@media(max-width:850px){.agent-sidebar{--sidebar-right-inset:8px}}
+
+/* Compact sidebar insets; only inline action buttons change on hover. */
+.agent-sidebar:not(:has(#agent-sidebar-content[hidden])){padding-left:7px;padding-right:7px;--sidebar-right-inset:7px}
+.agent-navigation-sections .agent-session-row .history-row-more{background:transparent;color:#52525b}
+.agent-navigation-sections .agent-session-row:has(.agent-session.active) .history-row-more{color:#18181b}
+.agent-navigation-sections summary button{background:transparent;color:inherit}
+.agent-navigation-sections .agent-session-row .history-row-more:hover,
+.agent-navigation-sections .agent-session-row:has(.agent-session.active) .history-row-more:hover,
+.agent-navigation-sections summary button:hover{background:transparent;color:#000}
+@media(max-width:850px){.agent-sidebar:not(:has(#agent-sidebar-content[hidden])){padding-left:4px;padding-right:4px;--sidebar-right-inset:4px}}
+
+/* Agent MCP associations: grouped names and descriptions, persistent selection during filtering. */
+.profile-mcp-catalog{display:block;min-width:0;border:0;padding:0;margin:16px 0}
+.profile-mcp-bar{display:flex;align-items:center;gap:16px;margin-bottom:16px}.profile-mcp-bar input{flex:1;min-width:0}.profile-mcp-bar>.hint{flex:none;white-space:nowrap}
+.profile-mcp-group{border:1px solid #dbe4f0;border-radius:8px;overflow:hidden;margin-bottom:16px}
+.profile-mcp-group h3{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;margin:0;background:#f7f8fa;font-size:14px;font-weight:600}.profile-mcp-group h3 small{color:#64748b;font-size:12px;font-weight:400;white-space:nowrap}
+.profile-mcp-catalog .profile-mcp-tool{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;margin:0;cursor:pointer;border-top:1px solid #edf0f4}.profile-mcp-tool:hover{background:#fafbfc}.profile-mcp-catalog .profile-mcp-tool input{flex:none;width:16px;height:16px;margin:3px 0 0;accent-color:#4268db}.profile-mcp-copy{display:flex;flex-direction:column;gap:4px;min-width:0}.profile-mcp-copy strong{font-size:14px;font-weight:500;overflow-wrap:anywhere;color:#20242b}.profile-mcp-description{font-size:12px;line-height:1.6;color:#64748b;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.profile-mcp-catalog [hidden]{display:none!important}
+
+.profile-mcp-group-actions{display:flex;align-items:center;gap:12px}.profile-mcp-toggle{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;border-radius:5px;background:transparent;color:#64748b;font-size:22px;cursor:pointer}.profile-mcp-toggle:hover{color:#000;background:#eceff3}.profile-mcp-toggle:focus-visible{outline:2px solid #7ba7ef;outline-offset:2px}

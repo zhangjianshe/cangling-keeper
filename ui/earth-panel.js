@@ -95,7 +95,7 @@
      const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('aria-hidden','true');const p=document.createElementNS(icon.namespaceURI,'path');p.setAttribute('d',path);icon.append(p);b.append(icon);
      b.onclick=()=>{const value=agent.projects.find(p=>p.id===(agent.detail?.session?.projectId||agent.project));setDisplayMode(mode,value).catch(e=>{status.textContent=String(e);b.title=label+'：'+String(e);});};modeButtons.set(mode,b);group.append(b);
    }
-   main.querySelector('.agent-header-tools').append(group);split.classList.add('earth-mode-legacy');detached.classList.add('earth-mode-legacy');updateModes();
+   (main.querySelector('.agent-header-modes')||main.querySelector('.agent-header-tools')).append(group);split.classList.add('earth-mode-legacy');detached.classList.add('earth-mode-legacy');updateModes();
  }
  return {setDisplayMode,flyTo,open,openWorkbench,hide,restore,showWithConversation,reset:()=>hide(false),isSplit:()=>splitMode&&!!frame,projectId:()=>project?.id};
  };

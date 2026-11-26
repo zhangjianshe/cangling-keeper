@@ -262,7 +262,6 @@
       item.onclick=()=>chooseModel(server.id);menu.append(item);
     }
     if(picker.disabled)closeModelMenu();
-    $('#agent-model-note').textContent=enabled?(config.name || 'LLM')+' · '+(securityOptions().find(o=>o.id===(agent.detail.securityMode || 'ask'))?.description || '文件修改和命令需确认'):'尚未启用模型 · 会话保存在本机 · 远程命令执行前需要确认';
     const list=$('#llm-server-list');list.replaceChildren();
     if(!config.servers?.length)list.append(element('p','llm-empty','尚未添加 LLM Server，点击右侧按钮添加。'));
     for(const server of config.servers || []){

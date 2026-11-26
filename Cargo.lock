@@ -313,6 +313,7 @@ dependencies = [
  "signature",
  "similar",
  "tokio",
+ "tokio-rustls",
  "tokio-tungstenite",
  "tun",
  "uuid",

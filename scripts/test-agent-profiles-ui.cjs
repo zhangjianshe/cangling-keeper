@@ -7,7 +7,7 @@ const icon='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAA
 const p={icon,id:'p',name:'<b>Agent</b>',systemPrompt:'Be precise',modelId:'m',skills:['skill'],mcpTools:['mcp_one']};
 const agent={selected:'s',identityEpoch:0,detail:{agentProfiles:[p],agentProfile:p}},calls=[];
 let deferred=null,selected='',menuClosed=false;
-const invoke=async(n,a)=>{calls.push([n,a]);if(deferred)return new Promise(r=>deferred=r);if(n==='agent_profile_options')return {profiles:[p],selected:p,models:[{id:'m',name:'Model',model:'fixture',enabled:true,hasApiKey:true}],skills:[{name:'skill',description:'guide'},{id:'system-earth-workbench',ref:'system:earth-workbench',scope:'system',name:'earth-workbench',description:'Earth'}],mcpTools:[{function:{name:'mcp_one',description:'MCP fixture'}}]};return {};};
+const invoke=async(n,a)=>{calls.push([n,a]);if(deferred)return new Promise(r=>deferred=r);if(n==='agent_profile_options')return {profiles:[p],selected:p,models:[{id:'m',name:'Model',model:'fixture',enabled:true,hasApiKey:true}],skills:[{name:'skill',description:'guide'},{id:'system-earth-workbench',ref:'system:earth-workbench',scope:'system',name:'earth-workbench',description:'Earth'}],mcpTools:[{function:{name:'mcp_one',description:'MCP 服务 IDEA / read_file: Read project files'}}]};return {};};
 const element=(t,c,text)=>{const e=d.createElement(t);e.className=c||'';if(text!==undefined)e.textContent=text;return e;};
 const ui=w.createKeeperProfiles({agent,invoke,element,notice:()=>{},select:async s=>selected=s,ensureSession:async()=>{},closeAccountMenu:()=>{menuClosed=true;},showConversation:()=>d.querySelector('#agent-main').classList.remove('hidden')});
 (async()=>{
@@ -21,6 +21,20 @@ const ui=w.createKeeperProfiles({agent,invoke,element,notice:()=>{},select:async
  picker.focus();ui.hide();assert.equal(d.activeElement,picker,'hidden management page must not steal sidebar focus');
  agent.detail.modelPending=true;ui.update();assert(picker.disabled);agent.detail.modelPending=false;ui.update();
  assert(d.querySelector('#agent-settings-menu #agent-menu-profiles'));assert(!d.querySelector('.agent-header-tools #agent-menu-profiles'));d.querySelector('#agent-menu-profiles').click();await new Promise(setImmediate);assert(menuClosed);assert(d.querySelector('#agent-main').classList.contains('hidden'));assert(!d.querySelector('#agent-profiles-page').classList.contains('modal'));assert.equal(d.querySelector('#agent-profiles-page header').firstElementChild.textContent,'← 返回会话');assert(d.querySelector('#agent-skill-library-editor').classList.contains('hidden'));assert.equal(d.querySelector('#profile-name').value,p.name);assert.equal(d.querySelector('#profile-model').value,'m');assert.equal(d.querySelectorAll('input:checked').length,3);
+ const catalog=d.querySelector('.profile-mcp-catalog'),mcpFilter=catalog.querySelector('input[type=search]');
+ assert.equal(catalog.querySelector('.profile-mcp-copy strong').textContent,'read_file');
+ assert(catalog.querySelector('h3').textContent.startsWith('IDEA'));
+ mcpFilter.value='no matching tool';mcpFilter.dispatchEvent(new w.Event('input'));
+ assert(catalog.querySelector('.profile-mcp-group').hidden);
+ assert(catalog.querySelector('input[type=checkbox]').checked,'mcpFilter preserves selection');
+ mcpFilter.value='read';mcpFilter.dispatchEvent(new w.Event('input'));
+ assert(!catalog.querySelector('.profile-mcp-group').hidden);
+ const collapse=catalog.querySelector('.profile-mcp-toggle'),body=catalog.querySelector('.profile-mcp-body');
+ assert(body.hidden);assert.equal(collapse.getAttribute('aria-expanded'),'false');
+ collapse.click();assert(!body.hidden);
+ collapse.click();assert(body.hidden);assert.equal(collapse.getAttribute('aria-expanded'),'false');
+ assert(catalog.querySelector('input[type=checkbox]').checked);
+ collapse.click();assert(!body.hidden);assert.equal(collapse.getAttribute('aria-expanded'),'true');
  const builtin=[...d.querySelectorAll('.profile-choice')].find(e=>e.textContent.includes('earth-workbench'));assert(builtin.textContent.includes('系统内置'));assert.equal(builtin.querySelectorAll('button').length,0);assert(builtin.querySelector('input').checked);assert(builtin.querySelector('input').disabled);
  assert.equal(d.querySelector('.profile-icon-setting img').getAttribute('src'),icon);assert(d.querySelector('.profiles-list-item img'));
  const tabs=[...d.querySelectorAll('.profiles-form > .profiles-tabs [role=tab]')],panels=[...d.querySelectorAll('.profiles-form [role=tabpanel]')];assert.equal(tabs.length,3);assert(!panels[0].hidden&&panels[1].hidden&&panels[2].hidden);

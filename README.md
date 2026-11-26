@@ -362,7 +362,7 @@ the shortcut starts the service and opens its home page. If Keeper is already
 running, the second process exits after opening the existing home page instead
 of starting another service instance.
 
-The default URL is `http://127.0.0.1:4301`. Optional arguments:
+The default URL is `http://127.0.0.1` (port 80). Linux requires low-port binding permission; use `--listen 127.0.0.1:4301` for an unprivileged HTTP port. Optional arguments:
 
 ```sh
 cangling-keeper --listen 127.0.0.1:4301 --no-open
@@ -825,3 +825,114 @@ Agent 的 `write_file` 支持可选 `createOnly: true`：同名文件已存在�
 ### 项目三维地球
 
 已内嵌 cangling-desktop Web/WASM 产物，支持项目地球、对话分屏、智能体地球工具、GeoJSON 和测量/截图。编译、测试及能力边界见 [三维地球接入](docs/earth-integration.md)。
+
+### 本机 HTTPS
+
+Keeper 同时提供 HTTP（默认 `127.0.0.1:80`）和 HTTPS（默认 `127.0.0.1:443`）。
+HTTPS 仅允许回环地址，可使用 `--https-listen 127.0.0.1:8443` 改端口；隔离测试可传 `--no-https`。
+443 不可用时记录错误并保留 HTTP 服务，不会静默宣称 HTTPS 启动成功。
+
+签发：`./scripts/issue-local-https.sh ../root-ca`，在终端输入签发 CA 密码。
+证书 SAN 为 DNS `local.cangling.cn` 和 IP `127.0.0.1`，签发期限 3652 天。
+嵌入的是网站证书链和网站私钥，不包含 CA 私钥。所有安装副本共享网站密钥，
+只适用于回环服务，不能作为区分设备身份的凭证。本次重签的 Update CA 在 2038-11-26 到期，网站证书在 2036-11-25 到期。
+到期前需重新签发网站证书并更新程序。
+
+Linux 首次配置（编译完成后）：
+`sudo python3 scripts/configure-local-https-linux.py target/debug/cangling-keeper`
+仅授予绑定低端口能力，并在 `/etc/hosts` 映射本机域名；原 hosts 有备份。
+替换二进制会丢失文件 capability，更新后需重新授权。无需以 root 运行 Keeper。
+客户端需信任 Cangling Root CA。HTTP 和 HTTPS 的浏览器本地存储按来源隔离，
+首次切到 HTTPS 时需重新选择界面状态，服务端 SQLite 数据保持共享。
+
+### Linux 开发：由 systemd 托管 80/443
+
+一次性安装（不会启用开机或登录自启）：
+
+```bash
+sudo ./target/debug/cangling-keeper install-service
+# 自定义端口
+sudo ./target/debug/cangling-keeper install-service --http-port 8080 --https-port 8443
+# 仅预检，不申请管理员权限、不修改系统
+./target/debug/cangling-keeper install-service --http-port 8080 --https-port 8443 --check
+```
+
+命令默认使用 HTTP 80、HTTPS 443；端口范围为 1–65535，且两者不能相同。
+安装需要 Linux systemd、Python 3 和 sudo；普通用户直接安装或卸载会提示“需要管理员账户”，不会自动调用 sudo；请显式使用 sudo 执行。
+安装后不会自动启动或重启现有服务；修改端口后需手动重启服务，并更新访问地址。
+安装器创建两个仅监听回环地址的 socket，以及使用当前普通用户运行的系统服务；
+专用 Polkit 规则仅允许该用户启动、停止、重启这三个固定单元。
+Keeper 根据 `LISTEN_PID`、`LISTEN_FDS`、`LISTEN_FDNAMES` 接管监听器，校验名称和地址，
+设置 `CLOEXEC` 避免命令子进程继承监听器。没有激活环境时仍使用普通端口绑定。
+
+```bash
+systemctl start cangling-keeper-local.service
+# 编译后无需重新 setcap；直接重启
+cargo build
+systemctl restart cangling-keeper-local.service
+systemctl stop cangling-keeper-local.service
+journalctl -u cangling-keeper-local.service -n 100
+```
+
+切换前应先停止旧的用户服务 `systemctl --user stop cangling-keeper-local.service`，
+避免两个服务争用端口。不要 enable 这些单元；手动启动服务会同时启动两个 socket。
+停止服务会连带停止 socket；页面“关闭服务”也会关闭 socket，避免后续请求重新唤醒服务。
+修改 CLI 监听地址时需要同步修改 socket 单元；Windows/macOS 不使用此 Linux 集成。
+
+卸载系统服务（需要管理员账户；停止服务并删除两个 socket、服务单元及专用 Polkit 规则）：
+
+```bash
+cangling-keeper uninstall-service --check  # 查看范围，不修改
+sudo cangling-keeper uninstall-service
+```
+
+卸载保留程序文件、证书、账户配置、项目和会话数据，也不会删除桌面快捷方式。
+原有托管启动器在卸载后不能启动服务；可重新 `install-service`，或使用普通高端口直接启动。
+
+安装时同时创建桌面快捷方式：Linux 在发起 sudo 的用户桌面和应用菜单创建入口，
+点击后启动托管服务并打开指定 HTTP 端口，附带应用图标。
+Windows 的 `install-service` 必须在管理员终端运行，会在公共桌面创建 `.lnk`，
+带入 HTTP/HTTPS 端口参数直接启动 Keeper；目前不注册 Windows SCM 服务。
+Windows 的 `uninstall-service` 删除该公共快捷方式；Linux 卸载保留快捷方式以便重新安装。
+
+### Linux 程序安装目录与升级
+
+`sudo ./cangling-keeper install-service` 将当前程序复制到
+`/opt/cangling-keeper/cangling-keeper`（root 所有、0755），并创建
+`/usr/local/bin/cangling-keeper` 符号链接。服务的工作目录和执行路径使用 `/opt`
+安装目录，不再依赖源码目录或 `target/debug`。用户数据继续使用现有用户目录，不迁移或清空。
+
+```bash
+# 从新编译/下载的程序安装或升级；自定义端口时每次明确指定
+sudo ./target/debug/cangling-keeper install-service --http-port 80 --https-port 443
+# 安装不会自动启动、重启或启用开机自启
+systemctl restart cangling-keeper-local.service
+# 只检查配置，不写入系统
+./target/debug/cangling-keeper install-service --check
+# 只卸载服务；保留 /opt 程序、命令入口及用户数据
+sudo cangling-keeper uninstall-service
+```
+
+安装前预检 systemd 单元；程序通过同目录临时文件原子替换，已运行的进程不会读到半个文件。
+已有程序和服务配置备份到 `/var/backups/keeper-socket-日期时间/`。
+若命令入口已存在且不是上述符号链接，会拒绝覆盖。
+安装时同时为发起 sudo 的普通用户创建桌面和应用菜单快捷方式。
+
+验证记录（2026-11-26）：Linux 编译、默认端口 systemd 预检、隔离安装和本机实际安装验收通过。
+重启后 `/proc/<PID>/exe` 确认为 `/opt/cangling-keeper/cangling-keeper`，工作目录为 `/opt/cangling-keeper`；
+程序由 root 所有、权限 0755，命令链接正确；服务以 satway 普通用户运行，有效能力为零。
+HTTP 80 与 HTTPS 443 返回同一进程，HTTPS 证书校验通过；桌面入口目标和启动脚本语法检查通过。
+服务与两个 socket 均为 static，未启用开机自启。Windows 快捷方式逻辑已在 Windows 10（192.168.3.208，James 管理员会话）实测：公共桌面 .lnk 创建、读取和删除通过，目标路径、工作目录、8080/8443 参数及 IconLocation 一致，现有 Keeper EXE 图标提取通过。测试入口已清理，未覆盖原有快捷方式。新版完整安装命令及非管理员执行尚未在 Windows 实机验证；
+本机交叉检查因缺少 MinGW C 编译器未完成。
+
+### 重启已安装服务
+
+```bash
+cangling-keeper restart
+# 尚未更新 /opt 中程序时，也可以从新编译的程序执行此命令
+./target/debug/cangling-keeper restart
+```
+
+仅支持 Linux systemd 服务，通过安装时的专用授权规则执行，无需 sudo。
+命令只重启服务，不复制构建产物；升级仍需先执行 `sudo ./target/debug/cangling-keeper install-service`。
+重启会中断当前连接和运行任务。Windows 尚未注册系统服务，因此不支持该命令。

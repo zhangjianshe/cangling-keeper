@@ -53,6 +53,9 @@ mod sync;
 mod sync_process;
 mod tunnel;
 mod web;
+mod local_https;
+mod socket_activation;
+mod install_service;
 mod websocket_tunnel;
 
 use std::collections::{HashMap, HashSet};
@@ -141,6 +144,8 @@ fn create_app_state(data_dir: PathBuf) -> Result<AppState, Box<dyn std::error::E
 
 /// Start the browser-based service.
 pub fn run_web_from_args() -> Result<(), String> {
+    if let Some(result) = install_service::handle() { return result; }
+    let listeners=socket_activation::receive()?;
     // Update probes and the replacement helper must run alongside the live server.
     if let Some(result) = app_update::helper_mode() {
         return result;
@@ -159,7 +164,7 @@ pub fn run_web_from_args() -> Result<(), String> {
         }
         Err(error) => return Err(error.to_string()),
     };
-    web::run_from_args()
+    web::run_from_args(listeners)
 }
 
 struct InjectedHandle {
