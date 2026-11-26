@@ -245,7 +245,6 @@
     }
     llmConfig=config;
     const enabled=config.enabled && config.hasApiKey;
-    $('.agent-model-badge').textContent=enabled?(config.name || 'LLM')+' · '+config.model:'未连接模型';
     const picker=$('#agent-model-picker'),menu=$('#agent-model-menu');
     const available=(config.servers || []).filter(server=>server.enabled && server.hasApiKey);
     $('#agent-model-label').textContent=enabled?config.name+' · '+config.model:available.length?'选择模型':'本地工具模式';
