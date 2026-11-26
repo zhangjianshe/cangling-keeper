@@ -10,6 +10,7 @@ tests=[
  ['python3','scripts/test-react-http.py'],
  ['python3','scripts/test-account-sessions-http.py'],
  ['node','scripts/test-react-ui.cjs'],
+ ['node','scripts/test-command-summary-ui.cjs'],
  ['node','scripts/test-run-experience-ui.cjs'],
  ['node','scripts/test-transport-recovery.cjs'],
  ['node','scripts/test-account-sessions-ui.cjs'],

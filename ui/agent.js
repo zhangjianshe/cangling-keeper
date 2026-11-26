@@ -67,8 +67,23 @@
       undo.onclick=async()=>{const session=agent.selected,epoch=agent.identityEpoch;if(!await window.uiConfirm('仅撤销此项修改；文件已有后续变化时将拒绝操作。继续？','撤销文件修改'))return;if(session!==agent.selected||epoch!==agent.identityEpoch)return;undo.disabled=true;try{await invoke('agent_undo_file_change',{runId:run.id});if(session===agent.selected&&epoch===agent.identityEpoch)await select(session);}catch(e){notice(String(e));undo.disabled=false;}};
       row.append(undo);box.append(row);
     }
-    if(commands.length)box.append(element('h4','','命令与验证记录（退出码不等同于测试断言通过）'));
-    for(const run of commands){let result={};try{result=JSON.parse(run.output||'{}');}catch{}const row=element('details');row.append(element('summary','',`${run.review?.command||run.arguments?.command||'命令'} · ${result.timedOut?'超时':result.stopped?'已停止':result.exitCode!=null?'退出码 '+result.exitCode:run.status}`),element('pre','agent-tool-output',run.output||'尚无执行结果'));box.append(row);}
+    if(commands.length){
+      // Lifecycle state takes precedence over partial or stale command output.
+      const classify=run=>{
+        let result={};try{const parsed=JSON.parse(run.output||'{}');if(parsed && typeof parsed==='object' && !Array.isArray(parsed))result=parsed;}catch{}
+        if(run.status==='rejected')return ['notRun','已拒绝，未执行'];
+        if(['pending_approval','approved','running'].includes(run.status))return ['pending',({pending_approval:'等待批准',approved:'已批准，等待执行',running:'执行中'})[run.status]];
+        if(run.status==='interrupted')return ['interrupted','执行中断，结果待核实'];
+        if(run.status==='stopped' || result.stopped===true)return ['interrupted','已停止，可能部分执行'];
+        if(result.timedOut===true)return ['failed','执行超时，可能部分执行'];
+        if(run.status==='failed')return ['failed','执行失败'+(Number.isInteger(result.exitCode)?' · 退出码 '+result.exitCode:'')];
+        if(run.status==='succeeded' && Number.isInteger(result.exitCode))return result.exitCode===0?['normal','正常退出 · 退出码 0']:['failed','非零退出 · 退出码 '+result.exitCode];
+        return ['unknown','结果待核实'];
+      };
+      const counts={normal:0,failed:0,interrupted:0,notRun:0,pending:0,unknown:0},records=commands.map(run=>{const [kind,label]=classify(run);counts[kind]++;return {run,label};});
+      box.append(element('h4','','命令与验证记录'),element('p','agent-command-summary',`正常退出 ${counts.normal} · 失败/超时 ${counts.failed} · 停止/中断 ${counts.interrupted} · 未执行 ${counts.notRun} · 待处理 ${counts.pending} · 待核实 ${counts.unknown}`),element('p','hint','命令正常退出不代表测试全部通过；请核对实际命令、输出及测试断言。未记录的验证不能视为已通过。'));
+      for(const {run,label} of records){const row=element('details','agent-command-record');row.append(element('summary','',`${run.review?.command||run.arguments?.command||'命令'} · ${label}`),element('pre','agent-tool-output',run.output||'尚无执行结果'));box.append(row);}
+    }
     message.append(box);
   }
   function renderProjects(){
