@@ -778,7 +778,20 @@
     const card=element('details','agent-run agent-compact-run'+(run.responseId?' agent-model-tool':''));card.dataset.runId=run.id;card.open=run.status==='pending_approval' || openStates?.get(run.id) || false;
     const header=element('summary','agent-run-summary');
     const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('fill','none');icon.setAttribute('stroke','currentColor');icon.setAttribute('stroke-width','1.7');icon.setAttribute('stroke-linecap','round');icon.setAttribute('stroke-linejoin','round');icon.setAttribute('aria-hidden','true');icon.classList.add('agent-run-icon');
-    const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',['run_command','ssh_execute'].includes(run.tool)?'m5 7 5 5-5 5m8 0h6':'M9 3h6l1 4 4 1v8l-4 1-1 4H9l-1-4-4-1V8l4-1Z');icon.append(path);
+    const toolIcons={
+      search_files:'M21 21l-5-5M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
+      list_directory:'M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7h18',
+      read_file:'M14 2H5v20h14V7ZM14 2v5h5M8 12h8M8 16h8',
+      read_files:'M8 2h8l4 4v12H8ZM16 2v4h4M4 6v16h12M11 10h6M11 14h6',
+      write_file:'M13 3H4v18h16v-8M15 5l4 4M10 10l8-8 4 4-8 8-5 1Z',
+      apply_patch:'M14 2H5v20h14V7ZM14 2v5h5M8 12h8M12 9v6M8 18h8',
+      update_plan:'m3 6 2 2 3-4M11 6h10m-18 8 2 2 3-4M11 14h10M11 20h10',
+      load_skill:'M12 5C9 3 5 3 2 4v16c3-1 7-1 10 1 3-2 7-2 10-1V4c-3-1-7-1-10 1Zm0 0v16',
+      read_skill_file:'M14 2H5v20h14V7ZM14 2v5h5M8 12h8M8 16h8',
+      run_command:'M3 4h18v16H3Zm4 4 4 4-4 4m7 0h4',
+      ssh_execute:'M3 4h18v16H3Zm4 4 4 4-4 4m7 0h4'
+    };
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',toolIcons[run.tool] || 'M9 3h6l1 4 4 1v8l-4 1-1 4H9l-1-4-4-1V8l4-1Z');icon.append(path);
     const title=run.tool==='load_skill'?'加载技能 · '+(run.arguments?.name || ''):run.review?.kind==='mcp'?'MCP · '+run.review.server+' · '+run.review.tool:titleFor(run.tool);
     const toggle=element('span','agent-run-details-toggle',card.open?'收起':'详情');
     header.append(icon,element('strong','agent-run-title',title),element('span','run-state',statusNames[run.status] || run.status),toggle);card.append(header);

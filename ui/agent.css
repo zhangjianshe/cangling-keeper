@@ -582,3 +582,8 @@
 .agent-task-summary>summary{font-size:13px;color:#85858f}
 .agent-task-exception{color:#b45309}
 .agent-task-change-details{margin-top:12px}
+
+/* Reply prose is black; metadata and syntax highlighting retain their colors. */
+.agent-message.assistant .agent-message-body{color:#000}
+.agent-message.assistant .agent-message-body :is(h1,h2,h3,h4,h5,h6,blockquote,summary){color:#000}
+.agent-message.assistant .agent-message-body :not(pre)>code{color:#000}
