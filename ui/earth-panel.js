@@ -90,7 +90,7 @@
  }
  if(!agent.detachedEarth && main.querySelector('.agent-header-tools')){
    const group=node('div','earth-mode-options');group.setAttribute('role','group');group.setAttribute('aria-label','地球显示模式');
-   for(const [mode,label,path] of [['chat','仅对话','M6 4h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4V6a2 2 0 0 1 2-2ZM8 8h8M8 12h5'],['split','对话并列','M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM12 4v16'],['full','全屏地球','M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5'],['tab','新的标签','M14 3h7v7m0-7L11 13M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5']]){
+   for(const [mode,label,path] of [['chat','仅对话','M6 4h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9l-5 4V6a2 2 0 0 1 2-2ZM8 8h8M8 12h5'],['split','对话并列','M3 3h9v7H7l-4 3V3ZM6 6h3M22 16a6 6 0 1 1-12 0 6 6 0 0 1 12 0ZM10 16h12M16 10c-3 3-3 9 0 12 3-3 3-9 0-12Z'],['full','全屏地球','M6 2H2v4m16-4h4v4M2 18v4h4m16-4v4h-4M19 12a7 7 0 1 1-14 0 7 7 0 0 1 14 0ZM5 12h14M12 5c-4 4-4 10 0 14 4-4 4-10 0-14Z'],['tab','新的标签','M16 2h6v6m0-6-7 7M18 14a8 8 0 1 1-8-8M2 14h16M10 6c-4 4-4 12 0 16 2-2 3-5 3-8']]){
      const b=node('button','earth-mode-option');b.type='button';b.title=label;b.setAttribute('aria-label',label);b.setAttribute('aria-pressed','false');
      const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('aria-hidden','true');const p=document.createElementNS(icon.namespaceURI,'path');p.setAttribute('d',path);icon.append(p);b.append(icon);
      b.onclick=()=>{const value=agent.projects.find(p=>p.id===(agent.detail?.session?.projectId||agent.project));setDisplayMode(mode,value).catch(e=>{status.textContent=String(e);b.title=label+'：'+String(e);});};modeButtons.set(mode,b);group.append(b);

@@ -616,13 +616,16 @@
 @media(max-width:700px){.agent-content-workspace.has-earth{flex-direction:column}.agent-content-workspace.has-earth>.agent-chat-column{flex:1;min-height:180px;border-right:0;border-bottom:1px solid #e5e7eb}.agent-content-workspace.has-earth>.keeper-earth{flex:1;min-height:180px}}
 
 /* Compact segmented view controls. */
-.earth-mode-options{display:inline-flex;align-items:center;gap:3px;padding:4px;box-sizing:border-box;border:1px solid #e8ebf0;border-radius:12px;background:#f7f8fa;flex:none}
-.earth-mode-option{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;box-sizing:border-box;padding:6px;border:1px solid transparent;border-radius:8px;background:transparent;color:#7b8492;cursor:pointer;transition:background-color .15s,color .15s,box-shadow .15s,border-color .15s}
+/* Match the header controls with a compact, joined segmented selector. */
+.earth-mode-options{display:inline-flex;align-items:stretch;gap:0;padding:0;height:34px;box-sizing:border-box;border:1px solid #cdd4dc;border-radius:8px;background:#f5f8fc;flex:none}
+.earth-mode-option{display:inline-flex;align-items:center;justify-content:center;width:38px;height:32px;min-height:0;box-sizing:border-box;margin:0;padding:6px 9px;border:0;border-right:1px solid #cdd4dc;border-radius:0;background:transparent;color:#626b78;cursor:pointer;transition:background-color .15s,color .15s}
+.earth-mode-option:first-child{border-radius:7px 0 0 7px}
+.earth-mode-option:last-child{border-right:0;border-radius:0 7px 7px 0}
 .earth-mode-option svg{width:18px;height:18px;flex:none;fill:none;stroke:currentColor;stroke-width:1.65;stroke-linecap:round;stroke-linejoin:round}
-.earth-mode-option:hover{background:#eaf0f7;color:#3f5c82}
-.earth-mode-option[aria-pressed=true]{background:#fff;border-color:#dce7f8;color:#3473df;box-shadow:0 1px 3px #244d8514}
-.earth-mode-option:focus-visible{outline:2px solid #84adff;outline-offset:2px}
-.earth-mode-option:active{background:#e1eaff}
+.earth-mode-option:hover{background:#e8edf3;color:#20252b}
+.earth-mode-option[aria-pressed=true]{background:#dedfe1;color:#25292e;box-shadow:none}
+.earth-mode-option:focus-visible{position:relative;z-index:1;outline:2px solid #84adff;outline-offset:2px}
+.earth-mode-option:active{background:#d5d9df}
 @media(prefers-reduced-motion:reduce){.earth-mode-option{transition:none}}
 .earth-toolbar>.earth-mode-legacy{display:none!important}
 
@@ -652,14 +655,14 @@
 .agent-main>.agent-header>.agent-title-editor input{flex:1;min-width:0;width:0;box-sizing:border-box;height:34px;font-size:14px}
 
 /* Three aligned header zones: project actions, title, view modes. */
-.agent-main>.agent-header{grid-template-columns:minmax(240px,1fr) minmax(0,2fr) minmax(240px,1fr);height:64px;min-height:64px;gap:12px}
+.agent-main>.agent-header{grid-template-columns:minmax(240px,1fr) minmax(0,2fr) minmax(240px,1fr);height:46px;min-height:46px;gap:12px;padding:5px 24px;background:#f6f8fa;border-bottom:1px solid #e5e7eb;box-shadow:none}
 .agent-main>.agent-header>.agent-header-tools{grid-column:1;grid-row:1;justify-content:flex-start;flex-wrap:nowrap}
 .agent-main>.agent-header>.agent-title-button{grid-column:2;grid-row:1;text-align:center;margin:0}
 .agent-main>.agent-header>.agent-title-editor{grid-column:2;grid-row:1;margin:0}
 .agent-main>.agent-header>.agent-title-editor input{text-align:center}
 .agent-header-modes{grid-column:3;grid-row:1;display:flex;justify-content:flex-end;align-items:center;min-width:0}
 @container keeper-chat (max-width:1000px){
- .agent-main>.agent-header{grid-template-columns:minmax(0,1fr) auto;height:auto;min-height:78px;gap:4px 8px;padding:8px 16px}
+ .agent-main>.agent-header{grid-template-columns:minmax(0,1fr) auto;height:auto;min-height:68px;gap:2px 8px;padding:4px 16px}
  .agent-main>.agent-header>.agent-title-button,.agent-main>.agent-header>.agent-title-editor{grid-column:1/-1;grid-row:1}
  .agent-main>.agent-header>.agent-header-tools{grid-column:1;grid-row:2;flex-wrap:wrap}
  .agent-header-modes{grid-column:2;grid-row:2}
