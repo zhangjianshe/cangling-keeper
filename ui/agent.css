@@ -551,3 +551,9 @@
 .agent-profile-model-label{display:inline-flex;align-items:center;min-height:36px;padding:0 10px;color:#666670;font-size:13px;line-height:1.5;max-width:300px;overflow-wrap:anywhere;cursor:default}
 .agent-profile-model-label[hidden],.agent-compose-toolbar #agent-model-picker[hidden]{display:none!important}
 @media(max-width:560px){.agent-profile-model-label{max-width:180px}}
+
+.agent-compose-toolbar .profile-picker-wrap{height:36px;min-width:0}
+.agent-compose-toolbar #agent-profile-picker{height:36px;min-height:36px;max-width:170px;padding:0 10px;border:0;border-radius:8px;background-color:transparent;color:#666670;font:inherit;font-size:13px;cursor:pointer}
+.agent-compose-toolbar #agent-profile-picker:hover:not(:disabled){background-color:#edf4ef;color:#27883e}
+.agent-compose-toolbar #agent-profile-picker:focus-visible{outline:2px solid #84adff;outline-offset:2px}
+.agent-compose-toolbar #agent-profile-picker:disabled{opacity:.45;cursor:default}
