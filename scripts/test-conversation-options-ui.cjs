@@ -1,0 +1,11 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
+const {JSDOM}=require('jsdom'),dom=new JSDOM(fs.readFileSync('ui/index.html','utf8'),{runScripts:'outside-only'}),c=dom.getInternalVMContext(),d=dom.window.document;
+const dialog=d.querySelector('#agent-options-dialog');dialog.showModal=()=>dialog.open=true;dialog.close=()=>{dialog.open=false;dialog.onclose?.();};
+const calls=[];Object.assign(c,{$:s=>d.querySelector(s),agent:{selected:'s',identityEpoch:1,detail:{executionBudget:{maxRounds:16},contextPolicy:{workingBudget:65536,modelLimit:131072}}},notice(){},renderConversation(){},invoke:async(name,args)=>{calls.push([name,args]);return c.agent.detail;}});
+const source=fs.readFileSync('ui/agent.js','utf8'),start=source.indexOf('  function renderModel(config){'),end=source.indexOf('    if(!config)return;',start);vm.runInContext(source.slice(start,end)+'}',c);
+(async()=>{c.renderModel();assert.equal(d.querySelector('.agent-header-tools #agent-max-rounds'),null);assert.ok(dialog.querySelector('#agent-max-rounds'));assert.ok(dialog.querySelector('#agent-context-budget'));assert.ok(d.querySelector('.agent-compose-toolbar #agent-options-open'));
+d.querySelector('#agent-options-open').click();assert.ok(dialog.open);d.querySelector('#agent-max-rounds').value='24';await d.querySelector('#agent-max-rounds').onchange();assert.equal(calls[0][0],'agent_execution_budget');assert.equal(calls[0][1].maxRounds,24);
+d.querySelector('#agent-context-budget').value='131072';await d.querySelector('#agent-context-budget').onchange();assert.equal(calls[1][1].workingBudget,131072);
+c.agent.detail.modelPending=true;c.renderModel();assert.ok(d.querySelector('#agent-max-rounds').disabled);assert.ok(d.querySelector('#agent-context-budget').disabled);
+c.agent.selected='another';c.renderModel();assert.equal(dialog.open,false);d.querySelector('#agent-options-open').click();d.querySelector('#agent-options-done').click();assert.equal(dialog.open,false);
+c.agent.selected=null;c.renderModel();assert.ok(d.querySelector('#agent-options-open').disabled);dom.window.close();console.log('PASS conversation options: placement, editing APIs, pending lock and session switch');})().catch(e=>{console.error(e);process.exit(1);});
