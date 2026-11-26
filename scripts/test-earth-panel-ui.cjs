@@ -1,5 +1,5 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
-const dom=new JSDOM('<!doctype html><main id="agent-main"><header class="agent-header">会话标题</header><div class="agent-thread-body"></div><footer class="agent-compose-area"></footer></main>',{url:'http://localhost',runScripts:'outside-only'}),w=dom.window,d=w.document;
+const dom=new JSDOM('<!doctype html><main id="agent-main"><header class="agent-header">会话标题<div class="agent-header-tools"></div></header><div class="agent-thread-body"></div><footer class="agent-compose-area"></footer></main>',{url:'http://localhost',runScripts:'outside-only'}),w=dom.window,d=w.document;
 const streams=[];w.EventSource=class {constructor(url){this.url=url;this.listeners={};streams.push(this);}addEventListener(n,f){this.listeners[n]=f;}close(){this.closed=true;}emit(value){this.listeners.scene({data:JSON.stringify(value)});}};
 w.eval(fs.readFileSync('ui/earth-panel.js','utf8'));
 const scene={revision:0,camera:{longitude:108,latitude:34,height:1000000},layers:{source:0,boundaries:true,graticule:false},overlays:[{path:'demo.geojson',visible:true}],images:[{id:'image1',name:'preview.png',visible:true}]};
@@ -9,6 +9,9 @@ const flush=()=>new Promise(r=>setTimeout(r,0));
 function send(frame,data,origin='http://localhost',source=frame.contentWindow){w.dispatchEvent(new w.MessageEvent('message',{origin,source,data:{earth:true,...data}}));}
 (async()=>{
  await earth.open({id:'p',name:'Project'});const f=d.querySelector('iframe');assert(f);assert.equal(new URL(f.src).searchParams.get('backend'),'webgl2');assert.equal(d.querySelectorAll('.earth-toolbar input,.keeper-earth select,.earth-controls,.earth-capture').length,0);assert.deepEqual([...d.querySelectorAll('.earth-toolbar button')].map(b=>b.textContent),['图层（L）','仅地球','×','地球新标签页']);assert(!d.querySelector('#agent-main').classList.contains('hidden'));assert(d.querySelector('#agent-main .agent-content-workspace>.keeper-earth'));assert(d.querySelector('#agent-main>.agent-header'));assert(d.querySelector('.agent-chat-column>.agent-compose-area'));assert(d.querySelector('.agent-chat-column>.agent-thread-body'));assert.equal(d.querySelector('.earth-toolbar strong'),null);
+ assert.equal(d.querySelectorAll('.earth-mode-option').length,3);assert.equal(d.querySelector('[aria-label="对话并列"]').getAttribute('aria-pressed'),'true');
+ await earth.setDisplayMode('full',{id:'p',name:'Project'});assert.equal(d.querySelector('iframe'),f);assert(d.querySelector('.agent-chat-column').hidden);assert.equal(d.querySelector('[aria-label="全屏地球"]').getAttribute('aria-pressed'),'true');
+ await earth.setDisplayMode('split',{id:'p',name:'Project'});assert(!d.querySelector('.agent-chat-column').hidden);assert.equal(d.querySelector('iframe'),f);
  const commands=[];f.contentWindow.postMessage=msg=>{commands.push(msg);setTimeout(()=>send(f,{id:msg.id,result:msg.method==='get_view'?scene.camera:true}),0);};
  send(f,{event:'ready'},'https://attacker.invalid');await flush();assert.equal(commands.length,0);
  send(f,{event:'ready'},'http://localhost',w);await flush();assert.equal(commands.length,0);

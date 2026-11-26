@@ -614,3 +614,11 @@
 .agent-content-workspace .earth-toolbar{justify-content:flex-end;gap:6px;padding:6px 10px;min-height:40px;box-sizing:border-box}
 .agent-content-workspace .earth-close{order:9;width:30px;height:30px;padding:0;font-size:20px}
 @media(max-width:700px){.agent-content-workspace.has-earth{flex-direction:column}.agent-content-workspace.has-earth>.agent-chat-column{flex:1;min-height:180px;border-right:0;border-bottom:1px solid #e5e7eb}.agent-content-workspace.has-earth>.keeper-earth{flex:1;min-height:180px}}
+
+.earth-mode-options{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid #e2e8f0;border-radius:8px;flex:none}
+.earth-mode-option{display:inline-flex;align-items:center;justify-content:center;width:32px;height:30px;padding:6px;border:0;border-radius:5px;background:transparent;color:#737984;cursor:pointer}
+.earth-mode-option svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.earth-mode-option:hover{background:#edf4ef;color:#27883e}
+.earth-mode-option[aria-pressed=true]{background:#e8f0ff;color:#2563eb}
+.earth-mode-option:focus-visible{outline:2px solid #84adff;outline-offset:2px}
+.earth-toolbar>.earth-mode-legacy{display:none!important}
