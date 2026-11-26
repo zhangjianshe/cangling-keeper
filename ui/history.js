@@ -44,11 +44,11 @@
       group.addEventListener('toggle',()=>{if(!group.isConnected)return;opened.set(id,group.open);if(group.open && !projects.has(id))loadProject(id);});
       const page=projects.get(id);
       if(!page){if(group.open)queueMicrotask(()=>{if(group.isConnected&&group.open)loadProject(id);});return;}
-      if(!page.items.length)group.append(element('div','agent-nav-empty',page.loading?'加载中…':page.error?'加载失败':'暂无会话'));
+      if(!page.items.length)group.append(element('div','agent-nav-empty',page.loading?'加载中…':page.error?'暂时无法获取会话，请重试':'暂无会话'));
       if(page.error){group.append(button('重试',null,()=>{projects.delete(id);loadProject(id);},'history-load-more'));return;}
       pageButton(page,()=>morePage(page,{projectId:id},renderProjects),group);
     }
-    async function loadProject(id){if(projects.has(id))return;const rev=revision,epoch=agent.identityEpoch || 0,page={...empty(),loading:true};projects.set(id,page);renderProjects();try{const data=await invoke('agent_sessions',{state:'active',projectId:id,limit:30});if(rev!==revision || epoch!==(agent.identityEpoch || 0))return;Object.assign(page,data);sync();}catch(error){page.error=String(error);}finally{page.loading=false;if(rev===revision)renderProjects();}}
+    async function loadProject(id){if(projects.has(id))return;const rev=revision,epoch=agent.identityEpoch || 0,page={...empty(),loading:true};projects.set(id,page);renderProjects();try{const data=await invoke('agent_sessions',{state:'active',projectId:id,limit:30});if(rev!==revision || epoch!==(agent.identityEpoch || 0))return;Object.assign(page,data);page.error=null;sync();}catch(error){if(rev===revision && epoch===(agent.identityEpoch || 0))page.error=String(error);}finally{page.loading=false;if(rev===revision)renderProjects();}}
     function acceptBootstrap(data){
       if(lastOwner!==null && lastOwner!==data.accountKey)reset();lastOwner=data.accountKey;revision++;closeMenu();
       const selected=cache.get(agent.selected);cache=new Map(selected?[[selected.id,selected]]:[]);projects.clear();recent={items:data.sessions || [],...(data.sessionPage || {}),loading:false};pinned={items:data.pinnedSessions || recent.items.filter(s=>s.pinned),...(data.pinnedPage || {}),loading:false};sync();
