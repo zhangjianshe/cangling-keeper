@@ -587,3 +587,16 @@
 .agent-message.assistant .agent-message-body{color:#000}
 .agent-message.assistant .agent-message-body :is(h1,h2,h3,h4,h5,h6,blockquote,summary){color:#000}
 .agent-message.assistant .agent-message-body :not(pre)>code{color:#000}
+/* Keep long titles from competing with the header action group. */
+.agent-main{container-name:keeper-chat;container-type:inline-size}
+.agent-main>.agent-header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:16px;height:64px;min-height:64px;padding:8px 24px;box-sizing:border-box}
+.agent-main>.agent-header .agent-title-button{display:block;width:100%;min-width:0;max-width:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;font-size:14px}
+.agent-main>.agent-header .agent-header-tools{display:flex;flex-wrap:nowrap;gap:4px;justify-content:flex-end;min-width:0}
+.agent-main>.agent-header .agent-header-tools>button,.agent-main>.agent-header #thread-directory-toggle{white-space:nowrap;font-size:13px;border-radius:8px;padding:0 10px;height:34px;min-height:34px}
+.agent-main>.agent-header .agent-header-tools>button:hover:not(:disabled){background:#edf4ef;color:#27883e}
+@container keeper-chat (max-width:760px){
+ .agent-main>.agent-header{grid-template-columns:minmax(0,1fr);gap:4px;height:auto;min-height:78px;padding:8px 16px}
+ .agent-main>.agent-header .agent-header-tools{justify-content:flex-start;flex-wrap:wrap;gap:2px}
+ .agent-main>.agent-header .agent-title-button{max-width:none}
+ .agent-main>.agent-header .agent-header-tools>button,.agent-main>.agent-header #thread-directory-toggle{font-size:12px;padding:0 8px}
+}
