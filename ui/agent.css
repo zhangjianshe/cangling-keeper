@@ -572,3 +572,6 @@
 .agent-profile-option{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;padding:10px;border:0;border-radius:8px;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer;overflow-wrap:anywhere}
 .agent-profile-option:hover,.agent-profile-option:focus-visible{background:#edf4ef;color:#27883e}
 .agent-profile-option[aria-pressed=true]{background:#f2f2f4}
+
+.agent-compose-toolbar #agent-profile-picker{align-self:center;line-height:1;margin:0;vertical-align:middle}
+#agent-profile-picker .profile-picker-chevron{display:block;width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
