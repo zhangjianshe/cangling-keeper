@@ -16,10 +16,30 @@
  };
  window.createKeeperProfiles=({agent,invoke,element,notice,select,ensureSession,showConversation,closeAccountMenu=()=>{}})=>{
   const modelControl=document.querySelector('.agent-compose-toolbar .agent-model-control');
-  const picker=element('select','btn');picker.id='agent-profile-picker';picker.setAttribute('aria-label','会话智能体');
+  const picker=element('button','btn');picker.type='button';picker.id='agent-profile-picker';picker.setAttribute('aria-label','会话智能体');
   const manage=element('button');manage.id='agent-menu-profiles';manage.type='button';manage.setAttribute('role','menuitem');
   const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');for(const [key,value] of Object.entries({class:'agent-menu-icon',viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))icon.setAttribute(key,value);
   const shape=document.createElementNS(icon.namespaceURI,'path');shape.setAttribute('d','M12 3v3M9 3h3M5 6h14v14H5ZM2 10v6M22 10v6M8 11h1M15 11h1M9 16h6');icon.append(shape);manage.append(icon,element('span','','管理智能体'));document.querySelector('#agent-menu-settings')?.after(manage);const pickerWrap=element('span','profile-picker-wrap');pickerWrap.append(picker);modelControl.before(pickerWrap);
+  picker.setAttribute('aria-haspopup','dialog');picker.setAttribute('aria-expanded','false');picker.setAttribute('aria-controls','agent-profile-popup');
+  const popup=element('div','agent-profile-popup');popup.id='agent-profile-popup';popup.hidden=true;popup.setAttribute('role','dialog');popup.setAttribute('aria-label','选择智能体');
+  const popupHead=element('div','agent-profile-popup-head'),popupTitle=element('strong','','选择智能体'),configure=element('button','btn','配置智能体');configure.type='button';popupHead.append(popupTitle,configure);
+  const filter=element('input');filter.type='search';filter.placeholder='搜索智能体';filter.setAttribute('aria-label','搜索智能体');const choicesList=element('div','agent-profile-options');popup.append(popupHead,filter,choicesList);pickerWrap.append(popup);
+  let popupSession=null,popupEpoch=null;
+  function closePopup(focus=false){popup.hidden=true;picker.setAttribute('aria-expanded','false');if(focus)picker.focus();}
+  function renderChoices(){
+    choicesList.replaceChildren();const query=filter.value.trim().toLocaleLowerCase();
+    for(const p of [{id:'',name:'通用助手'},...(agent.detail.agentProfiles||[])].filter(p=>p.name.toLocaleLowerCase().includes(query))){
+      const item=element('button','agent-profile-option');item.type='button';item.setAttribute('aria-pressed',String(p.id===(agent.detail.agentProfile?.id||'')));item.append(element('span','',p.name),element('span','',p.id===(agent.detail.agentProfile?.id||'')?'✓':''));
+      item.onclick=()=>{if(popupSession!==agent.selected||popupEpoch!==agent.identityEpoch||agent.detail.modelPending)return;picker.value=p.id;closePopup(true);picker.onchange();};choicesList.append(item);
+    }
+    if(!choicesList.children.length)choicesList.append(element('p','hint','没有匹配的智能体'));
+  }
+  picker.onclick=()=>{if(picker.disabled)return;if(!popup.hidden){closePopup(true);return;}popupSession=agent.selected;popupEpoch=agent.identityEpoch;filter.value='';renderChoices();popup.hidden=false;picker.setAttribute('aria-expanded','true');filter.focus();};
+  filter.oninput=renderChoices;
+  configure.onclick=()=>{closePopup();manage.click();};
+  document.addEventListener('click',e=>{if(!pickerWrap.contains(e.target))closePopup();});
+  popup.onkeydown=e=>{if(e.key==='Escape'){e.preventDefault();e.stopPropagation();closePopup(true);}else if(e.key==='ArrowDown'||e.key==='ArrowUp'){const items=[filter,...choicesList.querySelectorAll('button')],i=items.indexOf(document.activeElement);e.preventDefault();items[(i+(e.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();}};
+
   const modal=element('section','profiles-page hidden');modal.id='agent-profiles-page';modal.setAttribute('aria-label','智能体管理');
   const head=element('header','keeper-settings-header'),title=element('h1','','智能体管理'),close=element('button','btn','← 返回会话');close.type='button';head.append(title,close);
   const layout=element('div','profiles-layout'),nav=element('nav','profiles-navigation'),search=element('input'),list=element('div','profiles-list'),add=element('button','btn','＋ 新建智能体');nav.setAttribute('aria-label','智能体列表');search.type='search';search.placeholder='搜索智能体';search.setAttribute('aria-label','搜索智能体');add.type='button';nav.append(add,search,list);
@@ -78,7 +98,9 @@
   manage.onclick=()=>{closeAccountMenu();open().catch(e=>notice(String(e)));};add.onclick=()=>{if(options)edit();};
   form.onsubmit=async e=>{e.preventDefault();if(!valid()||!options||save.disabled)return;if(iconBusy){status.textContent='请等待图标处理完成';return;}save.disabled=true;nav.inert=fields.inert=true;const target=session,ticket=sequence;try{const p=await invoke('agent_profile_save',{sessionId:target,id:current,name:name.value,icon:draftIcon,systemPrompt:prompt.value,modelId:model.value,skills:[...skills.querySelectorAll('input:checked')].map(x=>x.value).filter(value=>!value.startsWith('system:')),mcpTools:[...mcp.querySelectorAll('input:checked')].map(x=>x.value)});if(ticket!==sequence||!valid())return;const fresh=await invoke('agent_profile_options',{sessionId:target});if(ticket!==sequence||!valid())return;options=fresh;edit(p.id?p:{...options.profiles.find(x=>x.id===current),name:name.value},false);await select(target);if(valid())status.textContent='已保存，可在输入框底部选择此智能体。';}catch(e){if(ticket===sequence&&valid())status.textContent=String(e);}finally{if(ticket===sequence){save.disabled=false;nav.inert=fields.inert=false;}}};
   picker.onchange=async()=>{const target=agent.selected,identity=agent.identityEpoch;picker.disabled=true;try{await invoke('agent_profile_select',{sessionId:target,id:picker.value});if(target===agent.selected&&identity===agent.identityEpoch)await select(target);}catch(e){if(target===agent.selected&&identity===agent.identityEpoch){update();notice(String(e));}}};
-  function update(){if(!modal.classList.contains('hidden')&&!valid()){hide();showConversation?.();}picker.replaceChildren(element('option','','通用助手'));picker.firstChild.value='';for(const p of agent.detail.agentProfiles||[]){const o=element('option','',p.name);o.value=p.id;picker.append(o);}picker.value=agent.detail.agentProfile?.id||'';picker.disabled=!agent.selected||!!agent.detail.modelPending;}
-  return {open,update,hide,reset(){const visible=!modal.classList.contains('hidden');hide();if(visible)showConversation?.();picker.replaceChildren();picker.disabled=true;}};
+  function update(){if(!modal.classList.contains('hidden')&&!valid()){hide();showConversation?.();}picker.value=agent.detail.agentProfile?.id||'';picker.replaceChildren(element('span','',agent.detail.agentProfile?.name||'通用助手'),element('span','profile-picker-chevron','⌄'));
+    if(!popup.hidden){if(popupSession!==agent.selected||popupEpoch!==agent.identityEpoch||agent.detail.modelPending)closePopup();else renderChoices();}
+    picker.disabled=!agent.selected||!!agent.detail.modelPending;}
+  return {open,update,hide,reset(){closePopup();const visible=!modal.classList.contains('hidden');hide();if(visible)showConversation?.();picker.replaceChildren();picker.disabled=true;}};
  };
 })();
