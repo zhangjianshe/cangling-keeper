@@ -15,11 +15,13 @@ if not dry_run and (os.geteuid() != 0 or not os.environ.get("SUDO_USER") or os.e
     sys.exit("请从普通用户运行 cangling-keeper install-service")
 user = pwd.getpwnam(os.environ["SUDO_USER"]) if os.environ.get("SUDO_USER") else pwd.getpwuid(os.getuid())
 source = pathlib.Path(args.binary).resolve(strict=True)
-exe = pathlib.Path("/opt/cangling-keeper/cangling-keeper")
-repo = exe.parent
+repo = pathlib.Path("/opt/cangling-keeper")
+app = repo / "app"
+exe = app / "cangling-keeper"
+legacy = repo / "cangling-keeper"
 command_link = pathlib.Path("/usr/local/bin/cangling-keeper")
 if command_link.exists() or command_link.is_symlink():
-    if not command_link.is_symlink() or command_link.readlink() != exe:
+    if not command_link.is_symlink() or command_link.readlink() not in (legacy, exe):
         sys.exit("命令入口已存在且不是 Keeper 安装链接，未覆盖："+str(command_link))
 def quote(s): return '"' + str(s).replace("\\", "\\\\").replace('"', '\\"').replace("%", "%%") + '"'
 files = {}
@@ -41,7 +43,7 @@ After=cangling-keeper-http.socket cangling-keeper-https.socket
 Type=simple
 User={user.pw_name}
 Group={user.pw_gid}
-WorkingDirectory={str(repo).replace("%", "%%")}
+WorkingDirectory={str(app).replace("%", "%%")}
 Environment={quote('HOME='+user.pw_dir)}
 Environment={quote('XDG_RUNTIME_DIR=/run/user/'+str(user.pw_uid))}
 Environment={quote('DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/'+str(user.pw_uid)+'/bus')}
@@ -56,7 +58,7 @@ KillMode=control-group
 files["/etc/polkit-1/rules.d/49-cangling-keeper-local.rules"] = """polkit.addRule(function(action, subject) {
   if (action.id === "org.freedesktop.systemd1.manage-units" && subject.user === USER &&
       ["cangling-keeper-local.service", "cangling-keeper-http.socket", "cangling-keeper-https.socket"].indexOf(action.lookup("unit")) >= 0 &&
-      ["start", "stop", "restart"].indexOf(action.lookup("verb")) >= 0) return polkit.Result.YES;
+      ["start", "stop", "restart", "reset-failed"].indexOf(action.lookup("verb")) >= 0) return polkit.Result.YES;
 });
 """.replace("USER", json.dumps(user.pw_name))
 # Validate the complete generated unit set before changing system files.
@@ -70,7 +72,7 @@ with tempfile.TemporaryDirectory(prefix="keeper-systemd-check-") as staging:
             units.append(str(path))
     subprocess.run(['systemd-analyze', 'verify']+units, check=True)
 if dry_run:
-    print("配置预检通过；程序目标 /opt/cangling-keeper/cangling-keeper，命令入口 /usr/local/bin/cangling-keeper；未修改系统配置。")
+    print("配置预检通过；程序目标 /opt/cangling-keeper/app/cangling-keeper（用户可更新），命令入口 /usr/local/bin/cangling-keeper；未修改系统配置。")
     sys.exit(0)
 backup=pathlib.Path('/var/backups/keeper-socket-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S'))
 backup.mkdir(mode=0o700)
@@ -79,18 +81,30 @@ if repo.is_symlink(): sys.exit("安装目录不能是符号链接")
 repo.mkdir(mode=0o755, parents=True, exist_ok=True)
 if repo.stat().st_uid != 0 or repo.stat().st_mode & 0o022:
     sys.exit("安装目录必须由 root 拥有且不可由其他用户写入")
-if exe.exists(): shutil.copyfile(exe, backup/'cangling-keeper')
-fd, staged = tempfile.mkstemp(prefix='.keeper-', dir=repo)
+if legacy.is_symlink() and legacy.resolve() != exe.resolve():
+    sys.exit("旧程序入口指向未知目标，未覆盖："+str(legacy))
+if legacy.exists(): shutil.copyfile(legacy, backup/'cangling-keeper')
+if app.is_symlink(): sys.exit("应用目录不能是符号链接")
+app.mkdir(mode=0o755, exist_ok=True)
+if app.stat().st_uid not in (0, user.pw_uid) or app.stat().st_mode & 0o022:
+    sys.exit("应用目录必须属于安装用户且不可由其他用户写入")
+os.chown(app, user.pw_uid, user.pw_gid); app.chmod(0o755)
+fd, staged = tempfile.mkstemp(prefix='.keeper-', dir=app)
 try:
     with os.fdopen(fd, 'wb') as output, source.open('rb') as input_file:
         shutil.copyfileobj(input_file, output)
         output.flush(); os.fsync(output.fileno())
+    os.chown(staged, user.pw_uid, user.pw_gid)
     os.chmod(staged, 0o755)
     os.replace(staged, exe)
 finally:
     if os.path.exists(staged): os.unlink(staged)
 command_link.parent.mkdir(parents=True, exist_ok=True)
-if not command_link.is_symlink(): command_link.symlink_to(exe)
+# Keep the previous /opt entry point compatible without making its parent writable.
+if not legacy.is_symlink():
+    if legacy.exists(): legacy.unlink()
+    legacy.symlink_to(exe)
+if not command_link.is_symlink(): command_link.symlink_to(legacy)
 for name, content in files.items():
     target=pathlib.Path(name)
     if target.exists(): shutil.copy2(target, backup/target.name)

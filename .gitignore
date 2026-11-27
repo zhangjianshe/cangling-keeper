@@ -3,3 +3,7 @@
 node_modules
 dist
 /config
+
+# Python test/evaluation bytecode
+__pycache__/
+*.py[cod]

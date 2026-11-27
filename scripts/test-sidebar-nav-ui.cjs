@@ -21,7 +21,7 @@ async function bootstrap(){bootstraps++;const recent=page({}),pinned=page({pinne
 Object.assign(c,{$:selector=>d.querySelector(selector),agent,invoke,bootstrap,notice:message=>notices.push(message),showConversation(){},select:async()=>{selections++;},newSession(){},uiConfirm:async()=>true});
 vm.runInContext(source.slice(source.indexOf('  function element('),source.indexOf('  function notice(')),c);
 vm.runInContext(source.slice(source.indexOf('  function sessionRow('),source.indexOf("  $('#agent-session-title').onclick=")),c);
-vm.runInContext(source.slice(source.indexOf('  function renderProjects('),source.indexOf('  async function switchProject(')),c);
+vm.runInContext(source.slice(source.indexOf('  function projectRow('),source.indexOf('  async function switchProject(')),c);
 vm.runInContext(fs.readFileSync('ui/history.js','utf8'),c);
 history=c.createKeeperHistory({agent,invoke,element:c.element,notice:c.notice,bootstrap,select:c.select,showConversation:c.showConversation,renderProjects:()=>c.renderProjects(),renderSessions:()=>c.renderSessions(),renderConversation(){},clearSelected(){agent.selected=null;}});agent.history=history;
 const tick=()=>new Promise(resolve=>setTimeout(resolve,0)),flush=async()=>{await tick();await tick();await tick();};

@@ -4,6 +4,7 @@ use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
 
 pub(crate) fn initialize(store: &Store) -> Result<(), String> {
+    crate::agent_project_trash::initialize(store)?;
     let columns = store
         .conn
         .prepare("PRAGMA table_info(agent_sessions)")
@@ -39,7 +40,7 @@ fn from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
 }
 pub(crate) fn info(store: &Store, session: &str) -> Result<Value, String> {
     let owner = crate::agent_account::owner(store)?;
-    sql(store.conn.query_row("SELECT id,title,updated_at,project_id,pinned,archived_at,deleted_at FROM agent_sessions WHERE id=?1 AND owner_key=?2",params![session,owner],from_row).optional())?
+    sql(store.conn.query_row("SELECT id,title,updated_at,project_id,pinned,archived_at,deleted_at FROM agent_sessions WHERE id=?1 AND owner_key=?2 AND NOT EXISTS(SELECT 1 FROM agent_project_trash t WHERE t.project_id=agent_sessions.project_id)",params![session,owner],from_row).optional())?
         .ok_or_else(||"会话不存在或不属于当前账号".into())
 }
 pub(crate) fn require_active(store: &Store, session: &str) -> Result<(), String> {
@@ -131,7 +132,7 @@ pub(crate) fn list(store: &Store, args: &Value) -> Result<Value, String> {
         _ => "s.deleted_at>0",
     };
     let statement = format!(
-        "SELECT s.id,s.title,s.updated_at,s.project_id,s.pinned,s.archived_at,s.deleted_at FROM agent_sessions s WHERE s.owner_key=?1 AND {state_filter} AND (?2='' OR s.project_id=?2) AND (?3 IS NULL OR s.pinned=?3) AND (?4='' OR instr(lower(s.title),lower(?4))>0 OR EXISTS(SELECT 1 FROM agent_messages m WHERE m.session_id=s.id AND instr(lower(m.content),lower(?4))>0)) AND (?5 IS NULL OR s.updated_at<?5 OR (s.updated_at=?5 AND s.id<?6)) ORDER BY s.updated_at DESC,s.id DESC LIMIT ?7"
+        "SELECT s.id,s.title,s.updated_at,s.project_id,s.pinned,s.archived_at,s.deleted_at FROM agent_sessions s WHERE s.owner_key=?1 AND NOT EXISTS(SELECT 1 FROM agent_project_trash t WHERE t.project_id=s.project_id) AND {state_filter} AND (?2='' OR s.project_id=?2) AND (?3 IS NULL OR s.pinned=?3) AND (?4='' OR instr(lower(s.title),lower(?4))>0 OR EXISTS(SELECT 1 FROM agent_messages m WHERE m.session_id=s.id AND instr(lower(m.content),lower(?4))>0)) AND (?5 IS NULL OR s.updated_at<?5 OR (s.updated_at=?5 AND s.id<?6)) ORDER BY s.updated_at DESC,s.id DESC LIMIT ?7"
     );
     let mut stmt = sql(store.conn.prepare(&statement))?;
     let mut items = sql(sql(stmt.query_map(
@@ -170,13 +171,41 @@ pub(crate) fn list(store: &Store, args: &Value) -> Result<Value, String> {
     };
     Ok(json!({"items":items,"hasMore":has_more,"nextCursor":cursor}))
 }
-fn require_idle(store: &Store, session: &str) -> Result<(), String> {
+pub(crate) fn require_idle(store: &Store, session: &str) -> Result<(), String> {
     let busy:bool=sql(store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1) OR EXISTS(SELECT 1 FROM agent_runs WHERE session_id=?1 AND status IN ('running','approved','pending_approval')) OR EXISTS(SELECT 1 FROM agent_tasks WHERE session_id=?1 AND status IN ('running','model','tool','approval'))",[session],|r|r.get(0)))?;
     if busy {
         Err("当前会话仍在生成回复或执行工具，请先停止或等待完成。".into())
     } else {
         Ok(())
     }
+}
+// Caller must authorize the session or shared project and hold a transaction.
+pub(crate) fn purge_records(store: &Store, session: &str) -> Result<(), String> {
+    sql(store.conn.execute("DELETE FROM agent_message_attachments WHERE attachment_id IN (SELECT id FROM agent_attachments WHERE session_id=?1) OR message_id IN (SELECT id FROM agent_messages WHERE session_id=?1)",[session]))?;
+    sql(store.conn.execute("DELETE FROM agent_attachments WHERE session_id=?1",[session]))?;
+    sql(store.conn.execute("DELETE FROM agent_reviews WHERE run_id IN (SELECT id FROM agent_runs WHERE session_id=?1)",[session]))?;
+    sql(store.conn.execute("DELETE FROM agent_model_contexts WHERE message_id IN (SELECT id FROM agent_messages WHERE session_id=?1)",[session]))?;
+    for table in [
+        "agent_drafts",
+        "agent_mcp_images",
+        "agent_reply_versions",
+        "agent_runs",
+        "agent_events",
+        "agent_tasks",
+        "agent_context_summaries",
+        "agent_model_pending",
+        "agent_messages",
+    ] {
+        sql(store.conn.execute(
+            &format!("DELETE FROM {table} WHERE session_id=?1"),
+            [session],
+        ))?;
+    }
+    sql(store.conn.execute("DELETE FROM settings WHERE key=?1",[format!("agent_profile:{session}")]))?;
+    sql(store
+        .conn
+        .execute("DELETE FROM agent_sessions WHERE id=?1", [session]))?;
+    Ok(())
 }
 pub(crate) fn mutate(store: &Store, command: &str, args: &Value) -> Result<Value, String> {
     let session = args["sessionId"]
@@ -220,28 +249,7 @@ pub(crate) fn mutate(store: &Store, command: &str, args: &Value) -> Result<Value
             if before["deletedAt"].as_i64().unwrap() == 0 {
                 return Err("只能永久删除回收站中的会话。".into());
             }
-            crate::agent_attachments::purge(store,session)?;
-            sql(store.conn.execute("DELETE FROM agent_reviews WHERE run_id IN (SELECT id FROM agent_runs WHERE session_id=?1)",[session]))?;
-            sql(store.conn.execute("DELETE FROM agent_model_contexts WHERE message_id IN (SELECT id FROM agent_messages WHERE session_id=?1)",[session]))?;
-            for table in [
-                "agent_drafts",
-                "agent_mcp_images",
-                "agent_reply_versions",
-                "agent_runs",
-                "agent_events",
-                "agent_tasks",
-                "agent_context_summaries",
-                "agent_model_pending",
-                "agent_messages",
-            ] {
-                sql(store.conn.execute(
-                    &format!("DELETE FROM {table} WHERE session_id=?1"),
-                    [session],
-                ))?;
-            }
-            sql(store
-                .conn
-                .execute("DELETE FROM agent_sessions WHERE id=?1", [session]))?;
+            purge_records(store, session)?;
             sql(tx.commit())?;
             return Ok(json!({"id":session,"purged":true}));
         }

@@ -17,6 +17,20 @@ tests=[
  ['node','scripts/test-account-sessions-ui.cjs'],
  ['node','scripts/test-history-backup-ui.cjs'],
  ['node','scripts/test-drafts-ui.cjs'],
+ ['python3','scripts/test-install-socket-activation.py'],
+ ['python3','scripts/test-project-management-http.py'],
+ ['python3','scripts/test-project-purge-http.py'],
+ ['python3','scripts/test-context-http.py'],
+ ['python3','scripts/test-react-http.py'],
+ ['node','scripts/test-project-browser-ui.cjs'],
+ ['node','scripts/test-project-management-ui.cjs'],
+ ['node','scripts/test-project-trash-ui.cjs'],
+ ['node','scripts/test-new-project-session-ui.cjs'],
+ ['node','scripts/test-session-selection-ui.cjs'],
+ ['node','scripts/test-sidebar-nav-ui.cjs'],
+ ['node','scripts/test-notice-timeout-ui.cjs'],
+ ['node','scripts/test-context-budget-ui.cjs'],
+ ['node','scripts/test-conversation-options-ui.cjs'],
 ]
 report={'platform':sys.platform,'tests':[],'notVerified':['Windows native upgrade/runtime','ARM native upgrade/runtime','macOS runtime','Production CIS migration','Live provider connectivity']}
 try:

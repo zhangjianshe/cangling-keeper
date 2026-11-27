@@ -114,7 +114,7 @@ mod tests {
 
 // The copied helper runs independently of the web server so Windows can release
 // its executable lock before replacement. No shell receives file paths or args.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct InstallPlan {
     pid: u32,
     target: std::path::PathBuf,
@@ -125,6 +125,8 @@ struct InstallPlan {
     health_url: String,
     latest: String,
     result: std::path::PathBuf,
+    #[serde(default)]
+    managed_service: Option<String>,
 }
 static UPDATING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -222,6 +224,7 @@ async fn prepare_inner(
             args: std::env::args().skip(1).collect(), cwd: std::env::current_dir().map_err(|e| e.to_string())?,
             health_url: format!("{}/api/health", crate::web::home_url_from_args()?),
             latest: status.latest.clone(), result: result_path,
+            managed_service: managed_service()?,
         };
         write_result(&plan, "prepared", "下载验证完成，准备重启");
         let path = stage.join("plan.json");
@@ -229,15 +232,161 @@ async fn prepare_inner(
         let helper = stage.join(if cfg!(windows) { "helper.exe" } else { "helper" });
         std::fs::copy(&target, &helper).map_err(|e| e.to_string())?;
         progress(serde_json::json!({"phase":"install"}));
-        std::process::Command::new(helper).arg("--apply-self-update").arg(&path)
-            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
-            .spawn().map_err(|e| format!("无法启动更新辅助进程：{e}"))?;
+        launch_helper(&helper,&path,plan.managed_service.is_some()).await?;
         Ok((path, status.latest))
     }.await;
     if result.is_err() {
         let _ = std::fs::remove_dir_all(stage);
     }
     result
+}
+
+const SERVICE: &str = "cangling-keeper-local.service";
+fn managed_service()->Result<Option<String>,String>{
+    match std::env::var("KEEPER_SYSTEMD_SERVICE") {
+        Ok(value) if value==SERVICE=>Ok(Some(value)),
+        Ok(_)=>Err("不支持的 systemd 服务配置".into()),
+        Err(std::env::VarError::NotPresent)=>Ok(None),
+        Err(_)=>Err("无效的 systemd 服务配置".into()),
+    }
+}
+async fn launch_helper(helper:&std::path::Path,path:&std::path::Path,managed:bool)->Result<(),String>{
+    if managed {
+        // A child of the main service is killed by KillMode=control-group.
+        // The user manager runs this helper in a separate, unprivileged cgroup.
+        let mut command=tokio::process::Command::new("systemd-run");
+        command.kill_on_drop(true).args(["--user","--quiet","--collect"])
+            .arg(format!("--unit=cangling-keeper-update-{}",uuid::Uuid::new_v4()))
+            .arg("--").arg(helper).arg("--apply-self-update").arg(path);
+        let output=tokio::time::timeout(Duration::from_secs(15),command.output()).await
+            .map_err(|_|"启动用户更新服务超时；原服务保持不变")?
+            .map_err(|e|format!("无法启动用户更新服务：{e}"))?;
+        if !output.status.success(){return Err("无法启动用户更新服务，请检查当前用户的 systemd 会话；原服务保持不变".into());}
+    } else {
+        std::process::Command::new(helper).arg("--apply-self-update").arg(path)
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+            .spawn().map_err(|e|format!("无法启动更新辅助进程：{e}"))?;
+    }
+    Ok(())
+}
+#[cfg(target_os="linux")]
+fn service_command(verb:&str)->Result<(),String>{
+    let output=std::process::Command::new("systemctl").args(["--no-ask-password",verb,SERVICE])
+        .output().map_err(|e|format!("服务控制失败：{e}"))?;
+    if output.status.success(){Ok(())}else{
+        let detail=String::from_utf8_lossy(&output.stderr).trim().chars().take(1200).collect::<String>();
+        Err(format!("服务 {verb} 失败：{detail}"))
+    }
+}
+#[cfg(target_os="linux")]
+fn install_managed(plan:&InstallPlan)->Result<(),String>{
+    install_managed_with(plan,service_command,managed_health,Duration::from_secs(1))
+}
+#[cfg(target_os="linux")]
+fn install_managed_with(plan:&InstallPlan,mut control:impl FnMut(&str)->Result<(),String>,mut health:impl FnMut(&InstallPlan)->Result<bool,String>,delay:Duration)->Result<(),String>{
+    use fs2::FileExt;
+    let lock=std::fs::OpenOptions::new().create(true).truncate(false).write(true)
+        .open(plan.target.with_file_name(".keeper-update.lock")).map_err(|e|e.to_string())?;
+    lock.try_lock_exclusive().map_err(|_|"已有程序更新正在执行")?;
+    // Let apply_app_update's HTTP response leave the old server first.
+    std::thread::sleep(delay);
+    control("stop")?;
+    write_result(plan,"restarting","正在替换程序并由 systemd 重启");
+    if let Err(error)=std::fs::rename(&plan.target,&plan.backup){
+        let _=control("start");return Err(format!("无法备份原程序：{error}"));
+    }
+    let result:Result<(),String>=(||{
+        std::fs::rename(&plan.staged,&plan.target).map_err(|e|e.to_string())?;
+        // An inactive unit may already be unloaded; reset-failed then returns
+        // "not loaded". Start and PID/version health checks remain mandatory.
+        let _=control("reset-failed");
+        control("start")?;
+        if !health(plan)? {return Err("新程序启动验证失败".into());}
+        Ok(())
+    })();
+    if let Err(error)=result {
+        // Stop restart attempts before restoring the executable. Socket units
+        // follow the service through PartOf and are reopened by its Requires.
+        control("stop")?;
+        let _=std::fs::remove_file(&plan.target);
+        std::fs::rename(&plan.backup,&plan.target).map_err(|e|format!("{error}；恢复原程序失败：{e}"))?;
+        let _=control("reset-failed");control("start")?;
+        // Rollback is not complete until the original service is healthy.
+        let old=InstallPlan{latest:String::new(),..plan.clone()};
+        if !health(&old)? {return Err(format!("{error}；已恢复文件但原服务未通过健康检查"));}
+        write_result(plan,"rolled_back",&format!("{error}，已恢复原程序"));return Ok(());
+    }
+    write_result(plan,"complete","程序更新成功（systemd 服务已验证）");Ok(())
+}
+#[cfg(target_os="linux")]
+fn managed_health(plan:&InstallPlan)->Result<bool,String>{
+    tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e|e.to_string())?.block_on(async {
+        let client=reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(1)).build().map_err(|e|e.to_string())?;
+        let mut good=0;
+        for _ in 0..60 {
+            let output=std::process::Command::new("systemctl").args(["show",SERVICE,"-p","MainPID","--value"]).output().map_err(|e|e.to_string())?;
+            let pid=String::from_utf8_lossy(&output.stdout).trim().parse::<u64>().unwrap_or(0);
+            if !output.status.success() || pid==0 {return Ok(false);}
+            let mut matches=false;
+            if let Ok(response)=client.get(&plan.health_url).send().await {
+                if let Ok(body)=response.json::<serde_json::Value>().await {
+                    matches=body["ok"]==true && body["pid"].as_u64()==Some(pid)
+                        && (plan.latest.is_empty() || body["version"].as_str()==Some(plan.latest.trim_start_matches('v')));
+                }
+            }
+            good=if matches {good+1}else{0};if good>=2{return Ok(true);}
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        Ok(false)
+    })
+}
+#[cfg(target_os="linux")]
+pub(crate) async fn update_local_service(source:&std::path::Path)->Result<(),String>{
+    use std::os::unix::fs::{MetadataExt,PermissionsExt};
+    let target=std::path::PathBuf::from("/opt/cangling-keeper/app/cangling-keeper");
+    let parent=target.parent().unwrap();
+    if std::fs::metadata(parent).map(|m|m.uid()).ok()!=Some(unsafe {libc::geteuid()}) {
+        return Err("请先由管理员运行 install-service 迁移到用户可更新的安装目录".into());
+    }
+    let metadata=std::fs::metadata(source).map_err(|e|format!("无法读取构建程序：{e}"))?;
+    if !metadata.is_file() || metadata.len()>128*1024*1024 {return Err("构建程序必须是最多 128 MiB 的普通文件".into());}
+    let bytes=std::fs::read(source).map_err(|e|format!("无法读取构建程序：{e}"))?;
+    if bytes.len()>128*1024*1024 {return Err("更新程序超过大小限制".into());}
+    validate_program(&bytes,std::env::consts::OS,std::env::consts::ARCH)?;
+    let stage=parent.join(format!(".keeper-update-{}",uuid::Uuid::new_v4()));
+    std::fs::create_dir(&stage).map_err(|e|e.to_string())?;
+    std::fs::set_permissions(&stage,std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;
+    let prepared=async {
+        let staged=stage.join("new");std::fs::write(&staged,&bytes).map_err(|e|e.to_string())?;
+        std::fs::set_permissions(&staged,std::fs::Permissions::from_mode(0o755)).map_err(|e|e.to_string())?;
+        let mut probe=tokio::process::Command::new(&staged);probe.kill_on_drop(true).arg("--self-update-probe");
+        let output=tokio::time::timeout(Duration::from_secs(15),probe.output()).await.map_err(|_|"新程序运行验证超时")?.map_err(|e|e.to_string())?;
+        let text=String::from_utf8_lossy(&output.stdout);
+        let latest=text.trim().strip_prefix("keeper-update-probe:").filter(|_|output.status.success()).ok_or("新程序运行验证失败")?;
+        let latest=parse_version(latest)?;
+        let listen=std::process::Command::new("systemctl").args(["show","cangling-keeper-http.socket","-p","Listen","--value"]).output().map_err(|e|e.to_string())?;
+        let text=String::from_utf8_lossy(&listen.stdout);
+        let address=text.split_whitespace().next().ok_or("HTTP socket 不可用")?.parse::<std::net::SocketAddr>().map_err(|_|"HTTP socket 地址无效")?;
+        if !listen.status.success() || !address.ip().is_loopback(){return Err("需要本机 Keeper HTTP socket".into());}
+        let plan=InstallPlan{pid:0,target:target.clone(),staged,backup:stage.join("previous"),args:Vec::new(),cwd:parent.into(),health_url:format!("http://{address}/api/health"),latest,result:stage.join("result.json"),managed_service:Some(SERVICE.into())};
+        write_result(&plan,"prepared","本地构建已验证");
+        let path=stage.join("plan.json");std::fs::write(&path,serde_json::to_vec(&plan).unwrap()).map_err(|e|e.to_string())?;
+        let helper=stage.join("helper");std::fs::copy(std::env::current_exe().map_err(|e|e.to_string())?,&helper).map_err(|e|e.to_string())?;
+        launch_helper(&helper,&path,true).await?;
+        Ok::<_,String>(plan.result)
+    }.await;
+    let result=match prepared {Ok(path)=>path,Err(error)=>{let _=std::fs::remove_dir_all(&stage);return Err(error)}};
+    for _ in 0..360 {
+        if let Ok(bytes)=std::fs::read(&result){if let Ok(value)=serde_json::from_slice::<serde_json::Value>(&bytes){
+            match value["phase"].as_str(){
+                Some("complete")=>{println!("Keeper 已更新并通过服务健康检查。备份：{}",stage.join("previous").display());return Ok(())},
+                Some("error"|"rolled_back")=>return Err(value["message"].as_str().unwrap_or("更新失败").to_owned()),
+                _=>{}
+            }
+        }}
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Err(format!("更新服务未在时限内报告结果，请检查 {}",result.display()))
 }
 
 fn validate_program(bytes: &[u8], os: &str, arch: &str) -> Result<(), String> {
@@ -282,6 +431,13 @@ fn run_helper(path: &std::path::Path) -> Result<(), String> {
 }
 
 fn install_and_restart(plan: &InstallPlan) -> Result<(), String> {
+    if let Some(service)=&plan.managed_service {
+        if service!=SERVICE {return Err("不支持的 systemd 服务".into());}
+        #[cfg(target_os="linux")]
+        {return install_managed(plan);}
+        #[cfg(not(target_os="linux"))]
+        {return Err("此平台不支持 systemd 更新".into());}
+    }
     #[cfg(windows)]
     {
         let script = format!(
@@ -471,6 +627,7 @@ mod install_tests {
                 health_url: format!("http://{address}/api/health"),
                 latest: "v9.9.9".into(),
                 result: root.join("result.json"),
+                managed_service: None,
             };
             std::fs::write(&plan.target, &old).unwrap();
             std::fs::write(&plan.staged, &new).unwrap();
@@ -515,5 +672,57 @@ mod install_tests {
             server.join().unwrap();
             std::fs::remove_dir_all(root).unwrap();
         }
+    }
+}
+
+#[cfg(all(test,target_os="linux"))]
+mod managed_update_tests {
+    use super::*;
+    fn plan(root:&std::path::Path)->InstallPlan {
+        InstallPlan{pid:0,target:root.join("keeper"),staged:root.join("new"),backup:root.join("previous"),args:vec![],cwd:root.into(),health_url:"http://127.0.0.1/api/health".into(),latest:"v9.9.9".into(),result:root.join("result.json"),managed_service:Some(SERVICE.into())}
+    }
+    #[test]
+    fn managed_update_uses_service_control_and_restores_failed_build(){
+        for fail in [false,true] {
+            let root=std::env::temp_dir().join(format!("keeper-managed-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();
+            let plan=plan(&root);std::fs::write(&plan.target,"old").unwrap();std::fs::write(&plan.staged,"new").unwrap();
+            let mut commands=Vec::new();let mut checks=0;
+            install_managed_with(&plan,|verb|{commands.push(verb.to_owned());Ok(())},|p|{
+                checks+=1;let body=std::fs::read_to_string(&p.target).unwrap();
+                if checks==1 {assert_eq!(body,"new");Ok(!fail)}else{assert_eq!(body,"old");assert!(p.latest.is_empty());Ok(true)}
+            },Duration::ZERO).unwrap();
+            let result:serde_json::Value=serde_json::from_slice(&std::fs::read(&plan.result).unwrap()).unwrap();
+            assert_eq!(result["phase"],if fail {"rolled_back"}else{"complete"});
+            assert_eq!(std::fs::read_to_string(&plan.target).unwrap(),if fail {"old"}else{"new"});
+            assert_eq!(&commands[..3],["stop","reset-failed","start"]);
+            if fail {assert_eq!(&commands[3..],["stop","reset-failed","start"]);}
+            else {assert_eq!(std::fs::read_to_string(&plan.backup).unwrap(),"old");}
+            std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[test]
+    fn unloaded_reset_does_not_block_start_or_healthy_rollback(){
+        for fail in [false,true] {
+            let root=std::env::temp_dir().join(format!("keeper-unloaded-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();let plan=plan(&root);
+            std::fs::write(&plan.target,"old").unwrap();std::fs::write(&plan.staged,"new").unwrap();let mut checks=0;let mut starts=0;
+            install_managed_with(&plan,|verb|{if verb=="start"{starts+=1;}if verb=="reset-failed"{Err("unit not loaded".into())}else{Ok(())}},|p|{
+                checks+=1;if checks==1{Ok(!fail)}else{assert_eq!(std::fs::read_to_string(&p.target).unwrap(),"old");Ok(true)}
+            },Duration::ZERO).unwrap();
+            assert_eq!(starts,if fail{2}else{1});let result:serde_json::Value=serde_json::from_slice(&std::fs::read(&plan.result).unwrap()).unwrap();
+            assert_eq!(result["phase"],if fail{"rolled_back"}else{"complete"});std::fs::remove_dir_all(root).unwrap();
+        }
+    }
+    #[test]
+    fn failed_stop_or_busy_update_never_replaces_binary(){
+        use fs2::FileExt;
+        let root=std::env::temp_dir().join(format!("keeper-managed-{}",uuid::Uuid::new_v4()));std::fs::create_dir(&root).unwrap();let plan=plan(&root);
+        std::fs::write(&plan.target,"old").unwrap();std::fs::write(&plan.staged,"new").unwrap();
+        assert!(install_managed_with(&plan,|_|Err("denied".into()),|_|panic!("no health call"),Duration::ZERO).is_err());
+        assert_eq!(std::fs::read_to_string(&plan.target).unwrap(),"old");
+        let lock=std::fs::OpenOptions::new().write(true).open(root.join(".keeper-update.lock")).unwrap();lock.lock_exclusive().unwrap();
+        assert!(install_managed_with(&plan,|_|panic!("no service call"),|_|panic!("no health call"),Duration::ZERO).is_err());
+        drop(lock);
+        let mut invalid=plan.clone();invalid.managed_service=Some("other.service".into());assert!(install_and_restart(&invalid).is_err());
+        assert_eq!(std::fs::read_to_string(&plan.target).unwrap(),"old");std::fs::remove_dir_all(root).unwrap();
     }
 }

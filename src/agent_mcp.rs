@@ -693,7 +693,7 @@ mod pool_tests {
     fn settings_store()->Store {
         let store=Store{conn:rusqlite::Connection::open_in_memory().unwrap()};
         store.conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL); CREATE TABLE agent_projects(id TEXT PRIMARY KEY,name TEXT,directory TEXT,created_at INTEGER); INSERT INTO agent_projects VALUES ('p1','One','/tmp/one',0),('p2','Two','/tmp/two',0); CREATE TABLE agent_sessions(id TEXT PRIMARY KEY,title TEXT,updated_at INTEGER,project_id TEXT,pinned INTEGER,owner_key TEXT,archived_at INTEGER DEFAULT 0,deleted_at INTEGER DEFAULT 0); INSERT INTO agent_sessions(id,title,updated_at,project_id,pinned,owner_key) VALUES ('s1','one',0,'p1',0,'guest'),('s2','two',0,'p2',0,'guest'),('foreign','hidden',0,'p1',0,'other');").unwrap();
-        initialize(&store).unwrap();store
+        crate::agent_project_trash::initialize(&store).unwrap();initialize(&store).unwrap();store
     }
     fn settings_server(store:&Store)->Value {
         save(store,&json!({"name":"Fixture","command":"fixture-command","args":[],"transport":"stdio","environmentChanges":{"TEST_TOKEN":"private-env-sentinel","EMPTY":""},"projectIds":["p1"]})).unwrap()["servers"][0].clone()

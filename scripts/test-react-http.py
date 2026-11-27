@@ -74,6 +74,9 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':0,'id':'not-executed','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'oversized-event.txt','content':'must not write'})}}]})
     for _ in range(40):self.wfile.write(b'data: '+b' '*32768+b'\n');self.wfile.flush()
     self.wfile.write(b'\n');self.wfile.flush();return
+   if user in ['missing finish fixture','unknown finish fixture']:
+    event({'content':'Incomplete answer preserved'},None if user=='missing finish fixture' else 'unexpected')
+    self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if user=='multiline event fixture':
     packet={'model':'fixture-agent','choices':[{'delta':{'content':'多行事件正常'},'finish_reason':'stop'}]}
     for line in json.dumps(packet,ensure_ascii=False,indent=2).splitlines():self.wfile.write(('data: '+line+'\r\n').encode());self.wfile.flush()
@@ -259,7 +262,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
   call('agent_execution_budget',{'sessionId':normal,'maxRounds':24},expected=400)
   call('agent_execution_budget',{'sessionId':normal,'maxToolCalls':64,'activeSeconds':600},expected=400)
   assert detail['modelPending'] and detail['tasks'][-1]['status']=='model'
-  assert detail['messages'][-1]['modelMetadata']['taskBudget']=={'maxRounds':16,'maxToolCalls':32,'activeSeconds':180}
+  assert detail['messages'][-1]['modelMetadata']['taskBudget']=={'maxRounds':128,'maxToolCalls':128,'activeSeconds':1800}
   assert len({r['toolCallId'] for r in detail['runs']})==3
   assert all(r['responseId']==detail['streamingMessageId'] for r in detail['runs'])
   fresh=call('agent_session',{'sessionId':normal});assert fresh['runs']==detail['runs'];assert fresh['messages'][-1]['modelMetadata']['presentation']==detail['messages'][-1]['modelMetadata']['presentation'];assert fresh['messages'][-1]['modelMetadata']['taskBudget']==detail['messages'][-1]['modelMetadata']['taskBudget']
@@ -334,6 +337,16 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
    multiline=session('multiline event fixture');multi=wait_for(multiline,lambda d:not d['modelPending']);assert multi['tasks'][-1]['status']=='complete';assert multi['messages'][-1]['content']=='多行事件正常';assert multi['messages'][-1]['modelMetadata']['executionEvidence']['callCount']==0
+   for prompt in ['missing finish fixture','unknown finish fixture']:
+    incomplete=session(prompt);detail=wait_for(incomplete,lambda d:not d['modelPending'])
+    assert detail['tasks'][-1]['status']=='failed' and not detail['runs']
+    answer=next(m for m in reversed(detail['messages']) if m['role']=='assistant')
+    assert 'Incomplete answer preserved' in answer['content']
+    assert answer['modelMetadata']['taskReasonCode']=='incomplete_response'
+    assert all(segment['kind']!='final' for segment in answer['modelMetadata']['presentation']['segments'])
+    saved=call('agent_session',{'sessionId':incomplete})
+    assert next(m for m in reversed(saved['messages']) if m['role']=='assistant')['modelMetadata']['taskReasonCode']=='incomplete_response'
+    assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')==prompt for m in r['messages'])])==1
    oversized=session('oversized event fixture');over=wait_for(oversized,lambda d:not d['modelPending']);assert over['tasks'][-1]['status']=='failed' and not over['runs'];assert not (root/'oversized-event.txt').exists()
    answer=next(m for m in reversed(over['messages']) if m['role']=='assistant');assert 'Before oversized event' in answer['content'];assert answer['modelMetadata']['taskReasonCode']=='stream_limit'
    assert next(m for m in reversed(call('agent_session',{'sessionId':oversized})['messages']) if m['role']=='assistant')['modelMetadata']['taskReasonCode']=='stream_limit'
@@ -380,7 +393,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    assert '无进展' in json.dumps(looped,ensure_ascii=False)
    assert '无进展' in json.dumps(call('agent_session',{'sessionId':looping}),ensure_ascii=False)
    custom=call('agent_new_session')['id']
-   for invalid in [0,33,1.5,'16']:
+   for invalid in [0,129,1.5,'16']:
     call('agent_execution_budget',{'sessionId':custom,'maxRounds':invalid},expected=400)
    assert call('agent_execution_budget',{'sessionId':custom,'maxRounds':2})['executionBudget']['maxRounds']==2
    budget=call('agent_execution_budget',{'sessionId':custom,'maxToolCalls':64,'activeSeconds':600})['executionBudget']
@@ -396,7 +409,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    capped=wait_for(tool_limited,lambda d:not d['modelPending'])
    assert len(capped['runs'])==8
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='tool_limit' for m in capped['messages'])
-   bounded=session('budget');bounded=wait_for(bounded,lambda d:not d['modelPending']);assert len(bounded['runs'])==16 and '16 轮' in json.dumps(bounded,ensure_ascii=False)
+   bounded=call('agent_new_session')['id'];call('agent_execution_budget',{'sessionId':bounded,'maxRounds':16});call('agent_send_message',{'sessionId':bounded,'content':'budget'});bounded=wait_for(bounded,lambda d:not d['modelPending']);assert len(bounded['runs'])==16 and '16 轮' in json.dumps(bounded,ensure_ascii=False)
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='round_limit' for m in bounded['messages'])
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='complete' for m in complete_detail['messages'])
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='user_stopped' for m in stopped['messages'])

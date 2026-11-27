@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),{JSDOM}=require('jsdom');
+const dom=new JSDOM('<!doctype html><body><button id="agent-project-trash"></button><button id="agent-new-project"></button><textarea id="agent-input"></textarea></body>',{url:'http://localhost',runScripts:'outside-only'}),c=dom.getInternalVMContext(),d=dom.window.document,source=fs.readFileSync('ui/agent.js','utf8');
+const agent={identityEpoch:0,generation:0,project:'old',selected:'old-session',sessions:[],drafts:{async flush(){calls.push('flush')},async load(){return true}}};let calls=[],prompt='新项目',pending=null,notices=[];
+Object.assign(c,{agent,$:s=>d.querySelector(s),sessionStorageKey:()=> 'selected',renderProjects(){},renderSessions(){},renderConversation(){},showConversation(){calls.push('show')},notice:e=>notices.push(e),uiPrompt:async()=>prompt,bootstrap:async()=>{calls.push('bootstrap');agent.sessions=[{id:'another-session',projectId:'new'}]},select:async id=>{calls.push(['select',id]);agent.selected=id;return true},invoke:async(name,args)=>{calls.push([name,args]);if(name==='agent_new_project')return pending?await pending:{id:'new'};if(name==='agent_new_session')return {id:'created-session'};throw Error(name);}});
+vm.runInContext(source.slice(source.indexOf('  async function switchProject('),source.indexOf('  async function bootstrap()')),c);
+const event={preventDefault(){},stopPropagation(){}},run=()=>d.querySelector('#agent-new-project').onclick(event),tick=()=>new Promise(setImmediate);
+(async()=>{
+ await run();assert.equal(agent.project,'new');assert.equal(agent.selected,'created-session');assert.equal(d.activeElement,d.querySelector('#agent-input'));assert.deepEqual(JSON.parse(JSON.stringify(calls)),['flush',['agent_new_project',{name:'新项目'}],['agent_new_session',{projectId:'new'}],'bootstrap','show',['select','created-session']]);assert(!d.querySelector('button#agent-new-project').disabled);
+ calls=[];prompt=null;await run();assert.equal(calls.length,0);
+ prompt='新项目';agent.drafts.flush=async()=>{agent.generation++;calls.push('flush')};await run();assert.equal(agent.selected,'created-session');calls=[];
+ prompt='新项目';let finish;pending=new Promise(r=>finish=r);const first=run();await tick();await run();assert.equal(calls.filter(c=>Array.isArray(c)&&c[0]==='agent_new_project').length,1);agent.identityEpoch++;finish({id:'other-owner'});await first;assert(!calls.some(c=>Array.isArray(c)&&c[0]==='agent_new_session'));assert(!d.querySelector('#agent-new-project').disabled);
+ pending=null;calls=[];agent.drafts.flush=async()=>{throw Error('草稿保存失败')};await run();assert.equal(calls.length,0);assert.match(notices.at(-1),/草稿保存失败/);
+ console.log('PASS: new project creates and selects its exact session with message input focused; cancellation; duplicate click guard; account isolation; draft preservation');
+})().catch(e=>{console.error(e);process.exitCode=1});

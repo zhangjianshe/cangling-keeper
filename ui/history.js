@@ -78,7 +78,7 @@
       if(result.hasMore)list.append(button('加载更多',null,()=>load(true),'history-load-more'));
     }
     async function openResult(item){
-      if(item.deletedAt)return;const epoch=agent.identityEpoch || 0;close();remember(item);agent.project=item.projectId;opened.set(item.projectId,true);showConversation();await select(item.id);if(epoch!==(agent.identityEpoch || 0) || agent.selected!==item.id || agent.detail.sessionId!==item.id)return;
+      if(item.deletedAt)return;const epoch=agent.identityEpoch || 0;close();remember(item);agent.project=item.projectId;opened.set(item.projectId,true);showConversation();await select(item.id,true);if(epoch!==(agent.identityEpoch || 0) || agent.selected!==item.id || agent.detail.sessionId!==item.id)return;
       renderProjects();const match=item.match;
       if(match?.messageId && !agent.detail.modelPending){const group=selectReadingVersion(match.messageId);renderConversation();window.keeperThreadNav?.jump(group?.rootId || match.rootId || match.messageId);}
     }

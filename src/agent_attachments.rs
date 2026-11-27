@@ -705,7 +705,9 @@ mod tests {
         CREATE TABLE agent_reply_versions(session_id TEXT,root_id TEXT,selected_id TEXT);
         CREATE TABLE agent_model_pending(session_id TEXT PRIMARY KEY,message_id TEXT);
         INSERT INTO agent_sessions(id,title,updated_at,project_id,pinned,owner_key) VALUES ('a','a',0,'general',0,'guest'),('b','b',0,'general',0,'guest'),('private','private',0,'general',0,'other');").unwrap();
+        crate::agent_project_trash::initialize(&store).unwrap();
         initialize(&store).unwrap();
+        crate::agent_project_trash::initialize(&store).unwrap();
         initialize(&store).unwrap();
         store
     }
@@ -723,7 +725,9 @@ mod tests {
         let bytes = STANDARD.decode(PNG).unwrap();
         let canonical = validate("legacy.png", "image/png", &bytes).unwrap();
         store.conn.execute("INSERT INTO agent_attachments VALUES ('legacy','guest','a','legacy.png','image/png','image',?1,?2,0)",params![bytes,canonical["sha256"].as_str().unwrap()]).unwrap();
+        crate::agent_project_trash::initialize(&store).unwrap();
         initialize(&store).unwrap();
+        crate::agent_project_trash::initialize(&store).unwrap();
         initialize(&store).unwrap();
         let public = draft(&store, "a").unwrap();
         assert_eq!(public[0]["size"], canonical["size"]);

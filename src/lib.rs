@@ -12,6 +12,7 @@ mod agent_account;
 mod agent_attachments;
 mod agent_backup;
 mod agent_history;
+mod agent_project_trash;
 mod agent_skill_library;
 mod agent_skills;
 mod agent_mcp;

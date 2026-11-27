@@ -716,3 +716,11 @@
 .agent-plan-segment.is-running>.agent-plan-marker::before{animation:agent-plan-pulse 1.8s ease-in-out infinite}
 @keyframes agent-plan-pulse{50%{opacity:.55}}
 @media(prefers-reduced-motion:reduce){.agent-plan-segment.is-running>.agent-plan-marker::before{animation:none}}
+
+.project-context-menu button.danger:not(:disabled){color:#b42318}
+.project-context-menu button.danger:not(:disabled):is(:hover,:focus-visible){background:#fff1f0}
+
+#agent-project-trash{order:2;margin-left:auto} .agent-nav-section>summary>#agent-new-project{margin-left:0}
+.keeper-project-trash-row{padding:14px 0;border-bottom:1px solid #dbe4f0}
+
+.keeper-project-trash-actions{display:flex;gap:8px}.keeper-project-dialog .btn.danger{color:#b42318;border-color:#f4b4b0}.keeper-project-dialog .btn.danger:hover{background:#fff1f0}.keeper-project-purge-names{max-height:160px;overflow:auto;overflow-wrap:anywhere;font-size:13px;line-height:1.6}

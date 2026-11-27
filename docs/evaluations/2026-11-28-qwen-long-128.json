@@ -1,0 +1,448 @@
+{
+  "date": "2026-11-28",
+  "model": "qwen-coder-next",
+  "budget": {
+    "maxRounds": 128,
+    "maxToolCalls": 128,
+    "activeSeconds": 1800
+  },
+  "outputTokens": 4096,
+  "scope": "One fixed long-task specification evaluated across successive fixes; not independent reliability samples. Original failed/stopped runs are retained. 64K is a distinct working-context setting; 32K remains unsuccessful.",
+  "fixtures": {
+    "modules": 4,
+    "visibleTests": 17,
+    "independentChecks": "canonical retries, monetary rounding, atomic stock rollback, cancellation, reports, persistence, invalid discounts and input preservation",
+    "loopProbe": "three identical read_file rounds, followed by the development task in the same session",
+    "history": "48 obsolete user/assistant messages, no new task instructions"
+  },
+  "sourceSha256": {
+    "scripts/eval-long-task-repair.py": "060794725beb58747ec24d1beb1aa43643cdf2966c8bfd3c152af38d3be2a041",
+    "src/model_context.rs": "77214324403ee5347f5608829c1840e3817676043706d73b5eaa3df2f985b25f",
+    "src/model_loop_guard.rs": "29a501be1d247dcc8ca543d91c5e83bc53d59fe510951f0366df100dedc7eafb",
+    "src/agent_evidence.rs": "80df305ce1d3799812d64a7d6a7217550fa3e1e427bbdf113f9050f7ea31efec",
+    "src/model.rs": "8546be38ad9bd574638ade98a788a06b05a8c46b6b726a17e20535cba31b9560",
+    "scripts/eval-react-resilience.py": "ddb97313d6ac46fb7901b386e1f067a8efb5ccae33e7c1a8437d4bc8c062bef4",
+    "scripts/eval_long_task_fixture.py": "acd699759c08732e929ee83028ec593117d10e8a5f2157ba3298245a5a47c895"
+  },
+  "results": [
+    {
+      "case": "long_task",
+      "trial": 1,
+      "model": "qwen-coder-next",
+      "sessionId": "cd66ceba-a780-49d7-8f08-fc922a550c47",
+      "seconds": 176.52,
+      "taskStatus": "stopped",
+      "reason": "user_stopped",
+      "rounds": 22,
+      "toolCalls": 36,
+      "failedTools": 6,
+      "pathExercised": true,
+      "independentCheckPassed": false,
+      "inputsPreserved": true,
+      "passed": false,
+      "toolCounts": {
+        "list_directory": 4,
+        "read_file": 23,
+        "read_files": 6,
+        "update_plan": 3
+      },
+      "planUpdates": 3,
+      "purePlanRounds": 3,
+      "testRunsPassed": 0,
+      "planStepCounts": [
+        4,
+        3,
+        3
+      ],
+      "unchangedPlans": 1,
+      "loopStopReason": "no_progress",
+      "summaryRequests": 58,
+      "context": {
+        "status": "stopped"
+      },
+      "usage": {
+        "cachedTokens": 0,
+        "completionTokens": 20772,
+        "promptTokens": 335157
+      },
+      "checkOutput": "Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: 'verification.json'\n",
+      "taskBudget": {
+        "activeSeconds": 1800,
+        "maxRounds": 128,
+        "maxToolCalls": 128
+      },
+      "modelId": "cis-model:cis:db8b9ffc34888f2abbba3026a60783af8d0a031a3bed1aaf19bceb7e9218fce6:6bcf811d-da7d-4b1d-bf17-b7d22bc6e290",
+      "modelRevision": "2026-11-27T01:25:51.610379Z",
+      "binarySha256": "cc76090499c6ea62072156fac7b120bb4ecb27d4749158b5376a1934f1246953",
+      "promptSha256": "bb8df0219941f4ec62f82bd37b6e83bd84bb453b6233812631ccdd1c5b8cb923",
+      "planPhaseContract": false,
+      "strictPassed": false,
+      "stage": "baseline-32k",
+      "rawEvidence": "/tmp/keeper-qwen-long-128-20261128",
+      "readStallRecoveries": 0,
+      "mainToolCalls": 33,
+      "probeToolCalls": 3,
+      "evaluationNote": {
+        "stoppedByEvaluator": true,
+        "reason": "summary cascade and lost numbered file bodies reproduced; rerun same task after context fixes",
+        "round": 22,
+        "summaryRequests": 58
+      },
+      "credentialsScrubbed": true
+    },
+    {
+      "case": "long_task",
+      "trial": 1,
+      "model": "qwen-coder-next",
+      "sessionId": "9a6a02c1-cb7b-4e4f-bce1-683b5cce6d5f",
+      "seconds": 133.31,
+      "taskStatus": "stopped",
+      "reason": "user_stopped",
+      "rounds": 49,
+      "toolCalls": 59,
+      "failedTools": 9,
+      "pathExercised": true,
+      "independentCheckPassed": false,
+      "inputsPreserved": true,
+      "passed": false,
+      "toolCounts": {
+        "list_directory": 2,
+        "read_file": 39,
+        "read_files": 11,
+        "run_command": 1,
+        "run_tests": 4,
+        "update_plan": 2
+      },
+      "planUpdates": 2,
+      "purePlanRounds": 2,
+      "testRunsPassed": 0,
+      "planStepCounts": [
+        6,
+        6
+      ],
+      "unchangedPlans": 1,
+      "loopStopReason": "no_progress",
+      "summaryRequests": 19,
+      "context": {
+        "status": "stopped"
+      },
+      "usage": {
+        "cachedTokens": 0,
+        "completionTokens": 8672,
+        "promptTokens": 674163
+      },
+      "checkOutput": "Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: 'verification.json'\n",
+      "taskBudget": {
+        "activeSeconds": 1800,
+        "maxRounds": 128,
+        "maxToolCalls": 128
+      },
+      "modelId": "cis-model:cis:db8b9ffc34888f2abbba3026a60783af8d0a031a3bed1aaf19bceb7e9218fce6:6bcf811d-da7d-4b1d-bf17-b7d22bc6e290",
+      "modelRevision": "2026-11-27T01:25:51.610379Z",
+      "binarySha256": "7eaafee0a946236b90c7bf2bbb8b444279c201921ebf9ad5d6a2dd86d86995e6",
+      "promptSha256": "bb8df0219941f4ec62f82bd37b6e83bd84bb453b6233812631ccdd1c5b8cb923",
+      "planPhaseContract": false,
+      "strictPassed": false,
+      "stage": "intermediate-context-32k",
+      "rawEvidence": "/tmp/keeper-qwen-long-128-candidate-20261128",
+      "readStallRecoveries": 0,
+      "mainToolCalls": 56,
+      "probeToolCalls": 3,
+      "evaluationNote": {
+        "stoppedByEvaluator": true,
+        "reason": "remaining aggressive current-tool result truncation; no file writes after repeated reads",
+        "round": 49,
+        "summaryRequests": 19
+      },
+      "credentialsScrubbed": true
+    },
+    {
+      "case": "long_task",
+      "trial": 1,
+      "model": "qwen-coder-next",
+      "sessionId": "98ded611-a3e2-40e1-898a-28253edbf50a",
+      "seconds": 265.94,
+      "taskStatus": "stopped",
+      "reason": "user_stopped",
+      "rounds": 80,
+      "toolCalls": 82,
+      "failedTools": 6,
+      "pathExercised": true,
+      "independentCheckPassed": false,
+      "inputsPreserved": true,
+      "passed": false,
+      "toolCounts": {
+        "list_directory": 1,
+        "read_file": 39,
+        "read_files": 29,
+        "run_tests": 2,
+        "update_plan": 8,
+        "write_file": 3
+      },
+      "planUpdates": 8,
+      "purePlanRounds": 8,
+      "testRunsPassed": 0,
+      "planStepCounts": [
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        3,
+        7
+      ],
+      "unchangedPlans": 1,
+      "loopStopReason": "no_progress",
+      "summaryRequests": 49,
+      "context": {
+        "compressionThreshold": 21299,
+        "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+        "estimatedTokens": 24428,
+        "imageTokenEstimateEach": 16384,
+        "imageTokensReserved": 0,
+        "limit": 32768,
+        "modelLimit": 131072,
+        "outputReserved": 4096,
+        "safetyReserved": 2048,
+        "status": "compacted",
+        "summaryDeferredSmallPrefix": true,
+        "toolOutputShortened": true,
+        "workingBudget": 32768
+      },
+      "usage": {
+        "cachedTokens": 0,
+        "completionTokens": 21366,
+        "promptTokens": 1147035
+      },
+      "checkOutput": "Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: 'verification.json'\n",
+      "taskBudget": {
+        "activeSeconds": 1800,
+        "maxRounds": 128,
+        "maxToolCalls": 128
+      },
+      "modelId": "cis-model:cis:db8b9ffc34888f2abbba3026a60783af8d0a031a3bed1aaf19bceb7e9218fce6:6bcf811d-da7d-4b1d-bf17-b7d22bc6e290",
+      "modelRevision": "2026-11-27T01:25:51.610379Z",
+      "binarySha256": "5e24fa877ee2defac9c3555bfcd81a842b0a9d69304c364b12b911761cc424c7",
+      "promptSha256": "bb8df0219941f4ec62f82bd37b6e83bd84bb453b6233812631ccdd1c5b8cb923",
+      "planPhaseContract": false,
+      "strictPassed": false,
+      "stage": "intermediate-latest-results-32k",
+      "rawEvidence": "/tmp/keeper-qwen-long-128-final-20261128",
+      "readStallRecoveries": 0,
+      "mainToolCalls": 79,
+      "probeToolCalls": 3,
+      "evaluationNote": {
+        "stoppedByEvaluator": true,
+        "reason": "varied reread loop and stale evidence window reproduced; evaluating recovery fix",
+        "round": 80
+      },
+      "credentialsScrubbed": true
+    },
+    {
+      "case": "long_task",
+      "trial": 1,
+      "model": "qwen-coder-next",
+      "sessionId": "addc29a3-86f3-4c7e-9c1e-50ac6d340b28",
+      "seconds": 73.61,
+      "taskStatus": "failed",
+      "reason": "no_progress",
+      "rounds": 18,
+      "toolCalls": 26,
+      "failedTools": 4,
+      "pathExercised": true,
+      "independentCheckPassed": false,
+      "inputsPreserved": true,
+      "passed": false,
+      "toolCounts": {
+        "read_file": 10,
+        "read_files": 10,
+        "run_command": 1,
+        "run_tests": 2,
+        "update_plan": 3
+      },
+      "planUpdates": 3,
+      "purePlanRounds": 1,
+      "testRunsPassed": 0,
+      "planStepCounts": [
+        5,
+        5,
+        5
+      ],
+      "unchangedPlans": 1,
+      "loopStopReason": "no_progress",
+      "summaryRequests": 15,
+      "context": {
+        "compressionThreshold": 21299,
+        "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+        "estimatedTokens": 25414,
+        "imageTokenEstimateEach": 16384,
+        "imageTokensReserved": 0,
+        "limit": 32768,
+        "modelLimit": 131072,
+        "outputReserved": 4096,
+        "safetyReserved": 2048,
+        "status": "compacted",
+        "summaryDeferredSmallPrefix": true,
+        "toolOutputShortened": true,
+        "workingBudget": 32768
+      },
+      "usage": {
+        "cachedTokens": 0,
+        "completionTokens": 6147,
+        "promptTokens": 280399
+      },
+      "checkOutput": "Traceback (most recent call last):\n  File \"<string>\", line 7, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: 'verification.json'\n",
+      "taskBudget": {
+        "activeSeconds": 1800,
+        "maxRounds": 128,
+        "maxToolCalls": 128
+      },
+      "modelId": "cis-model:cis:db8b9ffc34888f2abbba3026a60783af8d0a031a3bed1aaf19bceb7e9218fce6:6bcf811d-da7d-4b1d-bf17-b7d22bc6e290",
+      "modelRevision": "2026-11-27T01:25:51.610379Z",
+      "binarySha256": "df2c66c81f410df04eac3413708cfaa0a8db1c09f1f96b37122c2ae30d7db9b6",
+      "promptSha256": "bb8df0219941f4ec62f82bd37b6e83bd84bb453b6233812631ccdd1c5b8cb923",
+      "planPhaseContract": false,
+      "strictPassed": false,
+      "stage": "read-recovery-32k",
+      "rawEvidence": "/tmp/keeper-qwen-long-128-recovery-20261128",
+      "readStallRecoveries": 1,
+      "mainToolCalls": 23,
+      "probeToolCalls": 3,
+      "credentialsScrubbed": true
+    },
+    {
+      "case": "long_task",
+      "trial": 1,
+      "model": "qwen-coder-next",
+      "sessionId": "7a4aed18-9f26-4a7a-a357-6a81515309d3",
+      "seconds": 91.44,
+      "taskStatus": "complete",
+      "reason": "complete",
+      "rounds": 28,
+      "toolCalls": 30,
+      "failedTools": 5,
+      "pathExercised": true,
+      "independentCheckPassed": false,
+      "inputsPreserved": true,
+      "passed": false,
+      "toolCounts": {
+        "apply_patch": 3,
+        "list_directory": 1,
+        "read_file": 10,
+        "read_files": 3,
+        "run_tests": 4,
+        "update_plan": 4,
+        "write_file": 5
+      },
+      "planUpdates": 4,
+      "purePlanRounds": 4,
+      "testRunsPassed": 2,
+      "planStepCounts": [
+        5,
+        3,
+        3,
+        3
+      ],
+      "unchangedPlans": 0,
+      "loopStopReason": "no_progress",
+      "summaryRequests": 2,
+      "context": {
+        "compressionThreshold": 47513,
+        "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+        "estimatedTokens": 44240,
+        "imageTokenEstimateEach": 16384,
+        "imageTokensReserved": 0,
+        "limit": 65536,
+        "modelLimit": 131072,
+        "outputReserved": 4096,
+        "safetyReserved": 2048,
+        "status": "compacted",
+        "summaryDeferredSmallPrefix": false,
+        "toolOutputShortened": false,
+        "workingBudget": 65536
+      },
+      "usage": {
+        "cachedTokens": 0,
+        "completionTokens": 5577,
+        "promptTokens": 566862
+      },
+      "checkOutput": ".................\n----------------------------------------------------------------------\nRan 17 tests in 0.556s\n\nOK\nTraceback (most recent call last):\n  File \"<string>\", line 16, in <module>\n  File \"/tmp/keeper-qwen-long-128-64k-20261128/private-state/home/cangling/projects/Live ReAct long_task/orders.py\", line 26, in place_order\n    raise ValueError(f\"Discount mismatch for reused request_id '{request_id}'\")\nValueError: Discount mismatch for reused request_id 'canon'\n",
+      "taskBudget": {
+        "activeSeconds": 1800,
+        "maxRounds": 128,
+        "maxToolCalls": 128
+      },
+      "modelId": "cis-model:cis:db8b9ffc34888f2abbba3026a60783af8d0a031a3bed1aaf19bceb7e9218fce6:6bcf811d-da7d-4b1d-bf17-b7d22bc6e290",
+      "modelRevision": "2026-11-27T01:25:51.610379Z",
+      "binarySha256": "aa805389958491b39ff41880a9f3cae498b8e0f0564289fac190a193d6998468",
+      "promptSha256": "bb8df0219941f4ec62f82bd37b6e83bd84bb453b6233812631ccdd1c5b8cb923",
+      "planPhaseContract": true,
+      "strictPassed": false,
+      "stage": "read-recovery-64k",
+      "rawEvidence": "/tmp/keeper-qwen-long-128-64k-20261128",
+      "readStallRecoveries": 0,
+      "mainToolCalls": 27,
+      "probeToolCalls": 3,
+      "credentialsScrubbed": true
+    }
+  ],
+  "targetedRepair": {
+    "stage": "targeted-repair-64k",
+    "sessionId": "7a4aed18-9f26-4a7a-a357-6a81515309d3",
+    "seconds": 45.48,
+    "taskStatus": "complete",
+    "rounds": 13,
+    "toolCalls": 11,
+    "summaryRequests": 0,
+    "readStallRecoveries": 0,
+    "taskBudget": {
+      "activeSeconds": 1800,
+      "maxRounds": 128,
+      "maxToolCalls": 128
+    },
+    "context": {
+      "compressionThreshold": 47513,
+      "estimateMethod": "启发式估算：ASCII 每字符0.5、非ASCII每字符1.5，加消息封装余量；不是精确分词。图片每张预留16384 token；实际用量以服务返回为准。",
+      "estimatedTokens": 45672,
+      "imageTokenEstimateEach": 16384,
+      "imageTokensReserved": 0,
+      "limit": 65536,
+      "modelLimit": 131072,
+      "outputReserved": 4096,
+      "safetyReserved": 2048,
+      "status": "compacted",
+      "summaryDeferredSmallPrefix": false,
+      "toolOutputShortened": false,
+      "workingBudget": 65536
+    },
+    "usage": {
+      "cachedTokens": 0,
+      "completionTokens": 2948,
+      "promptTokens": 256372
+    },
+    "reason": "complete",
+    "inputsPreserved": true,
+    "independentCheckPassed": true,
+    "checkOutput": "Independent checks passed: canonical retry, money rounding, atomic rollback, cancellation, reports, persistence, and validation.\n.......................\n----------------------------------------------------------------------\nRan 23 tests in 1.445s\n\nOK\n",
+    "binarySha256": "aa805389958491b39ff41880a9f3cae498b8e0f0564289fac190a193d6998468",
+    "promptSha256": "c3c08e0e9a56029deb2f7b1bd3a38078c65f5be55e3a5356704b15fe880deb3d",
+    "newRegressionFiles": [
+      "test_canonical_retry.py"
+    ],
+    "passed": true,
+    "credentialsScrubbed": true
+  },
+  "validation": {
+    "rust": "300 passed, 1 existing ignored",
+    "contextHttp": "passed including recent batch bodies, paired tool groups, cache reuse, stop and fallback",
+    "reactHttp": "passed",
+    "syntaxAndDiff": "passed"
+  },
+  "deployment": {
+    "ok": true,
+    "pid": 100224,
+    "version": "0.0.139",
+    "binarySha256": "f0f132ca5c94447f76c89a60b2124a7beb15c239fe89f5e57af80196da4dd312"
+  }
+}

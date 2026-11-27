@@ -1,0 +1,14 @@
+const assert=require('node:assert/strict'),vm=require('node:vm'),fs=require('node:fs'),{JSDOM}=require('jsdom');
+const d=new JSDOM('<!doctype html><body><div id="agent-notice" hidden></div><div id="ui-dialog" class="hidden"></div><h2 id="ui-dialog-title"></h2><p id="ui-dialog-message"></p><input id="ui-dialog-input"><button id="ui-dialog-cancel"></button><button id="ui-dialog-ok"></button><button id="ui-dialog-close"></button></body>').window.document;
+let now=0,seq=0;const timers=new Map(),ctx=vm.createContext({$:s=>d.querySelector(s),setTimeout:(fn,ms)=>{timers.set(++seq,{fn,at:now+ms});return seq;},clearTimeout:id=>timers.delete(id)});
+const advance=ms=>{now+=ms;for(const [id,t] of [...timers])if(t.at<=now){timers.delete(id);t.fn();}};
+const agent=fs.readFileSync('ui/agent.js','utf8');vm.runInContext(agent.slice(agent.indexOf('  let noticeTimer;'),agent.indexOf('  function sessionStorageKey')),ctx);
+ctx.notice('first');advance(4999);assert(!d.querySelector('#agent-notice').hidden);ctx.notice('second');advance(1);assert(!d.querySelector('#agent-notice').hidden);advance(4999);assert(d.querySelector('#agent-notice').hidden);
+ctx.notice('clear');ctx.notice('');assert.equal(timers.size,0);
+for(const [key,id] of Object.entries({uiDialogEl:'ui-dialog',uiDialogTitleEl:'ui-dialog-title',uiDialogMessageEl:'ui-dialog-message',uiDialogInputEl:'ui-dialog-input',uiDialogCancelBtnEl:'ui-dialog-cancel',uiDialogOkBtnEl:'ui-dialog-ok',uiDialogCloseBtnEl:'ui-dialog-close'}))ctx[key]=d.getElementById(id);
+ctx.setDialogMessage=msg=>d.querySelector('#ui-dialog-message').textContent=msg;
+const main=fs.readFileSync('ui/main.js','utf8');vm.runInContext(main.slice(main.indexOf('let uiDialogResolver = null;'),main.indexOf('function setDialogMessage')),ctx);vm.runInContext(main.slice(main.indexOf('function uiDialogOpen('),main.indexOf('async function uiAlert(')),ctx);
+ctx.uiDialogOpen({title:'提示',message:'saved',mode:'alert'});advance(4999);assert(!ctx.uiDialogEl.classList.contains('hidden'));advance(1);assert(ctx.uiDialogEl.classList.contains('hidden'));
+ctx.uiDialogOpen({title:'提示',message:'old',mode:'alert'});advance(3000);ctx.uiDialogOpen({title:'确认',message:'delete?',mode:'confirm'});advance(6000);assert(!ctx.uiDialogEl.classList.contains('hidden'));assert.equal(timers.size,0);
+ctx.uiDialogOpen({title:'输入',message:'name',mode:'prompt'});advance(6000);assert(!ctx.uiDialogEl.classList.contains('hidden'));
+console.log('PASS: messages expire after 5 seconds; new message resets timer; confirmation and input dialogs never auto-close');

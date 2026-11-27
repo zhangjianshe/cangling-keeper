@@ -15,6 +15,15 @@ class API(http.server.BaseHTTPRequestHandler):
    except BrokenPipeError:pass
   else:
    assert body['stream_options']['include_usage']
+   if mode=='bodies':
+    results=[m for m in body['messages'] if m['role']=='tool']
+    if not results:
+     self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
+     call={'index':0,'id':'fresh-files','type':'function','function':{'name':'read_files','arguments':json.dumps({'files':[{'path':'fresh.py'},{'path':'fresh_tests.py'}]})}}
+     self.wfile.write(('data: '+json.dumps({'choices':[{'delta':{'tool_calls':[call]},'finish_reason':'tool_calls'}]})+'\n\ndata: [DONE]\n\n').encode());self.wfile.flush();return
+    batch=json.loads(results[-1]['content'])
+    assert 'def fresh()' in batch['results'][0]['result']['text'],batch
+    assert 'LATEST_BODY_END' in batch['results'][1]['result']['text'],batch
    if mode=='tools':
     results=[m for m in body['messages'] if m['role']=='tool']
     assert any(m['role']=='user' and m['content']=='读取大型文件并保持原任务' for m in body['messages'])
@@ -62,7 +71,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-context-') as folder:
   s=seed();call('agent_send_message',{'sessionId':s,'content':'验证压缩'});d=wait(s);m=d['messages'][-1];assert m['role']=='assistant',d['messages'][-1]
   meta=m['modelMetadata'];assert meta['context']['status']=='compacted',meta
   assert meta['context']['estimatedTokens']+6144<=32768
-  n=sum(not r['stream'] for r in requests);assert n>=1
+  n=sum(not r['stream'] for r in requests);assert 1<=n<=3,('summary cascade',n)
   assert meta['usage']['promptTokens']==100*n+200 and meta['usage']['completionTokens']==20*n+30
   request=next(r for r in reversed(requests) if r['stream']);assert any('[历史摘要' in m['content'] for m in request['messages'])
   assert any('old-49 ' in m['content'] for m in request['messages']) and len(d['messages'])>=52
@@ -82,6 +91,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-context-') as folder:
   assert td['messages'][-1]['role']=='assistant' and td['messages'][-1]['content']=='测试回复',td['messages'][-1]
   assert len(td['runs'])==16 and all(len(r['output'])>10000 for r in td['runs']),[(r['tool'],r['status'],len(r['output'])) for r in td['runs']]
   assert td['messages'][-1]['modelMetadata']['context']['status']=='compacted'
+  mode='bodies';fresh=call('agent_new_session')['id'];(root/'fresh.py').write_text('def fresh(): return 42\n');(root/'fresh_tests.py').write_text(('# file body validation '+('x'*30)+'\n')*50+'# LATEST_BODY_END\n');call('agent_send_message',{'sessionId':fresh,'content':'读取当前文件正文并保持末尾内容'});fd=wait(fresh);assert fd['messages'][-1]['content']=='测试回复',fd['messages'][-1]
   mode='fail';f=seed();call('agent_send_message',{'sessionId':f,'content':'摘要失败'});d=wait(f);assert d['messages'][-1]['modelMetadata']['context']['status']=='fallback',d['messages'][-1]
   mode='block';b=seed();call('agent_send_message',{'sessionId':b,'content':'停止压缩'});assert entered.wait(5)
   assert detail(b)['messages'][-1]['modelMetadata']['context']['status']=='compressing'

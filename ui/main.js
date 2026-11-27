@@ -3875,6 +3875,7 @@ const uiDialogOkBtnEl = $("#ui-dialog-ok");
 const uiDialogCloseBtnEl = $("#ui-dialog-close");
 
 let uiDialogResolver = null;
+let uiDialogTimer;
 let uiDialogMode = "alert"; // "alert" | "confirm" | "prompt"
 
 function setDialogMessage(text) {
@@ -3908,6 +3909,8 @@ function setDialogMessage(text) {
 }
 
 function uiDialogOpen({ title, message, mode, defaultValue }) {
+  clearTimeout(uiDialogTimer);
+  if (mode === "alert") uiDialogTimer = setTimeout(() => uiDialogClose(undefined), 5000);
   uiDialogMode = mode;
   uiDialogTitleEl.textContent = title;
   setDialogMessage(message);
@@ -3925,6 +3928,7 @@ function uiDialogOpen({ title, message, mode, defaultValue }) {
 }
 
 function uiDialogClose(value) {
+  clearTimeout(uiDialogTimer);
   uiDialogEl.classList.add("hidden");
   const resolve = uiDialogResolver;
   uiDialogResolver = null;

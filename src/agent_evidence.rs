@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 pub(crate) fn snapshot(conn: &Connection, session: &str, response: &str) -> Result<Value, String> {
     let has_args={let mut columns=conn.prepare("PRAGMA table_info(agent_runs)").map_err(|e|e.to_string())?;let names=columns.query_map([],|r|r.get::<_,String>(1)).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;names.iter().any(|n|n=="arguments")};
-    let sql=format!("SELECT id,tool,status,output,{} FROM agent_runs WHERE session_id=?1 AND response_id=?2 ORDER BY created_at,id",if has_args{"arguments"}else{"'{}'"});
+    let sql=format!("SELECT id,tool,status,output,{} FROM agent_runs WHERE session_id=?1 AND response_id=?2 ORDER BY created_at,rowid",if has_args{"arguments"}else{"'{}'"});
     let mut stmt=conn.prepare(&sql).map_err(|e|e.to_string())?;
     let mut counts = serde_json::Map::new();
     let mut calls = Vec::new();
@@ -25,7 +25,7 @@ pub(crate) fn snapshot(conn: &Connection, session: &str, response: &str) -> Resu
         total += 1;
         let count = counts.get(&status).and_then(Value::as_u64).unwrap_or(0) + 1;
         counts.insert(status.clone(), json!(count));
-        if calls.len() < 32 {
+        {
             let mut call=json!({"runId":id,"tool":tool.chars().take(128).collect::<String>(),"status":status});
             if status=="failed" {
                 let result=serde_json::from_str::<Value>(&output).unwrap_or(Value::Null);
@@ -36,6 +36,7 @@ pub(crate) fn snapshot(conn: &Connection, session: &str, response: &str) -> Resu
                 if result["testSummary"].is_object(){call["testVerdict"]=result["testSummary"]["verdict"].clone();}
             }
             calls.push(call);
+            if calls.len()>32{calls.remove(0);}
         }
     }
     // Reload the latest successful plan even after context compaction. Never copy
@@ -206,6 +207,7 @@ mod tests {
         let v = snapshot(&c, "s", "r").unwrap();
         assert_eq!(v["callCount"], 40);
         assert_eq!(v["calls"].as_array().unwrap().len(), 32);
+        assert_eq!(v["calls"][0]["runId"],"8");assert_eq!(v["calls"][31]["runId"],"39");
         assert_eq!(v["truncated"], true);
     }
 }

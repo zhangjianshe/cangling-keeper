@@ -36,6 +36,12 @@ pub(super) fn result(tool:&str,text:&str)->Value {
     let mut value=canonical(text);
     if tool=="read_file" {if let Some(v)=value.as_object_mut(){v.remove("readReuse");}}
     if tool=="read_files" {if let Some(items)=value["results"].as_array_mut(){for item in items {if let Some(v)=item["result"].as_object_mut(){v.remove("readReuse");}}}}
+    if matches!(tool,"run_tests"|"run_command") {
+        if let Some(object)=value.as_object_mut(){object.remove("repeatTestHint");}
+        // Each test run creates fresh log filenames; those are receipts, not
+        // progress. Keep byte counts/truncation and all diagnostic contents.
+        if let Some(logs)=value["testLogs"].as_array_mut(){for log in logs {if let Some(object)=log.as_object_mut(){object.remove("path");}}}
+    }
     value
 }
 
@@ -43,6 +49,16 @@ pub(super) fn result(tool:&str,text:&str)->Value {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn fresh_log_receipts_and_retry_hints_do_not_hide_identical_test_results() {
+        let mut guard=LoopGuard::default();
+        for i in 0..3 {
+            let v=json!({"testId":"unittest:tests:test*.py","testSummary":{"verdict":"failed","diagnostics":[{"exception":"TypeError"}]},"testLogs":[{"path":format!("keeper-test-{i}-stderr.log"),"bytes":123,"truncated":false}],"repeatTestHint":{"previousFailures":i}});
+            assert_eq!(guard.observe(&json!([["run_tests",{},result("run_tests",&v.to_string())]])).is_err(),i==2);
+        }
+        assert_ne!(result("run_tests",r#"{"testSummary":{"verdict":"failed"}}"#),result("run_tests",r#"{"testSummary":{"verdict":"passed"}}"#));
+        assert!(result("mcp_external",r#"{"testLogs":[{"path":"external data"}]}"#)["testLogs"][0].get("path").is_some());
+    }
     #[test]
     fn read_advice_does_not_reset_no_progress_guard(){
         let mut guard=LoopGuard::default();
@@ -149,5 +165,71 @@ pub(super) fn repeated_prose(text: &str) -> bool {
   assert!(!repeated_prose(&format!(">{p}\n\n>{p}\n\n>{p}\n\n")));
   assert!(!repeated_prose(&"OK\n\n".repeat(500)));
   assert!(!repeated_prose(&(0..30).map(|i|format!("{i}{p}\n\n")).collect::<String>()));
+ }
+}
+
+/// A changing sequence of previously read, unchanged windows can evade exact
+/// batch-cycle detection. Give one explicit chance to recover before stopping.
+#[derive(Default)]
+pub(super) struct ReadStallGuard {
+    seen: std::collections::VecDeque<[u8;32]>,
+    stale_rounds:usize,
+    warned:bool,
+    last_test:Option<[u8;32]>,
+}
+impl ReadStallGuard {
+    fn fingerprint(value:&Value)->[u8;32]{Sha256::digest(value.to_string().as_bytes()).into()}
+    fn remember(&mut self,result:&Value)->bool {
+        let path=result["path"].as_str().unwrap_or("").trim_start_matches("./");
+        let key=Self::fingerprint(&serde_json::json!([path,result["sha256"],result["startLine"],result["startColumn"],result["returnedLines"],result["text"],result["lines"]]));
+        if self.seen.contains(&key){return false}
+        if self.seen.len()==64{self.seen.pop_front();}
+        self.seen.push_back(key);true
+    }
+    pub(super) fn observe(&mut self,batch:&Value)->Result<bool,String>{
+        let mut reads=0;let mut novel=false;let mut progress=false;
+        for call in batch.as_array().into_iter().flatten(){
+            let tool=call[0].as_str().unwrap_or("");let value=&call[2];
+            if value["applied"]==true {progress=true;}
+            if matches!(tool,"run_tests"|"run_command") && value.get("testSummary").is_some(){
+                let key=Self::fingerprint(&serde_json::json!([value["exitCode"],value["testSummary"]]));
+                if self.last_test!=Some(key){progress=true;self.last_test=Some(key);}
+            }
+            if tool=="read_file" && value["keeperResult"]["status"]=="succeeded" {reads+=1;novel|=self.remember(value);}
+            if tool=="read_files" {for item in value["results"].as_array().into_iter().flatten(){
+                if item["status"]=="succeeded" {reads+=1;novel|=self.remember(&item["result"]);}
+            }}
+        }
+        if progress{self.stale_rounds=0;self.warned=false;self.seen.clear();return Ok(false)}
+        if novel{self.stale_rounds=0;return Ok(false)}
+        if reads==0{return Ok(false)}
+        self.stale_rounds+=1;
+        if self.stale_rounds<6{return Ok(false)}
+        self.stale_rounds=0;
+        if self.warned{return Err("连续重复读取已读的相同文件版本和范围，恢复提示后仍无新证据或修改，已停止无进展循环。".into())}
+        self.warned=true;Ok(true)
+    }
+}
+#[cfg(test)] mod read_stall_tests{
+ use super::*;use serde_json::json;
+ fn read(path:&str,line:u64)->Value{json!(["read_file",{}, {"path":path,"sha256":"same","startLine":line,"text":"source","keeperResult":{"status":"succeeded"}}])}
+ #[test] fn varied_repeated_reads_get_one_recovery_then_stop(){
+  let mut g=ReadStallGuard::default();for p in ["a","b","c"]{assert!(!g.observe(&json!([read(p,1)])).unwrap());}
+  for i in 0..5{assert!(!g.observe(&json!([read(["a","b","c"][i%3],1)])).unwrap());}
+  assert!(g.observe(&json!([read("c",1)])).unwrap());
+  for _ in 0..5{assert!(!g.observe(&json!([read("a",1)])).unwrap());}
+  assert!(g.observe(&json!([read("b",1)])).is_err());
+ }
+ #[test] fn new_ranges_and_actual_changes_are_progress(){
+  let mut g=ReadStallGuard::default();for line in 1..=20{assert!(!g.observe(&json!([read("large",line)])).unwrap());}
+  for _ in 0..5{g.observe(&json!([read("large",20)])).unwrap();}
+  assert!(!g.observe(&json!([["write_file",{}, {"applied":true}]])).unwrap());
+  assert!(!g.observe(&json!([read("large",20)])).unwrap());
+ }
+ #[test] fn batch_reads_and_plan_updates_do_not_mask_stalls(){
+  let item=json!(["read_files",{}, {"results":[{"status":"succeeded","result":read("a",1)[2]}]}]);
+  let mut g=ReadStallGuard::default();g.observe(&json!([item])).unwrap();
+  for _ in 0..5{g.observe(&json!([item])).unwrap();g.observe(&json!([["update_plan",{},{}]])).unwrap();}
+  assert!(g.observe(&json!([item])).unwrap());
  }
 }

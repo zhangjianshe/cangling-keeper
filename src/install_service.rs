@@ -4,6 +4,9 @@ pub(crate) fn handle() -> Option<Result<(), String>> {
     if args.first().map(String::as_str) == Some("restart") {
         return Some(restart(&args[1..]));
     }
+    if args.first().map(String::as_str)==Some("update") {
+        return Some(update(&args[1..]));
+    }
     let uninstall = match args.first().map(String::as_str) {
         Some("install-service") => false,
         Some("uninstall-service") => true,
@@ -97,4 +100,16 @@ fn restart(args: &[String]) -> Result<(), String> {
     }
     #[cfg(not(target_os = "linux"))]
     { Err("restart 目前仅支持已安装 systemd 服务的 Linux".into()) }
+}
+
+fn update(args:&[String])->Result<(),String>{
+    if args.len()==1 && matches!(args[0].as_str(),"--help"|"-h") {
+        println!("cangling-keeper update <binary>\n验证并更新当前用户的已安装程序，由 systemd 重启；日常更新无需 sudo。");return Ok(());
+    }
+    if args.len()!=1{return Err("用法：cangling-keeper update <binary>".into());}
+    #[cfg(target_os="linux")]
+    {tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e|e.to_string())?
+        .block_on(crate::app_update::update_local_service(std::path::Path::new(&args[0])))}
+    #[cfg(not(target_os="linux"))]
+    {Err("本地 update 命令目前仅支持 Linux systemd 安装".into())}
 }

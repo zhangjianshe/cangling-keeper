@@ -75,6 +75,7 @@ pub(crate) fn initialize(store: &Store) -> Result<(), String> {
         store.conn.execute("UPDATE agent_sessions SET server_id=?1",[default]).map_err(|e|e.to_string())?;
     }
     tx.commit().map_err(|e|e.to_string())?;
+    crate::agent_project_trash::migrate_names(store)?;
     Ok(())
 }
 fn project_directory(project: &str) -> Result<String, String> {
@@ -93,7 +94,7 @@ fn pin_project(store:&Store, project:&str, pinned:bool)->Result<(),String>{
 }
 fn projects(store: &Store) -> Result<Value, String> {
     let owner=crate::agent_account::owner(store)?;
-    let mut stmt=store.conn.prepare("SELECT id,name,directory,created_at FROM agent_projects ORDER BY created_at DESC,rowid DESC").map_err(|e|e.to_string())?;
+    let mut stmt=store.conn.prepare("SELECT id,name,directory,created_at FROM agent_projects WHERE NOT EXISTS(SELECT 1 FROM agent_project_trash t WHERE t.project_id=agent_projects.id) ORDER BY created_at DESC,rowid DESC").map_err(|e|e.to_string())?;
     let rows=stmt.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"directory":r.get::<_,String>(2)?,"createdAt":r.get::<_,i64>(3)?}))).map_err(|e|e.to_string())?;
     let mut rows=rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
     for row in &mut rows {row["pinned"]=json!(store.get_setting(&format!("agent_project_pin:{owner}:{}",row["id"].as_str().unwrap()))?.as_deref()==Some("true"));}
@@ -396,7 +397,17 @@ pub(crate) async fn dispatch(
     args: Value,
     sink: Arc<dyn crate::EventSink>,
 ) -> Result<Value, String> {
+    if !matches!(command,"agent_project_restore"|"agent_project_purge"|"agent_project_trash_empty") {
+        let store=core.store.lock().map_err(|e|e.to_string())?;
+        let project=args["projectId"].as_str().unwrap_or("");
+        let session=args["sessionId"].as_str().unwrap_or("");
+        let trashed:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_project_trash t WHERE t.project_id=?1 OR t.project_id IN (SELECT project_id FROM agent_sessions WHERE id=?2))",params![project,session],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if trashed{return Err("项目已移入回收站，请先恢复项目。".into())}
+    }
     match command {
+        "agent_project_purge"|"agent_project_trash_empty" => {let all=command=="agent_project_trash_empty";tokio::task::spawn_blocking(move||{let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_project_trash::purge(&store,&args,all)}).await.map_err(|e|e.to_string())?},
+        "agent_project_trash_list" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_project_trash::list(&store)},
+        "agent_project_restore" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_project_trash::move_project(&store,&text(&args,"projectId")?,None,true)},
         "agent_earth_add_tileset"|"agent_earth_tiles_status"|"agent_earth_camera_save"|"agent_earth_add_model"|"agent_earth_publish_model"|"agent_earth_get"|"agent_earth_save"|"agent_earth_ack"|"agent_earth_import"|"agent_earth_fly_to"|"agent_earth_publish_image"|"agent_earth_add_image"=>{let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_earth::invoke(&store,command,&args)},
         "agent_undo_file_change" => {
             let run=text(&args,"runId")?;
@@ -580,17 +591,13 @@ pub(crate) async fn dispatch(
                 if command=="agent_project_update" {
                     let name=text(&args,"name")?.trim().to_owned();
                     if name.is_empty() || name.chars().count()>80 || name.chars().any(char::is_control){return Err("项目名称须为 1–80 个字符，不能包含控制字符".into());}
-                    store.conn.execute("UPDATE agent_projects SET name=?2 WHERE id=?1",params![project,name]).map_err(|e|e.to_string())?;
-                    return Ok(json!({"id":project,"name":name,"directory":directory}));
+                    if project=="general" {store.conn.execute("UPDATE agent_projects SET name=?2 WHERE id=?1",params![project,name]).map_err(|e|e.to_string())?;return Ok(json!({"id":project,"name":name,"directory":directory}));}
+                    return crate::agent_project_trash::move_project(&store,&project,Some(&name),false);
                 }
                 if command=="agent_project_delete" {
                     if project=="general"{return Err("通用项目不能删除".into());}
-                    if args["confirmed"]!=true{return Err("请确认仅移除项目记录，保留磁盘文件".into());}
-                    // Projects are shared locally. Include every owner's archived and trashed sessions.
-                    let count:i64=store.conn.query_row("SELECT count(*) FROM agent_sessions WHERE project_id=?1",[&project],|r|r.get(0)).map_err(|e|e.to_string())?;
-                    if count>0{return Err("项目仍有会话（含归档、回收站或其他账户会话），不能删除。请先处理这些会话。".into());}
-                    store.conn.execute("DELETE FROM agent_projects WHERE id=?1",[&project]).map_err(|e|e.to_string())?;
-                    return Ok(json!({"deleted":true,"filesPreserved":true}));
+                    if args["confirmed"]!=true{return Err("请确认将项目、全部会话和文件移入回收站".into());}
+                    return crate::agent_project_trash::move_project(&store, &project,None,false);
                 }
                 directory
             };
@@ -602,12 +609,12 @@ pub(crate) async fn dispatch(
         }
         "agent_new_project" => {
             let name = text(&args, "name")?.trim().to_owned();
-            if name.chars().count() > 80 {
-                return Err("项目名称不能超过80字".into());
+            if name.is_empty() || name.chars().any(char::is_control) || name.chars().count() > 80 {
+                return Err("项目名称须为 1–80 个字符，不能包含控制字符".into());
             }
             let project = id();
-            let directory = project_directory(&project)?;
             let store = core.store.lock().map_err(|e| e.to_string())?;
+            let directory = crate::agent_project_trash::create(&name)?;
             if let Err(error) = store.conn.execute(
                 "INSERT INTO agent_projects VALUES (?1,?2,?3,?4)",
                 params![project, name, directory, now()],

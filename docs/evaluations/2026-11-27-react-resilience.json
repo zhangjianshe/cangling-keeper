@@ -1,0 +1,308 @@
+{
+  "date": "2026-11-27",
+  "model": "qwen-coder-next",
+  "transport": "existing CIS model proxy; real inference, no model-response injection",
+  "configuration": {
+    "modelContextLimit": 131072,
+    "workingBudgetCompaction": 32768,
+    "workingBudgetOther": 65536,
+    "maxOutputTokens": 4096,
+    "maxRoundsPerReply": 16,
+    "maxToolCallsPerReply": 40,
+    "activeSecondsPerReply": 300,
+    "sampling": "provider defaults, seed not fixed"
+  },
+  "stages": {
+    "baseline_tool": [
+      {
+        "case": "tool_failure",
+        "model": "qwen-coder-next",
+        "sessionId": "5ea68e7b-e886-4302-8166-376286e53e96",
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 5,
+        "toolCalls": 4,
+        "failedTools": 1,
+        "pathExercised": true,
+        "independentCheckPassed": true,
+        "inputsPreserved": true,
+        "passed": true,
+        "summaryRequests": 0,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 328,
+          "promptTokens": 52619
+        },
+        "checkOutput": "",
+        "promptSha256": "c6bd0af20e13b4947145867eb8038e2066523d2ac3a6ceb78ad08e32eb77e472",
+        "note": "Completed live run; record reconstructed from saved final detail after harness argument-type error. No model replay.",
+        "contextStatus": "ready",
+        "contextEstimatedTokens": 20070,
+        "rejectedTools": 0
+      }
+    ],
+    "baseline_compaction_and_initial_probe": [
+      {
+        "case": "compaction",
+        "model": "qwen-coder-next",
+        "sessionId": "bb8c3bf9-cb81-486e-a53b-0632cb951369",
+        "seconds": 21.31,
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 4,
+        "toolCalls": 4,
+        "failedTools": 0,
+        "pathExercised": true,
+        "independentCheckPassed": true,
+        "inputsPreserved": true,
+        "passed": true,
+        "summaryRequests": 12,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 1257,
+          "promptTokens": 56700
+        },
+        "checkOutput": "",
+        "promptSha256": "e214c196a6ed91d069564f7b81bc3bbb7228b6958d8988be2960a43b672cdda4",
+        "contextStatus": "compacted",
+        "contextEstimatedTokens": 21092,
+        "rejectedTools": 0
+      },
+      {
+        "case": "loop_recovery",
+        "model": "qwen-coder-next",
+        "sessionId": "506e4288-d786-4d7d-92f6-434ad8ebe61f",
+        "seconds": 6.12,
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 4,
+        "toolCalls": 2,
+        "failedTools": 0,
+        "pathExercised": false,
+        "independentCheckPassed": true,
+        "inputsPreserved": true,
+        "passed": false,
+        "summaryRequests": 0,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 241,
+          "promptTokens": 40913
+        },
+        "checkOutput": "",
+        "promptSha256": "f7894f66f18db751818761e0a9d785a1f02c1dcfc65fda48d178588c277b4c76",
+        "contextStatus": "ready",
+        "contextEstimatedTokens": 18237,
+        "rejectedTools": 0
+      }
+    ],
+    "intermediate": [
+      {
+        "case": "tool_failure",
+        "model": "qwen-coder-next",
+        "sessionId": "02073b01-6ac8-4175-b340-86913aa86ccf",
+        "seconds": 21.17,
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 10,
+        "toolCalls": 9,
+        "failedTools": 1,
+        "pathExercised": true,
+        "independentCheckPassed": true,
+        "inputsPreserved": true,
+        "passed": true,
+        "loopStopReason": null,
+        "summaryRequests": 0,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 976,
+          "promptTokens": 113817
+        },
+        "checkOutput": "",
+        "promptSha256": "c6bd0af20e13b4947145867eb8038e2066523d2ac3a6ceb78ad08e32eb77e472",
+        "contextStatus": "ready",
+        "contextEstimatedTokens": 24237,
+        "rejectedTools": 0
+      },
+      {
+        "case": "compaction",
+        "model": "qwen-coder-next",
+        "sessionId": "bcbca431-bddf-4774-81e2-225b703096fc",
+        "seconds": 24.16,
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 6,
+        "toolCalls": 7,
+        "failedTools": 0,
+        "pathExercised": true,
+        "independentCheckPassed": false,
+        "inputsPreserved": true,
+        "passed": false,
+        "loopStopReason": null,
+        "summaryRequests": 8,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 1577,
+          "promptTokens": 80737
+        },
+        "checkOutput": "Traceback (most recent call last):\n  File \"<string>\", line 2, in <module>\nFileNotFoundError: [Errno 2] No such file or directory: 'answer.json'\n",
+        "promptSha256": "e214c196a6ed91d069564f7b81bc3bbb7228b6958d8988be2960a43b672cdda4",
+        "contextStatus": "compacted",
+        "contextEstimatedTokens": 20312,
+        "rejectedTools": 2
+      },
+      {
+        "case": "loop_recovery",
+        "model": "qwen-coder-next",
+        "sessionId": "092640a2-0cb3-47f6-84d5-500af747567d",
+        "seconds": 12.05,
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 4,
+        "toolCalls": 5,
+        "failedTools": 0,
+        "pathExercised": true,
+        "independentCheckPassed": true,
+        "inputsPreserved": true,
+        "passed": true,
+        "loopStopReason": "no_progress",
+        "summaryRequests": 0,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 303,
+          "promptTokens": 41173
+        },
+        "checkOutput": "",
+        "promptSha256": "644457b2873cd89545e1ce2d76983261b48af3e595aea39d83f172a0a30d0be6",
+        "contextStatus": "ready",
+        "contextEstimatedTokens": 18495,
+        "rejectedTools": 0,
+        "loopStop": {
+          "status": "failed",
+          "reason": "no_progress",
+          "toolCalls": 3,
+          "usage": {
+            "cachedTokens": 0,
+            "completionTokens": 129,
+            "promptTokens": 30513
+          }
+        }
+      }
+    ],
+    "final": [
+      {
+        "case": "tool_failure",
+        "model": "qwen-coder-next",
+        "sessionId": "cdf0ec1e-2bd8-41f7-b0aa-a2b08a6245b8",
+        "seconds": 22.35,
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 11,
+        "toolCalls": 10,
+        "failedTools": 1,
+        "pathExercised": true,
+        "independentCheckPassed": true,
+        "inputsPreserved": true,
+        "passed": true,
+        "loopStopReason": null,
+        "summaryRequests": 0,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 909,
+          "promptTokens": 124987
+        },
+        "checkOutput": "",
+        "promptSha256": "c6bd0af20e13b4947145867eb8038e2066523d2ac3a6ceb78ad08e32eb77e472",
+        "contextStatus": "ready",
+        "contextEstimatedTokens": 24424,
+        "rejectedTools": 0
+      },
+      {
+        "case": "compaction",
+        "model": "qwen-coder-next",
+        "sessionId": "881121df-becd-422c-9020-e06301ec39eb",
+        "seconds": 21.13,
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 4,
+        "toolCalls": 4,
+        "failedTools": 0,
+        "pathExercised": true,
+        "independentCheckPassed": true,
+        "inputsPreserved": true,
+        "passed": true,
+        "loopStopReason": null,
+        "summaryRequests": 7,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 1247,
+          "promptTokens": 56760
+        },
+        "checkOutput": "",
+        "promptSha256": "e214c196a6ed91d069564f7b81bc3bbb7228b6958d8988be2960a43b672cdda4",
+        "contextStatus": "compacted",
+        "contextEstimatedTokens": 20157,
+        "rejectedTools": 0
+      },
+      {
+        "case": "loop_recovery",
+        "model": "qwen-coder-next",
+        "sessionId": "631517b5-e1ae-4567-8a3f-e9bcd4300199",
+        "seconds": 12.73,
+        "taskStatus": "complete",
+        "reason": "complete",
+        "rounds": 4,
+        "toolCalls": 5,
+        "failedTools": 0,
+        "pathExercised": true,
+        "independentCheckPassed": true,
+        "inputsPreserved": true,
+        "passed": true,
+        "loopStopReason": "no_progress",
+        "summaryRequests": 0,
+        "usage": {
+          "cachedTokens": 0,
+          "completionTokens": 336,
+          "promptTokens": 41218
+        },
+        "checkOutput": "",
+        "promptSha256": "644457b2873cd89545e1ce2d76983261b48af3e595aea39d83f172a0a30d0be6",
+        "contextStatus": "ready",
+        "contextEstimatedTokens": 18545,
+        "rejectedTools": 0,
+        "loopStop": {
+          "status": "failed",
+          "reason": "no_progress",
+          "toolCalls": 3,
+          "usage": {
+            "cachedTokens": 0,
+            "completionTokens": 129,
+            "promptTokens": 30480
+          }
+        }
+      }
+    ]
+  },
+  "limitations": [
+    "One final sample per scenario; this is a regression evaluation, not a statistical model benchmark.",
+    "Loop recovery includes a deliberate repeated-read stress test followed by a new user message; it is not automatic continuation of a stopped generation.",
+    "Tool-call counts include update_plan; loop task counts include both generations. Usage on the main record covers only the final generation for the two-generation loop task.",
+    "Initial text-only probe did not exercise the intended path; its task succeeded but pathExercised=false is retained.",
+    "An intermediate compaction failure and evaluator-only startup/recording issues are retained rather than silently discarded."
+  ],
+  "comparison": {
+    "compactionPromptSha256": "e214c196a6ed91d069564f7b81bc3bbb7228b6958d8988be2960a43b672cdda4",
+    "summaryRequestsBefore": 12,
+    "summaryRequestsAfter": 7,
+    "baselineSeconds": 21.31,
+    "finalSeconds": 21.13,
+    "noTokenOrLatencyImprovementClaim": true
+  },
+  "sourceSha256": {
+    "src/model_context.rs": "3622338a9fd1b3a3534381527934a901bb4ca7bca7f913dfb7f1f93412169604",
+    "scripts/eval-react-resilience.py": "13c8db6b8179f41dad21cc939ffd1d2f15f6d036d7b7d31521c269eca09461b2"
+  },
+  "harnessNotes": [
+    "Attempt a failed to start before any model requests because the initial runner did not isolate TMPDIR/single-instance lock; fixed to isolate it and disable HTTPS.",
+    "Attempt b completed the tool task, but the recorder expected string arguments instead of an API object. Fixed and reconstructed the score from the saved completed run without model replay."
+  ]
+}

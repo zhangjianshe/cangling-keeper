@@ -18,7 +18,8 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     return '刚刚';
   }
   function updateMessageTimes(){for(const node of document.querySelectorAll('.agent-message-time[data-time]')){const time=Number(node.dataset.time);if(Number.isFinite(time) && time>0)node.textContent=relativeMessageTime(time);}}
-  function notice(message='') {$('#agent-notice').textContent=message;$('#agent-notice').hidden=!message;}
+  let noticeTimer;
+  function notice(message='') {clearTimeout(noticeTimer);const box=$('#agent-notice');box.textContent=message;box.hidden=!message;if(message)noticeTimer=setTimeout(()=>{box.hidden=true;box.textContent='';},5000);}
   function sessionStorageKey(){return 'keeper-agent-session:'+(agent.ownerKey || 'guest');}
   function titleFor(tool) {return ({update_plan:'更新任务计划',list_directory:'列出项目目录',read_file:'读取项目文件',load_skill:'加载技能',read_skill_file:'读取技能资源',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_tests:'运行项目测试',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
   function sessionRow(session){
@@ -26,7 +27,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     const button=element('button','agent-session'+(session.id===agent.selected?' active':''),session.title);button.type='button';
     button.title=(agent.projects.find(p=>p.id===session.projectId)?.name || '')+' · '+session.title;
     button.setAttribute('aria-current',String(session.id===agent.selected));
-    button.onclick=()=>{agent.project=session.projectId;renderProjects();showConversation();select(session.id);};
+    button.onclick=()=>{agent.project=session.projectId;renderProjects();showConversation();select(session.id,true);};
     row.append(button);agent.history?.decorateRow(row,session);return row;
   }
   function renderSessions(){
@@ -99,7 +100,8 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
       summary.append(icon,element('span','agent-project-name',project.name));
       const manage=element('button','agent-project-manage','⋯');manage.type='button';manage.title='管理项目';manage.setAttribute('aria-label','管理项目 '+project.name);
       manage.setAttribute('aria-haspopup','menu');manage.title='项目操作';
-      const projectMenu=event=>{event.preventDefault();event.stopPropagation();agent.projectBrowser?.menu(manage,project,()=>window.keeperProjectDialog({project,invoke,notice,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id)await switchProject('general');}}),()=>{agent.project=project.id;newSession();},async()=>{try{await invoke('agent_pin_project',{projectId:project.id,pinned:!project.pinned});await bootstrap();}catch(error){notice(String(error));}});};
+      const manageProject=deleteOnly=>window.keeperProjectDialog({project,invoke,notice,deleteOnly,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id){agent.drafts?.reset();await switchProject('general');}}});
+      const projectMenu=event=>{event.preventDefault();event.stopPropagation();agent.projectBrowser?.menu(manage,project,()=>manageProject(false),()=>{agent.project=project.id;newSession();},async()=>{try{await invoke('agent_pin_project',{projectId:project.id,pinned:!project.pinned});await bootstrap();}catch(error){notice(String(error));}},()=>manageProject(true));};
       manage.onclick=projectMenu;manage.oncontextmenu=projectMenu;
       summary.append(manage);group.append(summary);
       const sessions=agent.history?.projectSessions(project.id) || agent.sessions.filter(s=>s.projectId===project.id);
@@ -125,16 +127,27 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     if(focusSummary&&focusProject){[...list.children].find(g=>g.dataset.projectId===focusProject)?.querySelector('summary')?.focus({preventScroll:true});}
     if(scroller)scroller.scrollTop=scrollTop;
   }
-  async function switchProject(project){
+  async function switchProject(project,sessionId=null){
     if(agent.drafts && !await agent.drafts.load(null))return;
     clearTimeout(agent.timer);++agent.generation;agent.project=project;localStorage.setItem('keeper-agent-project',project);localStorage.removeItem(sessionStorageKey());agent.selected=null;agent.detail={messages:[],runs:[]};
     renderProjects();renderSessions();renderConversation();showConversation();
-    const session=agent.sessions.find(s=>s.projectId===project);if(session)await select(session.id);
+    const session=sessionId || agent.sessions.find(s=>s.projectId===project)?.id;if(session)return select(session);
   }
+  $('#agent-project-trash').onclick=async event=>{event.preventDefault();event.stopPropagation();await window.keeperProjectTrash({invoke,notice,onChanged:bootstrap});};
   $('#agent-new-project').onclick=async event=>{
     event.preventDefault();event.stopPropagation();
-    const name=await uiPrompt('请输入项目名称','','新建项目');if(!name?.trim())return;
-    try{const project=await invoke('agent_new_project',{name:name.trim()});await bootstrap();await switchProject(project.id);}catch(error){notice(String(error));}
+    const button=$('#agent-new-project');if(button.disabled)return;button.disabled=true;
+    const epoch=agent.identityEpoch || 0,previousProject=agent.project,previousSession=agent.selected;
+    const current=()=>epoch===(agent.identityEpoch || 0) && previousProject===agent.project && previousSession===agent.selected;
+    try{
+      const name=await uiPrompt('请输入项目名称','','新建项目');if(!name?.trim() || !current())return;
+      await agent.drafts?.flush();if(!current())return;
+      const project=await invoke('agent_new_project',{name:name.trim()});if(!current())return;
+      const session=await invoke('agent_new_session',{projectId:project.id});if(!current())return;
+      await bootstrap();if(!current())return;
+      if(await switchProject(project.id,session.id) && epoch===(agent.identityEpoch || 0) && agent.project===project.id && agent.selected===session.id)$('#agent-input').focus();
+    }catch(error){if(epoch===(agent.identityEpoch || 0))notice(String(error));}
+    finally{button.disabled=false;}
   };
   async function bootstrap() {
     const epoch=agent.identityEpoch || 0,data=await invoke('agent_bootstrap');if(epoch!==(agent.identityEpoch || 0))return;agent.ownerKey=data.accountKey || 'guest';agent.projects=data.projects;agent.sessions=data.sessions;agent.history?.acceptBootstrap(data);
@@ -153,7 +166,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     }
     return agent.selected;
   }
-  async function select(session) {
+  async function select(session,focusInput=agent.selected!==session) {
     try{if(agent.drafts && !await agent.drafts.load(session))return false;}catch(error){notice(String(error));return false;}
     clearTimeout(agent.timer);agent.selected=session;const generation=++agent.generation;
     try{
@@ -164,7 +177,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
       if(agent.detail.sessionId===session){
         for(const key of ['runs','tasks']){const id=key==='runs'?'id':'responseId';for(const current of agent.detail[key] || []){const index=(data[key] || []).findIndex(v=>v[id]===current[id]);if(index<0)(data[key] ||= []).push(current);else if((current.updatedAt || 0)>(data[key][index].updatedAt || 0))data[key][index]=current;}}
       }
-      agent.detail=data;agent.history?.remember(data.session);renderModel(data.model);localStorage.setItem(sessionStorageKey(),session);renderProjects();renderSessions();renderConversation();poll();notice();return true;
+      agent.detail=data;agent.history?.remember(data.session);renderModel(data.model);localStorage.setItem(sessionStorageKey(),session);renderProjects();renderSessions();renderConversation();poll();notice();if(focusInput)$('#agent-input').focus();return true;
     }catch(error){if(generation===agent.generation){if(String(error).includes('不属于当前账号'))clearSelected();notice(String(error));}return false;}
   }
   function poll(){
@@ -234,11 +247,11 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     $('#agent-options-close').onclick=$('#agent-options-done').onclick=()=>optionsDialog.close();
     optionsDialog.onclose=()=>optionsButton.focus();
     let rounds=$('#agent-max-rounds');if(!rounds){rounds=document.createElement('select');rounds.id='agent-max-rounds';rounds.className='btn';rounds.setAttribute('aria-label','会话执行轮数上限');$('#agent-rounds-field').insertBefore(rounds,$('#agent-rounds-field small'));rounds.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const data=await invoke('agent_execution_budget',{sessionId:session,maxRounds:Number(rounds.value)});if(session===agent.selected&&epoch===agent.identityEpoch){agent.detail=data;renderModel(data.model);}}catch(e){if(session===agent.selected&&epoch===agent.identityEpoch){renderModel(agent.detail.model);notice(String(e));}}};}
-    const maxRounds=agent.detail.executionBudget?.maxRounds||16;rounds.replaceChildren();for(const n of [...new Set([8,16,24,32,maxRounds])].sort((a,b)=>a-b)){const option=document.createElement('option');option.value=String(n);option.textContent=n+' 轮';rounds.append(option);}rounds.value=String(maxRounds);rounds.disabled=!agent.selected||agent.detail.modelPending;rounds.title='每个会话单独保存；任务开始后固定预算。工具调用数和运行时间限制仍有效。';
+    const maxRounds=agent.detail.executionBudget?.maxRounds||128;rounds.replaceChildren();for(const n of [...new Set([8,16,24,32,64,128,maxRounds])].sort((a,b)=>a-b)){const option=document.createElement('option');option.value=String(n);option.textContent=n+' 轮';rounds.append(option);}rounds.value=String(maxRounds);rounds.disabled=!agent.selected||agent.detail.modelPending;rounds.title='每个会话单独保存；任务开始后固定预算。工具调用数和运行时间限制仍有效。';
 
     for(const [id,field,parent,choices,unit] of [['agent-max-tools','maxToolCalls','agent-tools-budget-field',[16,32,64,128],' 次'],['agent-active-seconds','activeSeconds','agent-time-budget-field',[180,300,600,900,1800],' 秒']]){
       let select=$('#'+id);if(!select){select=document.createElement('select');select.id=id;select.className='btn';select.setAttribute('aria-label',field==='maxToolCalls'?'阶段工具调用上限':'阶段运行时间上限');$('#'+parent).insertBefore(select,$('#'+parent+' small'));select.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const data=await invoke('agent_execution_budget',{sessionId:session,[field]:Number(select.value)});if(session===agent.selected&&epoch===agent.identityEpoch){agent.detail=data;renderModel(data.model);}}catch(e){if(session===agent.selected&&epoch===agent.identityEpoch){renderModel(agent.detail.model);notice(String(e));}}};}
-      const current=agent.detail.executionBudget?.[field]||(field==='maxToolCalls'?32:180);select.replaceChildren();for(const n of [...new Set([...choices,current])].sort((a,b)=>a-b)){const option=document.createElement('option');option.value=String(n);option.textContent=n+unit;select.append(option);}select.value=String(current);select.disabled=!agent.selected||agent.detail.modelPending;
+      const current=agent.detail.executionBudget?.[field]||(field==='maxToolCalls'?128:1800);select.replaceChildren();for(const n of [...new Set([...choices,current])].sort((a,b)=>a-b)){const option=document.createElement('option');option.value=String(n);option.textContent=n+unit;select.append(option);}select.value=String(current);select.disabled=!agent.selected||agent.detail.modelPending;
     }
 
     let budgetSelect=$('#agent-context-budget');if(!budgetSelect){budgetSelect=document.createElement('select');budgetSelect.id='agent-context-budget';budgetSelect.className='btn';budgetSelect.setAttribute('aria-label','会话上下文工作预算');$('#agent-budget-field').insertBefore(budgetSelect,$('#agent-budget-field small'));budgetSelect.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const detail=await invoke('agent_context_budget',{sessionId:session,workingBudget:Number(budgetSelect.value)});if(agent.selected===session&&epoch===agent.identityEpoch){agent.detail=detail;renderModel(agent.detail.model);renderConversation();}}catch(e){if(agent.selected===session&&epoch===agent.identityEpoch){renderModel(agent.detail.model);notice(String(e));}}};}

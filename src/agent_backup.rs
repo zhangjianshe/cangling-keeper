@@ -619,7 +619,7 @@ pub(crate) fn restore(core: &AppState, args: &Value) -> Result<Value, String> {
             let existing = sql(store
                 .conn
                 .query_row(
-                    "SELECT id FROM agent_projects WHERE id=?1 AND name=?2",
+                    "SELECT id FROM agent_projects WHERE id=?1 AND name=?2 AND NOT EXISTS(SELECT 1 FROM agent_project_trash t WHERE t.project_id=agent_projects.id)",
                     params![p.id, p.name],
                     |r| r.get::<_, String>(0),
                 )
@@ -628,11 +628,7 @@ pub(crate) fn restore(core: &AppState, args: &Value) -> Result<Value, String> {
                 id
             } else {
                 let id = uuid::Uuid::new_v4().to_string();
-                let directory = crate::platform_dirs::home_dir()
-                    .ok_or("无法确定用户目录")?
-                    .join("cangling/projects")
-                    .join(&id);
-                std::fs::create_dir_all(&directory).map_err(|_| "无法创建恢复项目的目录")?;
+                let directory = std::path::PathBuf::from(crate::agent_project_trash::create(&p.name)?);
                 created_dirs.push(directory.clone());
                 sql(store.conn.execute(
                     "INSERT INTO agent_projects(id,name,directory,created_at) VALUES (?1,?2,?3,?4)",

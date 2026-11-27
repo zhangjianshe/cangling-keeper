@@ -9,14 +9,14 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
 };
-pub(crate) const MAX_ROUNDS: usize = 16;
-pub(crate) const MAX_TOOL_CALLS: usize = 32;
-pub(crate) const ACTIVE_SECONDS: u64 = 180;
+pub(crate) const MAX_ROUNDS: usize = 128;
+pub(crate) const MAX_TOOL_CALLS: usize = 128;
+pub(crate) const ACTIVE_SECONDS: u64 = 1800;
 pub(crate) fn budget() -> Value {
     json!({"maxRounds":MAX_ROUNDS,"maxToolCalls":MAX_TOOL_CALLS,"activeSeconds":ACTIVE_SECONDS})
 }
 pub(crate) fn session_budget(store:&Store,session:&str)->Result<Value,String>{
-    let rounds=store.get_setting(&format!("agent_max_rounds:{session}"))?.and_then(|v|v.parse::<usize>().ok()).filter(|v|(1..=32).contains(v)).unwrap_or(MAX_ROUNDS);
+    let rounds=store.get_setting(&format!("agent_max_rounds:{session}"))?.and_then(|v|v.parse::<usize>().ok()).filter(|v|(1..=MAX_ROUNDS).contains(v)).unwrap_or(MAX_ROUNDS);
     let mut value=budget();value["maxRounds"]=json!(rounds);
     for (field,key,min,max) in [("maxToolCalls","agent_max_tool_calls",8,128),("activeSeconds","agent_active_seconds",60,1800)] {
         if let Some(n)=store.get_setting(&format!("{key}:{session}"))?.and_then(|v|v.parse::<u64>().ok()).filter(|n|(*n>=min)&&(*n<=max)){value[field]=json!(n);}
@@ -25,15 +25,17 @@ pub(crate) fn session_budget(store:&Store,session:&str)->Result<Value,String>{
 }
 pub(crate) fn validated_budget(current:&Value,args:&Value)->Result<Value,String>{
     let mut value=current.clone();
-    for (field,min,max) in [("maxRounds",1,32),("maxToolCalls",8,128),("activeSeconds",60,1800)] {
+    for (field,min,max) in [("maxRounds",1,MAX_ROUNDS as u64),("maxToolCalls",8,128),("activeSeconds",60,1800)] {
         if let Some(raw)=args.get(field){let n=raw.as_u64().filter(|n|*n>=min && *n<=max).ok_or_else(||format!("{field} 必须为 {min}–{max} 的整数"))?;value[field]=json!(n);}
     }
     Ok(value)
 }
 #[cfg(test)] mod long_task_budget_tests{
  use super::*;
- #[test] fn partial_update_preserves_other_limits(){let v=validated_budget(&budget(),&json!({"activeSeconds":900})).unwrap();assert_eq!(v["maxRounds"],16);assert_eq!(v["maxToolCalls"],32);assert_eq!(v["activeSeconds"],900);}
- #[test] fn rejects_invalid_or_unbounded_limits(){for args in [json!({"maxRounds":33}),json!({"maxToolCalls":129}),json!({"activeSeconds":1801}),json!({"activeSeconds":0}),json!({"maxToolCalls":8.5}),json!({"maxRounds":null})]{assert!(validated_budget(&budget(),&args).is_err());}}
+ #[test] fn partial_update_preserves_other_limits(){let v=validated_budget(&budget(),&json!({"activeSeconds":900})).unwrap();assert_eq!(v["maxRounds"],128);assert_eq!(v["maxToolCalls"],128);assert_eq!(v["activeSeconds"],900);}
+ #[test] fn default_budget_is_128_rounds_128_tools_1800_seconds(){assert_eq!(budget(),json!({"maxRounds":128,"maxToolCalls":128,"activeSeconds":1800}));}
+ #[test] fn accepts_128_rounds(){let store=Store{conn:rusqlite::Connection::open_in_memory().unwrap()};store.conn.execute_batch("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);").unwrap();store.set_setting("agent_max_rounds:test","128").unwrap();assert_eq!(session_budget(&store,"test").unwrap()["maxRounds"],128);assert_eq!(validated_budget(&budget(),&json!({"maxRounds":128})).unwrap()["maxRounds"],128);}
+ #[test] fn rejects_invalid_or_unbounded_limits(){for args in [json!({"maxRounds":129}),json!({"maxToolCalls":129}),json!({"activeSeconds":1801}),json!({"activeSeconds":0}),json!({"maxToolCalls":8.5}),json!({"maxRounds":null})]{assert!(validated_budget(&budget(),&args).is_err());}}
 }
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -224,6 +226,9 @@ pub(crate) async fn execute(
         Ok(()) | Err(tokio::sync::oneshot::error::TryRecvError::Closed) => return Ok(None),
         Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {}
     }
+    if tokio::time::Instant::now() >= *deadline {
+        return Err(termination_error(&core,response,"time_limit","Agent 运行时限已到，未开始新的工具调用。".into()));
+    }
     let run = uuid::Uuid::new_v4().to_string();
     let parsed = serde_json::from_str::<Value>(&call.arguments);
     {
@@ -344,7 +349,16 @@ pub(crate) async fn execute(
             let args = args?;
             crate::agent_actions::prepare(worker_root, &directory, &tool, &args, &worker_flag)
         });
-        let plan = tokio::select! {biased;_=&mut *cancel=>{flag.store(true,Ordering::Relaxed);let _=tokio::time::timeout(std::time::Duration::from_secs(2),&mut worker).await;persist_run(&core,session,response,&run,"stopped","操作已停止，未请求执行",sink.as_ref())?;return Ok(None)},value=&mut worker=>value.map_err(|_|"操作预览生成失败")?};
+        let plan = tokio::select! {biased;
+            _=&mut *cancel=>{flag.store(true,Ordering::Relaxed);let _=tokio::time::timeout(std::time::Duration::from_secs(2),&mut worker).await;persist_run(&core,session,response,&run,"stopped","操作已停止，未请求执行",sink.as_ref())?;return Ok(None)},
+            _=tokio::time::sleep_until(*deadline)=>{
+                flag.store(true,Ordering::Relaxed);
+                let _=tokio::time::timeout(std::time::Duration::from_secs(2),&mut worker).await;
+                persist_run(&core,session,response,&run,"failed","操作预览超过任务时限，未请求批准或执行。",sink.as_ref())?;
+                return Err(termination_error(&core,response,"time_limit","Agent 操作预览超过运行时限，未执行。".into()));
+            },
+            value=&mut worker=>value.map_err(|_|"操作预览生成失败")?
+        };
         let mut plan = match plan {
             Ok(v) => v,
             Err(error) => {
@@ -647,4 +661,28 @@ pub(crate) fn termination_error(core: &AppState, response: &str, code: &str, mes
         );
     }
     message
+}
+
+#[cfg(test)]
+mod execution_deadline_tests {
+    use super::*;
+    #[tokio::test]
+    async fn expired_batch_cannot_begin_another_tool_or_request_approval() {
+        let path=std::env::temp_dir().join(format!("keeper-expired-tool-{}",uuid::Uuid::new_v4()));
+        let core=Arc::new(crate::create_app_state(path.clone()).unwrap());
+        let root=Arc::new(cap_std::fs::Dir::open_ambient_dir(&path,cap_std::ambient_authority()).unwrap());
+        let (_sender,mut cancel)=tokio::sync::oneshot::channel();
+        let mut deadline=tokio::time::Instant::now();
+        for name in ["write_file","run_command","list_directory","update_plan","mcp_external"] {
+            let call=ToolCall{id:"expired".into(),name:name.into(),arguments:"{}".into()};
+            let error=execute(core.clone(),"unused-session","unused-response",root.clone(),&call,1,&mut cancel,&mut deadline,Arc::new(crate::LegacyEventSink)).await.unwrap_err();
+            assert!(error.contains("未开始新的工具调用"),"{name}: {error}");
+        }
+        {
+            let store=core.store.lock().unwrap();
+            assert_eq!(store.conn.query_row("SELECT count(*) FROM agent_runs",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+            assert_eq!(store.conn.query_row("SELECT count(*) FROM agent_reviews",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        }
+        drop(root);drop(core);std::fs::remove_dir_all(path).unwrap();
+    }
 }
