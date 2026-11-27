@@ -14,8 +14,8 @@ use std::{
 pub(crate) fn definitions() -> Vec<Value> {
     let mut values: Vec<Value> = [
         ("list_directory", "分页列出当前项目目录，返回名称、类型和大小。path 默认为 .；有 nextList 时使用其完整参数续读。offset 从0开始，expectedSha256 校验目录列表，变化时须从首页重新读取。", json!({"path":{"type":"string"},"offset":{"type":"integer","minimum":0},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}), json!([])),
-        ("read_file", "读取项目 UTF-8 文本文件，返回带行号内容；每页最多200行，每行片段最多1000字节。结果有 nextRead 时使用其完整参数续读，避免遗漏长行；startColumn 为首行从1开始的Unicode字符列，expectedSha256 用于拒绝跨文件版本续读。", json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"startColumn":{"type":"integer","minimum":1},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
-        ("search_files", "在项目相对文件路径和 UTF-8 内容中搜索字面字符串；mode 为 all（默认）、filename 或 content；extensions 可限制后缀，如 [rs,py]，不带点，不区分大小写。内容结果包含命中行/字符列、附近片段及可直接调用 read_file 的 readArgs。maxResults 可选1–50（默认50）；truncationReasons 说明截断原因，可缩小范围继续搜索。contextLines 可选0–5（默认0），返回前后相邻行；contextReadArgs 用于读取同一版本的完整上下文。递归搜索 path（默认 .），跳过链接、私密文件及构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"},"contextLines":{"type":"integer","minimum":0,"maximum":5},"maxResults":{"type":"integer","minimum":1,"maximum":50},"mode":{"type":"string","enum":["all","filename","content"]},"extensions":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string","minLength":1,"maxLength":16}}}), json!(["query"])),
+        ("read_file", "读取项目相对路径的UTF-8文本。已知函数/片段时使用 path、anchor（唯一字面片段）、lineCount，一次返回附近上下文；已知行号使用 startLine、lineCount，默认200行。anchor不能与startLine/startColumn混用。startColumn仅复制nextRead续读参数，不用于行号。返回带行号内容；每页最多200行，每行片段最多1000字节。结果有 nextRead 时使用其完整参数续读，避免遗漏长行；startColumn 为首行从1开始的Unicode字符列，expectedSha256 用于拒绝跨文件版本续读。", json!({"path":{"type":"string"},"anchor":{"type":"string","minLength":1,"maxLength":200},"startLine":{"type":"integer","minimum":1},"startColumn":{"type":"integer","minimum":1},"expectedSha256":{"type":"string","minLength":64,"maxLength":64},"lineCount":{"type":"integer","minimum":1,"maximum":200}}), json!(["path"])),
+        ("search_files", "字面搜索，推荐 {query:函数名,path:已知文件,mode:content}；pattern是query兼容别名，二者只能选一，不支持正则。path可为单个文件，已知文件不要从项目根目录重复搜索。默认返回2行相邻上下文，后续使用contextReadArgs或read_files读取相关实现和测试。在项目相对文件路径和 UTF-8 内容中搜索字面字符串；mode 为 all（默认）、filename 或 content；extensions 可限制后缀，如 [rs,py]，不带点，不区分大小写。内容结果包含命中行/字符列、附近片段及可直接调用 read_file 的 readArgs。maxResults 可选1–50（默认50）；truncationReasons 说明截断原因，可缩小范围继续搜索。contextLines 可选0–5（默认2），返回前后相邻行；contextReadArgs 用于读取同一版本的完整上下文。递归搜索 path（默认 .），跳过链接、私密文件及构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"pattern":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"},"contextLines":{"type":"integer","minimum":0,"maximum":5},"maxResults":{"type":"integer","minimum":1,"maximum":50},"mode":{"type":"string","enum":["all","filename","content"]},"extensions":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string","minLength":1,"maxLength":16}}}), json!([])),
     ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_earth::definitions()).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect();
     let mut item=values.iter().find(|d|d["function"]["name"]=="read_file").unwrap()["function"]["parameters"].clone();
     item["properties"]["path"]["maxLength"]=json!(1024);
@@ -289,7 +289,7 @@ fn execute_until(root:&Dir,name:&str,args:&Value,cancel:Arc<AtomicBool>,progress
                         .ok_or_else(|| format!("{key} 必须是正整数")),
                 }
             };
-            let start = number("startLine", 1)?;
+            let mut start = number("startLine", 1)?;
             let count = number("lineCount", 200)?;
             if count > 200 {
                 return Err("lineCount 最多 200".into());
@@ -302,27 +302,37 @@ fn execute_until(root:&Dir,name:&str,args:&Value,cancel:Arc<AtomicBool>,progress
                 if expected!=hash {return Err("文件已变化，未返回续读内容；请从头重新读取，避免混合不同版本。".into());}
             }
             let all=text.lines().collect::<Vec<_>>();
-            let mut lines=Vec::new();let mut size=0usize;let mut next=Value::Null;
+            if let Some(anchor)=args.get("anchor") {
+                if args.get("startLine").is_some()||args.get("startColumn").is_some(){return Err("anchor 与 startLine/startColumn 不能混用".into());}
+                let anchor=anchor.as_str().filter(|v|!v.is_empty()&&v.chars().count()<=200).ok_or("anchor须为1–200字符的字面片段")?;
+                let locations=text.match_indices(anchor).map(|(i,_)|text[..i].bytes().filter(|b|*b==b'\n').count()+1).take(9).collect::<Vec<_>>();
+                if locations.len()!=1{return Err(format!("anchor须唯一匹配，匹配行（最多9个）：{:?}；请使用更具体的片段或startLine读取。",locations));}
+                start=locations[0].saturating_sub(10).max(1) as u64;
+            }
+
+            let mut lines=Vec::new();let mut size=0usize;let mut next=Value::Null;let mut read_stop="end_of_file";
             for (i,line) in all.iter().enumerate(){
                 scope.check()?;
                 if (i as u64)+1<start{continue;}
                 let current_column=if (i as u64)+1==start{column}else{1};
                 if lines.len()>=count as usize || size>=12000 {
+                    read_stop=if lines.len()>=count as usize {if args.get("lineCount").is_some(){"requested_range"}else{"line_limit"}}else{"byte_limit"};
                     next=json!({"path":raw,"startLine":i+1,"startColumn":current_column,"lineCount":count,"expectedSha256":hash});break;
                 }
                 let offset=if current_column==1{0}else{line.char_indices().nth((current_column-1).try_into().map_err(|_|"列号超出范围")?).map(|(index,_)|index).or_else(||if current_column-1==line.chars().count() as u64{Some(line.len())}else{None}).ok_or("startColumn 超出当前行范围")?};
                 let rest=&line[offset..];let mut end=rest.floor_char_boundary(1000.min(12000-size));
                 while end>0 && json!({"line":i+1,"text":&rest[..end]}).to_string().len()>12000-size {end=rest.floor_char_boundary(end/2);}
                 let fragment=&rest[..end];
-                if end==0 && !rest.is_empty(){next=json!({"path":raw,"startLine":i+1,"startColumn":current_column,"lineCount":count,"expectedSha256":hash});break;}
+                if end==0 && !rest.is_empty(){read_stop="byte_limit";next=json!({"path":raw,"startLine":i+1,"startColumn":current_column,"lineCount":count,"expectedSha256":hash});break;}
                 let row=json!({"line":i+1,"text":fragment});size+=row.to_string().len();lines.push(row);
-                if end<rest.len(){next=json!({"path":raw,"startLine":i+1,"startColumn":current_column+fragment.chars().count() as u64,"lineCount":count,"expectedSha256":hash});break;}
+                if end<rest.len(){read_stop="line_fragment_limit";next=json!({"path":raw,"startLine":i+1,"startColumn":current_column+fragment.chars().count() as u64,"lineCount":count,"expectedSha256":hash});break;}
             }
-            Ok(json!({"path":raw,"startLine":start,"startColumn":column,"lines":lines,"totalLines":all.len(),"sha256":hash,"truncated":!next.is_null(),"nextRead":next}))
+            Ok(json!({"path":raw,"startLine":start,"startColumn":column,"lines":lines,"totalLines":all.len(),"sha256":hash,"truncated":!next.is_null() && read_stop!="requested_range","hasMore":!next.is_null(),"readStop":read_stop,"requestedRangeComplete":matches!(read_stop,"requested_range"|"end_of_file"),"nextRead":next}))
         }
 
         "search_files" => {
-            let query = args["query"]
+            if args.get("query").is_some()&&args.get("pattern").is_some(){return Err("query与pattern只能提供一个".into());}
+            let query = args.get("query").or_else(||args.get("pattern")).unwrap_or(&Value::Null)
                 .as_str()
                 .filter(|q| !q.is_empty() && q.chars().count() <= 200)
                 .ok_or("query 必须为 1–200 字符的字符串")?;
@@ -332,7 +342,7 @@ fn execute_until(root:&Dir,name:&str,args:&Value,cancel:Arc<AtomicBool>,progress
             };
             let mode=match args.get("mode"){None=>"all",Some(v)=>v.as_str().filter(|v|matches!(*v,"all"|"filename"|"content")).ok_or("mode 必须为 all、filename 或 content")?};
             let context_lines = match args.get("contextLines") {
-                None => 0,
+                None => 2,
                 Some(value) => value.as_u64().filter(|n| *n <= 5).ok_or("contextLines 须为0–5的整数")? as usize,
             };
             let max_results=match args.get("maxResults") {
@@ -455,6 +465,13 @@ mod tests {
         execute(dir, name, &args, Arc::new(AtomicBool::new(false)), |_| {})
     }
     #[test]
+    fn anchor_reads_and_search_alias_keep_scope_and_version_checks(){
+        let (root,dir)=fixture();let v=run(&dir,"read_file",json!({"path":"README.md","anchor":"project needle"})).unwrap();assert_eq!(v["startLine"],1);assert_eq!(v["lines"].as_array().unwrap().len(),3);
+        for args in [json!({"path":"README.md","anchor":"missing"}),json!({"path":"README.md","anchor":"e"}),json!({"path":"README.md","anchor":"needle","startLine":1}),json!({"path":"../secret","anchor":"needle"}),json!({"path":"README.md","anchor":"needle","expectedSha256":"0".repeat(64)})]{assert!(run(&dir,"read_file",args).is_err());}
+        let a=run(&dir,"search_files",json!({"query":"needle","path":"README.md"})).unwrap();let b=run(&dir,"search_files",json!({"pattern":"needle","path":"README.md"})).unwrap();assert_eq!(a,b);assert_eq!(b["matches"][0]["context"].as_array().unwrap().len(),3);
+        assert!(run(&dir,"search_files",json!({"pattern":"needle","query":"other"})).is_err());drop(dir);std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn batch_reads_preserve_per_file_errors_versions_and_boundaries(){
         let (root,dir)=fixture();
         let args=json!({"files":[{"path":"README.md","lineCount":1},{"path":"missing.txt"},{"path":"../secret.txt"},{"path":".env"},{"path":"src/main.rs"}]});
@@ -494,7 +511,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(file["lines"][0], json!({"line":2,"text":"project needle"}));
-        assert_eq!(file["truncated"], true);
+        assert_eq!(file["truncated"], false);assert_eq!(file["hasMore"],true);assert_eq!(file["readStop"],"requested_range");assert_eq!(file["nextRead"]["startLine"],3);
         let found = run(&dir, "search_files", json!({"query":"NEEDLE"})).unwrap();
         assert_eq!(found["matches"].as_array().unwrap().len(), 2);
         drop(dir);
@@ -543,6 +560,8 @@ mod tests {
         let file = run(&dir, "read_file", json!({"path":"long"})).unwrap();
         assert_eq!(file["lines"][0]["text"].as_str().unwrap().len(), 1000);
         assert_eq!(file["truncated"], true);
+        let limited=run(&dir,"read_file",json!({"path":"long","lineCount":1})).unwrap();
+        assert_eq!(limited["truncated"],true);assert_eq!(limited["requestedRangeComplete"],false);assert_eq!(limited["readStop"],"line_fragment_limit");
         drop(dir);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -659,7 +678,7 @@ mod tests {
         assert_eq!(hits[2]["context"].as_array().unwrap().len(),2);
         let read=run(&dir,"read_file",hits[1]["contextReadArgs"].clone()).unwrap();
         assert_eq!(read["lines"][0]["text"],"中文前文");
-        let plain=run(&dir,"search_files",json!({"path":"context.txt","query":"needle"})).unwrap();
+        let plain=run(&dir,"search_files",json!({"path":"context.txt","query":"needle","contextLines":0})).unwrap();
         assert!(plain["matches"][0].get("context").is_none());
         let names=run(&dir,"search_files",json!({"query":"context","mode":"filename","contextLines":5})).unwrap();
         assert!(names["matches"][0].get("context").is_none());

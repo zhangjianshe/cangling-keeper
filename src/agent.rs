@@ -85,14 +85,21 @@ fn project_directory(project: &str) -> Result<String, String> {
     std::fs::create_dir_all(&path).map_err(|e| format!("创建项目目录失败：{e}"))?;
     Ok(path.to_string_lossy().into_owned())
 }
-fn projects(store: &Store) -> Result<Value, String> {
-    let mut stmt=store.conn.prepare("SELECT id,name,directory FROM agent_projects ORDER BY CASE WHEN id='general' THEN 0 ELSE 1 END,created_at,rowid").map_err(|e|e.to_string())?;
-    let rows=stmt.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"directory":r.get::<_,String>(2)?}))).map_err(|e|e.to_string())?;
-    Ok(json!(
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?
-    ))
+fn pin_project(store:&Store, project:&str, pinned:bool)->Result<(),String>{
+    let exists:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_projects WHERE id=?1)",[project],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if !exists{return Err("项目不存在".into());}
+    let owner=crate::agent_account::owner(store)?;
+    store.set_setting(&format!("agent_project_pin:{owner}:{project}"),if pinned{"true"}else{"false"})
 }
+fn projects(store: &Store) -> Result<Value, String> {
+    let owner=crate::agent_account::owner(store)?;
+    let mut stmt=store.conn.prepare("SELECT id,name,directory,created_at FROM agent_projects ORDER BY created_at DESC,rowid DESC").map_err(|e|e.to_string())?;
+    let rows=stmt.query_map([],|r|Ok(json!({"id":r.get::<_,String>(0)?,"name":r.get::<_,String>(1)?,"directory":r.get::<_,String>(2)?,"createdAt":r.get::<_,i64>(3)?}))).map_err(|e|e.to_string())?;
+    let mut rows=rows.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+    for row in &mut rows {row["pinned"]=json!(store.get_setting(&format!("agent_project_pin:{owner}:{}",row["id"].as_str().unwrap()))?.as_deref()==Some("true"));}
+    Ok(json!(rows))
+}
+
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -148,11 +155,11 @@ fn sessions(store: &Store) -> Result<Value, String> {
     Ok(crate::agent_history::list(store,&json!({}))?["items"].clone())
 }
 // Keep the physical rows immutable; resolve alternative replies at the original position.
-fn reply_messages(store: &Store, session: &str, boundary: Option<&str>) -> Result<Vec<Value>, String> {
+pub(crate) fn reply_messages(store: &Store, session: &str, boundary: Option<&str>) -> Result<Vec<Value>, String> {
     let mut stmt=store.conn.prepare("SELECT id,role,content,created_at,model_metadata FROM agent_messages WHERE session_id=?1 AND (?2 IS NULL OR rowid<(SELECT rowid FROM agent_messages WHERE id=?2 AND session_id=?1)) ORDER BY rowid").map_err(|e|e.to_string())?;
     stmt.query_map(params![session,boundary],|r|Ok(json!({"id":r.get::<_,String>(0)?,"role":r.get::<_,String>(1)?,"content":r.get::<_,String>(2)?,"createdAt":r.get::<_,i64>(3)?,"modelMetadata":serde_json::from_str::<Value>(&r.get::<_,String>(4)?).unwrap_or(json!({}))}))).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
 }
-fn reply_groups(store: &Store, session: &str, messages: &[Value]) -> Result<Vec<Value>, String> {
+pub(crate) fn reply_groups(store: &Store, session: &str, messages: &[Value]) -> Result<Vec<Value>, String> {
     let mut roots=std::collections::HashMap::<String,String>::new();
     let mut groups=Vec::<Value>::new();
     for message in messages.iter().filter(|m|matches!(m["role"].as_str(),Some("assistant"|"user"))) {
@@ -477,11 +484,14 @@ pub(crate) async fn dispatch(
         "agent_model_output_budget" => {let store=core.store.lock().map_err(|e|e.to_string())?;crate::model::save_output_budget(&store,&args)},
         "agent_model_test" => crate::model::test(&core,args["id"].as_str()).await,
         "agent_execution_budget" => {
-            let session=text(&args,"sessionId")?;let rounds=args["maxRounds"].as_u64().filter(|v|(1..=32).contains(v)).ok_or("执行轮数必须为1–32的整数")?;
+            let session=text(&args,"sessionId")?;
             let store=core.store.lock().map_err(|e|e.to_string())?;require_session(&store,&session)?;
             let pending:bool=store.conn.query_row("SELECT EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?1)",[&session],|r|r.get(0)).map_err(|e|e.to_string())?;
-            if pending{return Err("任务运行中不能修改执行轮数".into());}
-            store.set_setting(&format!("agent_max_rounds:{session}"),&rounds.to_string())?;detail(&store,&session)
+            if pending{return Err("任务运行中不能修改执行预算".into());}
+            let value=crate::agent_runtime::validated_budget(&crate::agent_runtime::session_budget(&store,&session)?,&args)?;
+            let tx=store.conn.unchecked_transaction().map_err(|e|e.to_string())?;
+            for (field,key) in [("maxRounds","agent_max_rounds"),("maxToolCalls","agent_max_tool_calls"),("activeSeconds","agent_active_seconds")]{store.set_setting(&format!("{key}:{session}"),&value[field].to_string())?;}
+            tx.commit().map_err(|e|e.to_string())?;detail(&store,&session)
         }
         "agent_context_budget" => {
             let session=text(&args,"sessionId")?;let budget=args["workingBudget"].as_u64().ok_or("工作预算必须为整数")?;
@@ -511,6 +521,13 @@ pub(crate) async fn dispatch(
             Ok(
                 json!({"accountKey":crate::agent_account::owner(&store)?,"projects":projects(&store)?,"sessions":page["items"],"sessionPage":{"nextCursor":page["nextCursor"],"hasMore":page["hasMore"]},"pinnedSessions":pinned["items"],"pinnedPage":{"nextCursor":pinned["nextCursor"],"hasMore":pinned["hasMore"]},"tools":tools(),"modelConnected":crate::model::connected(&store),"model":crate::model::config(&store)?,"hosts":store.list_hosts()?.iter().map(|h|json!({"id":h.id,"name":h.name,"hostname":h.hostname})).collect::<Vec<_>>()}),
             )
+        }
+        "agent_pin_project" => {
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            let project=text(&args,"projectId")?;
+            let pinned=args["pinned"].as_bool().ok_or("缺少置顶状态")?;
+            pin_project(&store,&project,pinned)?;
+            Ok(json!({"pinned":pinned}))
         }
         "agent_pin_session" => {
             let store=core.store.lock().map_err(|e|e.to_string())?;
@@ -841,6 +858,23 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+    #[test]
+    fn project_order_and_account_pins_persist() {
+        let temp=Temp::new();let path=temp.0.join("pins.sql");
+        {
+            let store=Store::load(path.clone()).unwrap();initialize(&store).unwrap();
+            store.conn.execute_batch("UPDATE agent_projects SET created_at=0; INSERT INTO agent_projects VALUES ('old','Old','/tmp/old',1),('new','New','/tmp/new',2);").unwrap();
+            pin_project(&store,"old",true).unwrap();
+            let rows=projects(&store).unwrap();assert_eq!(rows[0]["id"],"new");assert_eq!(rows[1]["pinned"],true);
+            assert!(pin_project(&store,"missing",true).is_err());
+        }
+        let store=Store::load(path).unwrap();assert_eq!(projects(&store).unwrap()[1]["pinned"],true);
+        store.set_setting(crate::sync::SETTING_TOKEN,"test-token").unwrap();
+        store.set_setting(crate::sync::SETTING_USERNAME,"other").unwrap();
+        assert_eq!(projects(&store).unwrap()[1]["pinned"],false);
+        store.set_setting(crate::sync::SETTING_TOKEN,"").unwrap();
+        pin_project(&store,"old",false).unwrap();assert_eq!(projects(&store).unwrap()[1]["pinned"],false);
     }
     #[test]
     fn migrates_legacy_sessions_into_general_project() {

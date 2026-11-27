@@ -80,10 +80,10 @@ pub(crate) fn prompt(mode: &str) -> String {
             "完全访问：本机文件修改与命令由系统自动批准，命令具有 Keeper 当前用户的文件和网络权限。内置文件工具仍使用项目相对路径；项目外操作可通过命令完成。"
         }
         "auto" => {
-            "自动审批：系统自动批准受项目路径约束的 write_file、apply_patch；所有 run_command 仍需用户确认，因为 Shell 未启用操作系统沙箱。"
+            "自动审批：系统自动批准受项目路径约束的 write_file、apply_patch；所有 run_command 和 run_tests 仍需用户确认，因为 Shell 未启用操作系统沙箱。"
         }
         _ => {
-            "请求批准：项目内读取无需确认；write_file、apply_patch、run_command 均需用户点击确认。"
+            "请求批准：项目内读取无需确认；write_file、apply_patch、run_command、run_tests 均需用户点击确认。"
         }
     };
     format!(

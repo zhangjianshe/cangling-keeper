@@ -467,6 +467,8 @@
       <header class="llm-dialog-head"><h2 id="agent-options-title">对话选项</h2><button id="agent-options-close" class="modal-close" type="button" aria-label="关闭对话选项">×</button></header>
       <div class="llm-dialog-fields">
         <label id="agent-rounds-field">执行轮次上限<small>限制本轮模型与工具的往返次数，工具调用数和运行时间仍有独立限制。</small></label>
+        <label id="agent-tools-budget-field">阶段工具调用上限<small>每个阶段最多执行的工具数量，达到上限后可准备继续。</small></label>
+        <label id="agent-time-budget-field">阶段运行时间<small>等待审批不计时；单条命令仍受自身超时约束。</small></label>
         <label id="agent-budget-field">上下文工作预算<small>不超过当前模型上限；包含预留输出，接近预算时自动整理历史。</small></label>
         <p class="hint">选择后自动保存，仅对当前会话生效。生成期间不可修改。</p>
       </div>

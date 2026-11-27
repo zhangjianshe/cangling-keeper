@@ -31,10 +31,25 @@ pub(super) fn canonical(text: &str) -> Value {
     serde_json::from_str(text).unwrap_or_else(|_| Value::String(text.into()))
 }
 
+/// Advisory reuse metadata does not represent filesystem progress.
+pub(super) fn result(tool:&str,text:&str)->Value {
+    let mut value=canonical(text);
+    if tool=="read_file" {if let Some(v)=value.as_object_mut(){v.remove("readReuse");}}
+    if tool=="read_files" {if let Some(items)=value["results"].as_array_mut(){for item in items {if let Some(v)=item["result"].as_object_mut(){v.remove("readReuse");}}}}
+    value
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn read_advice_does_not_reset_no_progress_guard(){
+        let mut guard=LoopGuard::default();
+        for i in 0..3 {let mut v=json!({"text":"same","sha256":"v1"});if i>0{v["readReuse"]=json!({"allReturnedBefore":true});}let r=guard.observe(&json!([["read_file",{},result("read_file",&v.to_string())]]));assert_eq!(r.is_err(),i==2);}
+        assert_ne!(result("read_file",r#"{"sha256":"v1"}"#),result("read_file",r#"{"sha256":"v2"}"#));
+        assert!(result("run_command",r#"{"readReuse":"real output"}"#).get("readReuse").is_some());
+    }
     #[test]
     fn identical_results_stop_on_third_round() {
         let mut guard=LoopGuard::default();let batch=json!([["read_file",canonical(r#"{"path":"a"}"#),{"text":"same"}]]);
@@ -112,4 +127,27 @@ mod refusal_tests {
         }
         assert!(guard.check("run_command","{}").is_ok());
     }
+}
+
+/// Conservative prose-loop detector; never inspect tool arguments or code blocks.
+pub(super) fn repeated_prose(text: &str) -> bool {
+    if text.len()<1200 || text.contains("```") || text.contains("~~~") {return false;}
+    let parts:Vec<_>=text.split("\n\n").collect();
+    let complete=&parts[..parts.len().saturating_sub(1)];
+    let recent=&complete[complete.len().saturating_sub(12)..];
+    recent.iter().any(|p| {
+        let p=p.trim();
+        p.chars().count()>=60 && !p.starts_with(['>','|']) && recent.iter().filter(|q|q.trim()==p).count()>=3
+    })
+}
+#[cfg(test)] mod prose_tests {
+ use super::*;
+ #[test] fn stops_repeated_long_prose_but_not_code_quotes_or_short_lists(){
+  let p="这是一个反复出现且没有新增证据的分析段落。".repeat(8);
+  assert!(repeated_prose(&format!("{p}\n\n{p}\n\n{p}\n\n")));
+  assert!(!repeated_prose(&format!("```text\n{p}\n\n{p}\n\n{p}\n\n```")));
+  assert!(!repeated_prose(&format!(">{p}\n\n>{p}\n\n>{p}\n\n")));
+  assert!(!repeated_prose(&"OK\n\n".repeat(500)));
+  assert!(!repeated_prose(&(0..30).map(|i|format!("{i}{p}\n\n")).collect::<String>()));
+ }
 }

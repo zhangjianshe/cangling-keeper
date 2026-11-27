@@ -51,10 +51,15 @@ pub(crate) fn managed(s: &Store) -> Result<Vec<Value>, String> {
     q.query_map([owner],|r|{let id:String=r.get(0)?;let profile:String=r.get(1)?;let scope=if profile.is_empty(){"account"}else{"agent"};Ok(json!({"id":id,"ref":format!("{scope}:{id}"),"scope":scope,"profileId":profile,"name":r.get::<_,String>(2)?,"description":r.get::<_,String>(3)?,"revision":r.get::<_,String>(4)?}))}).map_err(|e|e.to_string())?.collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())
 }
 const EARTH_SKILL:&str=include_str!("../skills/earth-workbench/SKILL.md");
-fn builtin()->Value{json!({"id":"system-earth-workbench","ref":"system:earth-workbench","scope":"system","name":"earth-workbench","description":"地球定位、项目图片与GeoJSON叠加、GLB模型加载、资源下载及渲染核验","revision":format!("{:x}",Sha256::digest(EARTH_SKILL.as_bytes())),"readonly":true})}
+const CODING_SKILL:&str=include_str!("../skills/coding-workflow/SKILL.md");
+fn builtin_sources()->[(&'static str,&'static str,&'static str);2]{[
+ ("earth-workbench","地球定位、项目图片与GeoJSON叠加、GLB模型加载、资源下载及渲染核验",EARTH_SKILL),
+ ("coding-workflow","用于需要实现代码、运行测试并修复失败的多步编程任务；指导契约核对、证据定位、根因修复和验收收尾。普通问答或只读介绍无需加载。",CODING_SKILL)
+]}
+fn builtins()->Vec<Value>{builtin_sources().into_iter().map(|(name,description,body)|json!({"id":format!("system-{name}"),"ref":format!("system:{name}"),"scope":"system","name":name,"description":description,"revision":format!("{:x}",Sha256::digest(body.as_bytes())),"readonly":true})).collect()}
 pub(crate) fn catalog(s: &Store, session: &str, guidance: &Value) -> Result<Vec<Value>, String> {
     let project = project(s, session)?;
-    let mut out = vec![builtin()];
+    let mut out = builtins();
     out.extend(managed(s)?);
     for entry in guidance["skills"].as_array().into_iter().flatten() {
         let mut e = entry.clone();
@@ -187,7 +192,12 @@ fn check_path(p: &str) -> Result<(), String> {
     Ok(())
 }
 fn files(s: &Store, entry: &Value, revision: &str) -> Result<Value, String> {
-    if entry["scope"]=="system" {let current=builtin();if entry["ref"]!=current["ref"]||revision!=current["revision"].as_str().unwrap(){return Err("系统技能版本已变化，请发起新回复".into());}return Ok(json!({"SKILL.md":EARTH_SKILL}));}
+    if entry["scope"]=="system" {
+        let current=builtins().into_iter().find(|e|e["ref"]==entry["ref"] && e["id"]==entry["id"]).ok_or("未知系统技能")?;
+        if revision!=current["revision"].as_str().unwrap(){return Err("系统技能版本已变化，请发起新回复".into());}
+        let body=builtin_sources().into_iter().find(|(name,_,_)|current["name"]==*name).ok_or("未知系统技能")?.2;
+        return Ok(json!({"SKILL.md":body}));
+    }
 
     let raw: String = s
         .conn
@@ -271,8 +281,9 @@ pub(crate) fn prepare(
     } else {
         selected = all.into_iter().filter(|e| e["scope"] != "agent").collect();
     }
-    let system=builtin();
-    if !selected.iter().any(|e|e["ref"]==system["ref"]){selected.insert(0,system);}
+    for system in builtins(){
+        if !selected.iter().any(|e|e["ref"]==system["ref"]){selected.push(system);}
+    }
     if selected.len() > 64 {
         return Err("本轮技能超过64项，请使用智能体选择所需技能".into());
     }
@@ -361,7 +372,7 @@ pub(crate) fn load(
         return Ok(result);
     }
     let allowed = managed(s)?
-        .into_iter().chain(std::iter::once(builtin()))
+        .into_iter().chain(builtins())
         .find(|e| e["id"] == entry["id"] && e["ref"] == entry["ref"])
         .ok_or("技能不属于当前账户")?;
     if allowed["scope"] == "agent" && allowed["profileId"] != metadata["agentProfile"]["id"] {
@@ -412,4 +423,17 @@ pub(crate) fn load(
         "content"
     }] = json!(page);
     Ok(result)
+}
+
+#[cfg(test)] mod builtin_tests {
+ use super::*;
+ #[test] fn catalog_only_contains_metadata_and_documents_validate(){
+  let entries=builtins();assert_eq!(entries.len(),2);
+  for (name,_,body) in builtin_sources(){
+   crate::agent_skills::validate_document(body,name).unwrap();
+   let e=entries.iter().find(|e|e["name"]==name).unwrap();
+   assert!(e.get("content").is_none());assert!(e.get("files").is_none());
+   assert_eq!(e["revision"],format!("{:x}",Sha256::digest(body.as_bytes())));
+  }
+ }
 }

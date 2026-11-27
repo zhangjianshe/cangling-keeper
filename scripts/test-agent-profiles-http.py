@@ -51,8 +51,9 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   # Seed discovered tool metadata; execution of the unassociated MCP name must be rejected before launch.
   with sqlite3.connect(Path(tmp)/'data.sql') as db:
    db.execute("INSERT INTO agent_mcp_servers(id,owner_key,name,command,args,enabled,tools) VALUES ('preset-fixture','guest','Fixture','never-launch','[]',1,?)",(json.dumps([{'name':'allowed','description':'allowed MCP fixture','inputSchema':{'type':'object'},'enabled':True},{'name':'excluded','description':'excluded MCP fixture','inputSchema':{'type':'object'},'enabled':True}]),))
-  opts=call('agent_profile_options',{'sessionId':s});assert len(opts['skills'])==3 and len(opts['mcpTools'])==2
-  allowed=opts['mcpTools'][0]['function']['name'];excluded=opts['mcpTools'][1]['function']['name']
+  opts=call('agent_profile_options',{'sessionId':s});assert {x['name'] for x in opts['skills']}=={'earth-workbench','coding-workflow','chosen','other'}
+  fixture_tools=[x for x in opts['mcpTools'] if x['function']['name'].startswith('mcp_preset-fixture_')];assert len(fixture_tools)==2
+  allowed=fixture_tools[0]['function']['name'];excluded=fixture_tools[1]['function']['name']
   icon='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAIAAAA2iEnWAAAAFUlEQVR4nGP8//8/AwMDEwMDA4ICADkbAwP+wj6MAAAAAElFTkSuQmCC'
   payload={'icon':icon,'sessionId':s,'name':'编码助手','systemPrompt':'PRESET-ORIGINAL','modelId':model,'skills':['chosen'],'mcpTools':[allowed]}
   preset=call('agent_profile_save',payload);assert preset['icon']==icon;pid=preset['id'];payload['id']=pid

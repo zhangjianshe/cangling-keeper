@@ -17,7 +17,23 @@ pub(crate) fn budget() -> Value {
 }
 pub(crate) fn session_budget(store:&Store,session:&str)->Result<Value,String>{
     let rounds=store.get_setting(&format!("agent_max_rounds:{session}"))?.and_then(|v|v.parse::<usize>().ok()).filter(|v|(1..=32).contains(v)).unwrap_or(MAX_ROUNDS);
-    let mut value=budget();value["maxRounds"]=json!(rounds);Ok(value)
+    let mut value=budget();value["maxRounds"]=json!(rounds);
+    for (field,key,min,max) in [("maxToolCalls","agent_max_tool_calls",8,128),("activeSeconds","agent_active_seconds",60,1800)] {
+        if let Some(n)=store.get_setting(&format!("{key}:{session}"))?.and_then(|v|v.parse::<u64>().ok()).filter(|n|(*n>=min)&&(*n<=max)){value[field]=json!(n);}
+    }
+    Ok(value)
+}
+pub(crate) fn validated_budget(current:&Value,args:&Value)->Result<Value,String>{
+    let mut value=current.clone();
+    for (field,min,max) in [("maxRounds",1,32),("maxToolCalls",8,128),("activeSeconds",60,1800)] {
+        if let Some(raw)=args.get(field){let n=raw.as_u64().filter(|n|*n>=min && *n<=max).ok_or_else(||format!("{field} 必须为 {min}–{max} 的整数"))?;value[field]=json!(n);}
+    }
+    Ok(value)
+}
+#[cfg(test)] mod long_task_budget_tests{
+ use super::*;
+ #[test] fn partial_update_preserves_other_limits(){let v=validated_budget(&budget(),&json!({"activeSeconds":900})).unwrap();assert_eq!(v["maxRounds"],16);assert_eq!(v["maxToolCalls"],32);assert_eq!(v["activeSeconds"],900);}
+ #[test] fn rejects_invalid_or_unbounded_limits(){for args in [json!({"maxRounds":33}),json!({"maxToolCalls":129}),json!({"activeSeconds":1801}),json!({"activeSeconds":0}),json!({"maxToolCalls":8.5}),json!({"maxRounds":null})]{assert!(validated_budget(&budget(),&args).is_err());}}
 }
 fn now() -> i64 {
     chrono::Utc::now().timestamp_millis()
@@ -225,7 +241,7 @@ pub(crate) async fn execute(
         sink.as_ref(),
     )?;
     let allowed={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_profiles::check_call(&store,response,&call.name,&parsed.as_ref().cloned().unwrap_or(Value::Null))};
-    if let Err(error)=allowed{return finish_result(&core,session,response,&run,call,Err(error),false,sink.as_ref());}
+    if let Err(error)=allowed{return finish_result(&core,session,response,&run,call,Ok(json!({"error":error,"notExecuted":true})),false,sink.as_ref());}
     if call.name == "load_skill" || call.name == "read_skill_file" {
         let managed = {
             let store = core.store.lock().map_err(|e| e.to_string())?;
@@ -267,7 +283,7 @@ pub(crate) async fn execute(
         return execute_mcp(&core,session,response,&run,call,parsed,step,cancel,deadline,sink.as_ref()).await;
     }
     let validation=parsed.as_ref().map_err(|_|"工具参数不是有效 JSON，未执行".to_string()).and_then(|args|crate::agent_tool_args::validate(&call.name,args));
-    if let Err(error)=validation{return finish_result(&core,session,response,&run,call,Err(error),false,sink.as_ref());}
+    if let Err(error)=validation{return finish_result(&core,session,response,&run,call,Ok(json!({"error":error,"notExecuted":true})),false,sink.as_ref());}
     if matches!(call.name.as_str(),"earth_search_datasets"|"earth_load_dataset") {
         let catalog=tokio::select!{biased;
             _=&mut *cancel=>{persist_run(&core,session,response,&run,"stopped","已停止数据集查询",sink.as_ref())?;return Ok(None)},
@@ -285,7 +301,22 @@ pub(crate) async fn execute(
     }
     if call.name.starts_with("earth_"){let result={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_earth::execute(&store,session,&call.name,parsed.as_ref().unwrap(),&root)};return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());}
     if call.name == "update_plan" {
-        let result=parsed.map_err(|_|"计划参数不是有效 JSON".to_string()).and_then(crate::agent_plan::update);
+        let result=parsed.map_err(|_|"计划参数不是有效 JSON".to_string()).and_then(|mut args|{
+            if args.get("acceptance").is_none(){
+                let store=core.store.lock().map_err(|e|e.to_string())?;
+                let old:Option<String>=store.conn.query_row("SELECT output FROM agent_runs WHERE session_id=?1 AND response_id=?2 AND tool='update_plan' AND status='succeeded' ORDER BY rowid DESC LIMIT 1",rusqlite::params![session,response],|r|r.get(0)).ok();
+                if let Some(old)=old.and_then(|s|serde_json::from_str::<Value>(&s).ok()){
+                    if let Some(items)=old["acceptance"].as_array(){args["acceptance"]=json!(items.iter().map(|v|json!({"requirement":v["requirement"],"check":v["check"],"status":v["status"],"evidence":v["evidence"]})).collect::<Vec<_>>());}
+                }
+            }
+            crate::agent_plan::update(args)
+        }).and_then(|mut value|{
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            let previous=store.conn.query_row("SELECT rowid,output FROM agent_runs WHERE session_id=?1 AND response_id=?2 AND tool='update_plan' AND status='succeeded' ORDER BY rowid DESC LIMIT 1",rusqlite::params![session,response],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).ok();
+            let work=if let Some((row,_))=&previous{store.conn.query_row("SELECT count(*) FROM agent_runs WHERE session_id=?1 AND response_id=?2 AND rowid>?3 AND tool!='update_plan' AND status IN ('succeeded','failed','rejected','stopped')",rusqlite::params![session,response,row],|r|r.get::<_,i64>(0)).map_err(|e|e.to_string())?>0}else{false};
+            let old=previous.and_then(|(_,text)|serde_json::from_str::<Value>(&text).ok());
+            crate::agent_plan::feedback(&mut value,old.as_ref(),work);Ok(value)
+        });
         return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());
     }
     let flag = Arc::new(AtomicBool::new(false));
@@ -323,12 +354,13 @@ pub(crate) async fn execute(
                     response,
                     &run,
                     call,
-                    Err(error),
+                    Ok(json!({"error":error,"notExecuted":true})),
                     false,
                     sink.as_ref(),
                 );
             }
         };
+        if let Some(value)=plan.unchanged(){return finish_result(&core,session,response,&run,call,Ok(value),false,sink.as_ref());}
         let security_mode={let store=core.store.lock().map_err(|e|e.to_string())?;store.conn.query_row("SELECT security_mode FROM agent_tasks WHERE response_id=?1",[response],|r|r.get::<_,String>(0)).unwrap_or_else(|_|"ask".into())};
         let automatic=crate::agent_security::auto_approve(&security_mode,&call.name);
         for (key,value) in crate::agent_security::audit(&security_mode,&call.name).as_object().unwrap(){plan.review[key]=value.clone();}
@@ -400,7 +432,7 @@ pub(crate) async fn execute(
                 )?;
                 phase(&core, session, response, "tool", step, sink.as_ref())?;
                 return Ok(Some(
-                    json!({"role":"tool","tool_call_id":call.id,"content":result.to_string()}),
+                    json!({"role":"tool","tool_call_id":call.id,"content":crate::agent_tool_result::for_model(&call.name,&result).to_string()}),
                 ));
             }
             if state != "running" {
@@ -504,7 +536,7 @@ async fn execute_mcp(core:&AppState,session:&str,response:&str,run:&str,call:&To
         tokio::select!{biased;_=&mut *cancel=>{persist_run(core,session,response,run,"stopped","已停止，MCP 工具未执行",sink)?;return Ok(None)},_ = tokio::time::sleep(std::time::Duration::from_millis(100))=>{}}
         let state={let store=core.store.lock().map_err(|e|e.to_string())?;let state=store.conn.query_row("SELECT status FROM agent_runs WHERE id=?1",[run],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?;if state=="approved" {let changed=store.conn.execute("UPDATE agent_runs SET status='running' WHERE id=?1 AND status='approved' AND EXISTS(SELECT 1 FROM agent_model_pending WHERE session_id=?2 AND message_id=?3 AND stop_requested=0)",params![run,session,response]).map_err(|e|e.to_string())?;if changed==1{"running".to_owned()}else{"stopped".to_owned()}}else{state}};
         if state=="pending_approval" {continue;}if !automatic {*deadline+=waiting.elapsed();}
-        if state=="rejected"{let mut result=json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});crate::agent_tool_result::annotate(&call.name,&mut result,"rejected");persist_run(core,session,response,run,"rejected",&result.to_string(),sink)?;phase(core,session,response,"tool",step,sink)?;return Ok(Some(json!({"role":"tool","tool_call_id":call.id,"content":result.to_string()})));}
+        if state=="rejected"{let mut result=json!({"error":"用户拒绝此操作，未执行；不要再次请求同一操作。","rejected":true});crate::agent_tool_result::annotate(&call.name,&mut result,"rejected");persist_run(core,session,response,run,"rejected",&result.to_string(),sink)?;phase(core,session,response,"tool",step,sink)?;return Ok(Some(json!({"role":"tool","tool_call_id":call.id,"content":crate::agent_tool_result::for_model(&call.name,&result).to_string()})));}
         if state!="running"{persist_run(core,session,response,run,"stopped","操作已停止，未执行",sink)?;return Ok(None)}break;
     }
     let unchanged={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_mcp::resolve_for(&store,session,&call.name).is_ok_and(|current|current.0==server && current.1==tool)};
@@ -539,6 +571,7 @@ fn finish_result(
         Ok(v) => ("succeeded", v),
         Err(error) => ("failed", json!({"error":error})),
     };
+    if result["notExecuted"]==true && result["unchanged"]!=true {status="failed";}
     if result["stopped"] == true
         || (cancelled && result["applied"] != true && result["exitCode"].as_i64().is_none())
     {
@@ -565,6 +598,27 @@ fn finish_result(
         }
         result["truncated"] = json!(true);
     }
+    if call.name=="run_command" && result["testSummary"]["verdict"]=="failed" {
+        // Only a reminder: shell/MCP/external changes cannot be proven absent.
+        let store=core.store.lock().map_err(|e|e.to_string())?;
+        let mut stmt=store.conn.prepare("SELECT tool,arguments,output FROM agent_runs WHERE session_id=?1 AND response_id=?2 AND id!=?3 ORDER BY created_at DESC,rowid DESC").map_err(|e|e.to_string())?;
+        let rows=stmt.query_map(params![session,response,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?))).map_err(|e|e.to_string())?;
+        let current:Value=serde_json::from_str(&call.arguments).unwrap_or(Value::Null);let mut repeated=0;
+        for row in rows {let (tool,input,output)=row.map_err(|e|e.to_string())?;let v:Value=serde_json::from_str(&output).unwrap_or(Value::Null);
+            if v["applied"]==true {break;}
+            if tool=="run_command" {let args:Value=serde_json::from_str(&input).unwrap_or(Value::Null);if args["command"]==current["command"]&&v["testSummary"]["verdict"]=="failed"{repeated+=1;}else{break;}}
+        }
+        if (1..=2).contains(&repeated){result["repeatTestHint"]=json!({"previousFailures":repeated,"guidance":"相同测试已失败，期间未记录文件工具的实际修复。先检查具体失败原因并修复；如环境已变化或需要验证新假设，请说明原因。此提示不证明外部状态未变化，也不授予额外权限。"});}
+    }
+    if status=="succeeded" && matches!(call.name.as_str(),"read_file"|"read_files") {
+        let history={
+            let store=core.store.lock().map_err(|e|e.to_string())?;
+            let mut stmt=store.conn.prepare("SELECT tool,output FROM agent_runs WHERE session_id=?1 AND response_id=?2 AND id!=?3 AND status='succeeded' AND tool IN ('read_file','read_files') ORDER BY created_at DESC,rowid DESC LIMIT 64").map_err(|e|e.to_string())?;
+            let rows=stmt.query_map(params![session,response,run],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(|e|e.to_string())?;
+            let mut history=Vec::new();for row in rows {let (tool,output)=row.map_err(|e|e.to_string())?;if let Ok(value)=serde_json::from_str::<Value>(&output){history.push((tool,value));}}history
+        };
+        crate::agent_tool_result::read_reuse(&call.name,&mut result,&history);
+    }
     crate::agent_tool_result::annotate(&call.name,&mut result,status);
     persist_run(
         core,
@@ -579,7 +633,7 @@ fn finish_result(
         return Ok(None);
     }
     Ok(Some(
-        json!({"role":"tool","tool_call_id":call.id,"content":result.to_string()}),
+        json!({"role":"tool","tool_call_id":call.id,"content":crate::agent_tool_result::for_model(&call.name,&result).to_string()}),
     ))
 }
 

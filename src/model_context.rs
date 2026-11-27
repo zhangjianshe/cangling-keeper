@@ -15,19 +15,39 @@ fn estimate(v: &Value) -> usize {
     // More conservative than DeepSeek prose guidance; actual usage remains authoritative.
     ascii.div_ceil(2) + (other*3).div_ceil(2) + 64
 }
+// Derived excerpts only: never alter the original persisted tool result.
+fn diagnostic_excerpt(text: &str, budget: usize) -> Value {
+    let mut matches=Vec::new();
+    let mut used=2;
+    for (index,line) in text.lines().enumerate() {
+        let lower=line.to_ascii_lowercase();
+        if !["error", "exception", "traceback", "failed", "failure", "panic", "fatal"].iter().any(|word|lower.contains(word)){continue;}
+        let remaining=budget.saturating_sub(used+80);
+        if remaining<32 || matches.len()>=8 {break;}
+        let mut end=0;let mut bytes=0;
+        for ch in line.chars(){let n=serde_json::to_string(&ch.to_string()).unwrap().len()-2;if bytes+n>remaining.min(512){break;}bytes+=n;end+=ch.len_utf8();}
+        let item=json!({"line":index+1,"text":&line[..end],"lineTruncated":end<line.len()});
+        used+=item.to_string().len()+1;matches.push(item);
+    }
+    json!(matches)
+}
 fn shortened_tool_output(content: &str, max_bytes: usize) -> Value {
     let preview=&content[..content.floor_char_boundary(max_bytes.min(content.len()))];
-    let mut output=json!({"contextTruncated":true,"preview":preview,"note":"完整工具输出保存在本机执行记录。预览不含全部条目；续页参数仅用于后续页，不能补回被省略的本页内容。需要本页细节时缩小读取范围。"});
+    let mut output=json!({"contextTruncated":true,"preview":preview,"note":"已采集的工具输出保存在本机执行记录。预览不含全部条目；续页参数仅用于后续页，不能补回被省略的本页内容。需要本页细节时缩小读取范围。"});
     if let Ok(original)=serde_json::from_str::<Value>(content) {
         if original.get("exitCode").is_some() && original["stdout"].is_string() && original["stderr"].is_string() {
             output.as_object_mut().unwrap().remove("preview");
-            output["note"]=json!("命令输出按上下文预算保留两路首尾；完整执行记录保存在本机，不要为补齐输出自动重复执行命令。");
+            output["note"]=json!("命令输出按上下文预算保留两路首尾；已采集的执行记录保存在本机；采集时省略的内容无法恢复，不要为补齐输出自动重复执行命令。");
             for key in ["exitCode","stopped","timedOut","outputTruncated","stdoutOmittedBytes","stderrOmittedBytes"] {
                 if let Some(value)=original.get(key) { output[key]=value.clone(); }
             }
+            if original["exitCode"].as_i64().is_some_and(|code|code!=0) || original["timedOut"]==true {
+                output["diagnosticNote"]=json!("以下仅为错误关键词匹配摘录，可能漏报或误报，不代表完整诊断；行号相对于已保存的输出。");
+                output["diagnostics"]=json!({"stdout":diagnostic_excerpt(original["stdout"].as_str().unwrap(),max_bytes/4),"stderr":diagnostic_excerpt(original["stderr"].as_str().unwrap(),max_bytes/4)});
+            }
             for key in ["stdout","stderr"] {
                 let text=original[key].as_str().unwrap();
-                let budget=max_bytes/4;
+                let budget=if output.get("diagnostics").is_some(){max_bytes/8}else{max_bytes/4};
                 let mut used=0; let mut head=0;
                 for c in text.chars() {
                     used+=serde_json::to_string(&c.to_string()).unwrap().len()-2;
@@ -41,8 +61,14 @@ fn shortened_tool_output(content: &str, max_bytes: usize) -> Value {
                 output[key]=json!(if head==tail {text.to_string()} else {format!("{}\n[上下文省略 {} 字节]\n{}",&text[..head],tail-head,&text[tail..])});
             }
         }
-        for key in ["keeperResult","nextList","nextRead","partialFailure","failedFiles","completedFiles","requestedFiles","deferredReason","deferred"] {
+        for key in ["testSummary","testId","testLogs","testLogError","repeatTestHint","keeperResult","nextList","nextRead","partialFailure","failedFiles","completedFiles","requestedFiles","deferredReason","deferred"] {
             if let Some(value)=original.get(key).filter(|v|v.to_string().len()<=2048){output[key]=value.clone();}
+        }
+        if original["testSummary"].is_object() && output.get("testSummary").is_none() {
+            let mut summary=original["testSummary"].clone();
+            if let Some(items)=summary["diagnostics"].as_array_mut(){items.truncate(4);for item in items {item.as_object_mut().map(|o|o.remove("frames"));}}
+            summary["diagnosticsPartial"]=json!(true);
+            output["testSummary"]=summary;
         }
         if output["keeperResult"].is_object(){output["keeperResult"]["truncated"]=json!(true);if output["keeperResult"]["status"]=="succeeded"{output["keeperResult"]["outcome"]=json!("truncated");}}
     }
@@ -166,10 +192,13 @@ pub(super) async fn prepare(
         .count()
         .max(1);
     let per_tool = (budget / (tool_count * 2)).min(budget / 3).max(256);
-    for message in messages.iter_mut().filter(|m| m["role"] == "tool") {
-        if estimate(message) > per_tool {
+    for (index,message) in messages.iter_mut().filter(|m| m["role"] == "tool").enumerate() {
+        // Retain original tool records in SQLite, trim older model-facing logs early.
+        let historical=index+4<tool_count;
+        let allowance=if historical{per_tool.min(1024)}else{per_tool};
+        if estimate(message) > allowance {
             if let Some(content) = message["content"].as_str() {
-                let max_bytes = per_tool.saturating_sub(400).max(64) / 2;
+                let max_bytes = allowance.saturating_sub(400).max(64) / 2;
                 message["content"]=json!(shortened_tool_output(content,max_bytes).to_string());
                 shortened = true;
             }
@@ -369,9 +398,21 @@ mod tests {
         assert!(result["stdout"].as_str().unwrap().starts_with("BEGIN"));
         assert!(result["stdout"].as_str().unwrap().ends_with("END"));
         assert!(result["stderr"].as_str().unwrap().ends_with("FINAL ERROR"));
-        assert!(result.to_string().len()<2048);
+        assert!(result.to_string().len()<2560);
     }
     use super::*;
+    #[test]
+    fn diagnostics_preserve_middle_error_without_mutating_original(){
+        let log=format!("{}\nFAILED test_transaction: rollback missing\n{}", "normal\n".repeat(3000),"normal\n".repeat(3000));
+        let original=json!({"exitCode":1,"stdout":log,"stderr":"","keeperResult":{"status":"failed","outcome":"failed"}}).to_string();
+        let result=shortened_tool_output(&original,2048);
+        assert_eq!(result["diagnostics"]["stdout"][0]["line"],3002);
+        assert!(result["diagnostics"]["stdout"][0]["text"].as_str().unwrap().contains("rollback"));
+        assert_eq!(result["keeperResult"]["outcome"],"failed");
+        assert!(original.len()>30000);assert!(result.to_string().len()<4096);
+        let bounded=diagnostic_excerpt(&format!("ERROR {}\n", "中\u{0000}".repeat(5000)).repeat(100),1024);
+        assert!(bounded.to_string().len()<=1024);assert_eq!(bounded[0]["lineTruncated"],true);
+    }
     #[test]
     fn shortened_results_keep_bounded_continuations_and_status(){
         let result=shortened_tool_output(&json!({"entries":["x".repeat(2000)],"keeperResult":{"status":"succeeded","outcome":"success","automaticRetry":false},"nextList":{"offset":200,"expectedSha256":"a".repeat(64)}}).to_string(),64);
@@ -416,4 +457,16 @@ mod tests {
     fn cache_key_tracks_versions() {
         assert_ne!(digest(&[json!("old")]), digest(&[json!("edited")]));
     }
+}
+
+#[cfg(test)] mod repair_summary_tests {
+ use super::*;
+ #[test] fn large_test_diagnostics_survive_context_shortening() {
+  let original=json!({"stdout":"x".repeat(20000),"stderr":"","testSummary":{"verdict":"failed","diagnostics":(0..8).map(|_|json!({"location":"test.py:42","sourceLine":"self.assertEqual(total, 1)","message":"m".repeat(400),"frames":["f".repeat(300)]})).collect::<Vec<_>>()}});
+  let v=shortened_tool_output(&original.to_string(),2048);
+  assert_eq!(v["testSummary"]["verdict"],"failed");
+  assert_eq!(v["testSummary"]["diagnostics"].as_array().unwrap().len(),4);
+  assert_eq!(v["testSummary"]["diagnosticsPartial"],true);
+  assert_eq!(original["testSummary"]["diagnostics"].as_array().unwrap().len(),8);
+ }
 }

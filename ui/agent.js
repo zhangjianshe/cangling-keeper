@@ -1,3 +1,4 @@
+function countsForContinuation(runs,status){return runs.filter(r=>r.status===status).length;}
 (() => {
   'use strict';
   const $ = selector => document.querySelector(selector);
@@ -19,7 +20,7 @@
   function updateMessageTimes(){for(const node of document.querySelectorAll('.agent-message-time[data-time]')){const time=Number(node.dataset.time);if(Number.isFinite(time) && time>0)node.textContent=relativeMessageTime(time);}}
   function notice(message='') {$('#agent-notice').textContent=message;$('#agent-notice').hidden=!message;}
   function sessionStorageKey(){return 'keeper-agent-session:'+(agent.ownerKey || 'guest');}
-  function titleFor(tool) {return ({update_plan:'更新任务计划',list_directory:'列出项目目录',read_file:'读取项目文件',load_skill:'加载技能',read_skill_file:'读取技能资源',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
+  function titleFor(tool) {return ({update_plan:'更新任务计划',list_directory:'列出项目目录',read_file:'读取项目文件',load_skill:'加载技能',read_skill_file:'读取技能资源',search_files:'搜索项目文件',write_file:'写入项目文件',apply_patch:'应用文件补丁',run_tests:'运行项目测试',run_command:'执行本机命令'})[tool] || agent.tools.find(item=>item.name===tool)?.title || tool;}
   function sessionRow(session){
     const row=element('div','agent-session-row');
     const button=element('button','agent-session'+(session.id===agent.selected?' active':''),session.title);button.type='button';
@@ -33,7 +34,8 @@
     const recent=agent.history?.recent() || agent.sessions,pins=agent.history?.pinned() || agent.sessions.filter(s=>s.pinned);
     for(const session of recent)list.append(sessionRow(session));for(const session of pins)pinned.append(sessionRow(session));
     if(!recent.length)list.append(element('div','agent-nav-empty','暂无会话'));
-    if(!pins.length)pinned.append(element('div','agent-nav-empty','暂无置顶'));
+    for(const project of agent.projects.filter(p=>p.pinned))pinned.append(projectRow(project));
+    if(!pins.length&&!agent.projects.some(p=>p.pinned))pinned.append(element('div','agent-nav-empty','暂无置顶'));
     agent.history?.appendRecent(list);agent.history?.appendPinned(pinned);if(scroller)scroller.scrollTop=scrollTop;
     if(agent.titleEditor && agent.titleEditor.session!==agent.selected)agent.titleEditor.cancel(false);
     $('#agent-session-title').disabled=!agent.selected || !!(agent.detail.session?.archivedAt || agent.detail.session?.deletedAt || agent.detail.historyPreview);
@@ -54,7 +56,7 @@
     input.onblur=()=>{if(!cancelled && agent.selected===session)save();};form.append(input,count);button.hidden=true;button.after(form);input.focus();input.select();
   };
   function renderTaskChanges(message,runs){
-    const files=runs.filter(r=>r.review?.kind==='file'),commands=runs.filter(r=>r.tool==='run_command');
+    const files=runs.filter(r=>r.review?.kind==='file'),commands=runs.filter(r=>['run_command','run_tests'].includes(r.tool));
     if(!files.length&&!commands.length)return;
     const box=element('details','agent-task-changes'),title=element('summary','',`本轮变更 · ${new Set(files.map(r=>r.review.path)).size} 个文件 · ${commands.length} 次命令`);box.append(title);
     box.append(element('p','hint','仅追踪内置文件工具；命令和 MCP 的文件变更未自动追踪。撤销按修改倒序进行，仅恢复该操作前内容，文件已变化时拒绝覆盖。'));
@@ -85,6 +87,26 @@
     }
     message.append(box);
   }
+  function projectRow(project){
+      const group=element('details','agent-project-group');group.dataset.projectId=project.id;group.classList.toggle('has-selected-session',project.id===(agent.detail.session?.projectId || agent.sessions.find(s=>s.id===agent.selected)?.projectId));group.open=agent.history?agent.history.projectOpen(project.id):project.id===agent.project;
+      const summary=element('summary');summary.title=project.directory;
+      const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','agent-project-icon');icon.setAttribute('aria-hidden','true');
+      // Lucide folder-closed / folder-open (ISC), see ui/vendor/lucide-LICENSE.
+      for(const [state,paths] of Object.entries({"closed": ["M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z", "M2 10h20"], "open": ["m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"]})){
+        const shape=document.createElementNS('http://www.w3.org/2000/svg','g');shape.setAttribute('class','folder-'+state);
+        for(const d of paths){const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);shape.append(path);}icon.append(shape);
+      }
+      summary.append(icon,element('span','agent-project-name',project.name));
+      const manage=element('button','agent-project-manage','⋯');manage.type='button';manage.title='管理项目';manage.setAttribute('aria-label','管理项目 '+project.name);
+      manage.setAttribute('aria-haspopup','menu');manage.title='项目操作';
+      const projectMenu=event=>{event.preventDefault();event.stopPropagation();agent.projectBrowser?.menu(manage,project,()=>window.keeperProjectDialog({project,invoke,notice,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id)await switchProject('general');}}),()=>{agent.project=project.id;newSession();},async()=>{try{await invoke('agent_pin_project',{projectId:project.id,pinned:!project.pinned});await bootstrap();}catch(error){notice(String(error));}});};
+      manage.onclick=projectMenu;manage.oncontextmenu=projectMenu;
+      summary.append(manage);group.append(summary);
+      const sessions=agent.history?.projectSessions(project.id) || agent.sessions.filter(s=>s.projectId===project.id);
+      for(const session of sessions)group.append(sessionRow(session));
+      if(agent.history)agent.history.attachProject(group,project.id);else if(!sessions.length)group.append(element('div','agent-nav-empty','暂无会话'));
+    return group;
+  }
   function renderProjects(){
     if(!agent.projects.some(p=>p.id===agent.project))agent.project='general';
     localStorage.setItem('keeper-agent-project',agent.project);
@@ -96,24 +118,7 @@
     const focused=document.activeElement,focusProject=focused?.closest('.agent-project-group')?.dataset.projectId,focusSummary=focused?.tagName==='SUMMARY';
     list.replaceChildren();
     for(const project of visible){
-      const group=element('details','agent-project-group');group.dataset.projectId=project.id;group.classList.toggle('has-selected-session',project.id===selectedProject);group.open=agent.history?agent.history.projectOpen(project.id):project.id===agent.project;
-      const summary=element('summary');summary.title=project.directory;
-      const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');icon.setAttribute('viewBox','0 0 24 24');icon.setAttribute('class','agent-project-icon');icon.setAttribute('aria-hidden','true');
-      // Lucide folder-closed / folder-open (ISC), see ui/vendor/lucide-LICENSE.
-      for(const [state,paths] of Object.entries({"closed": ["M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z", "M2 10h20"], "open": ["m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"]})){
-        const shape=document.createElementNS('http://www.w3.org/2000/svg','g');shape.setAttribute('class','folder-'+state);
-        for(const d of paths){const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);shape.append(path);}icon.append(shape);
-      }
-      summary.append(icon,element('span','agent-project-name',project.name));
-      const manage=element('button','agent-project-manage','⋯');manage.type='button';manage.title='管理项目';manage.setAttribute('aria-label','管理项目 '+project.name);
-      manage.setAttribute('aria-haspopup','menu');manage.title='项目操作';
-      const projectMenu=event=>{event.preventDefault();event.stopPropagation();agent.projectBrowser?.menu(manage,project,()=>window.keeperProjectDialog({project,invoke,notice,onChanged:async deleted=>{await bootstrap();if(deleted && agent.project===project.id)await switchProject('general');}}),()=>{agent.project=project.id;newSession();});};
-      manage.onclick=projectMenu;manage.oncontextmenu=projectMenu;
-      summary.append(manage);group.append(summary);
-      const sessions=agent.history?.projectSessions(project.id) || agent.sessions.filter(s=>s.projectId===project.id);
-      for(const session of sessions)group.append(sessionRow(session));
-      if(agent.history)agent.history.attachProject(group,project.id);else if(!sessions.length)group.append(element('div','agent-nav-empty','暂无会话'));
-      list.append(group);
+      list.append(projectRow(project));
     }
     if(agent.projects.length>visible.length){const more=element('button','history-load-more',`显示更多项目（还有 ${agent.projects.length-visible.length} 个）`);more.type='button';more.onclick=()=>{list.dataset.limit=String(limit+10);renderProjects();};list.append(more);}
     if(limit>10){const less=element('button','history-load-more','收起项目');less.type='button';less.onclick=()=>{list.dataset.limit='10';renderProjects();};list.append(less);}
@@ -231,6 +236,11 @@
     let rounds=$('#agent-max-rounds');if(!rounds){rounds=document.createElement('select');rounds.id='agent-max-rounds';rounds.className='btn';rounds.setAttribute('aria-label','会话执行轮数上限');$('#agent-rounds-field').insertBefore(rounds,$('#agent-rounds-field small'));rounds.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const data=await invoke('agent_execution_budget',{sessionId:session,maxRounds:Number(rounds.value)});if(session===agent.selected&&epoch===agent.identityEpoch){agent.detail=data;renderModel(data.model);}}catch(e){if(session===agent.selected&&epoch===agent.identityEpoch){renderModel(agent.detail.model);notice(String(e));}}};}
     const maxRounds=agent.detail.executionBudget?.maxRounds||16;rounds.replaceChildren();for(const n of [...new Set([8,16,24,32,maxRounds])].sort((a,b)=>a-b)){const option=document.createElement('option');option.value=String(n);option.textContent=n+' 轮';rounds.append(option);}rounds.value=String(maxRounds);rounds.disabled=!agent.selected||agent.detail.modelPending;rounds.title='每个会话单独保存；任务开始后固定预算。工具调用数和运行时间限制仍有效。';
 
+    for(const [id,field,parent,choices,unit] of [['agent-max-tools','maxToolCalls','agent-tools-budget-field',[16,32,64,128],' 次'],['agent-active-seconds','activeSeconds','agent-time-budget-field',[180,300,600,900,1800],' 秒']]){
+      let select=$('#'+id);if(!select){select=document.createElement('select');select.id=id;select.className='btn';select.setAttribute('aria-label',field==='maxToolCalls'?'阶段工具调用上限':'阶段运行时间上限');$('#'+parent).insertBefore(select,$('#'+parent+' small'));select.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const data=await invoke('agent_execution_budget',{sessionId:session,[field]:Number(select.value)});if(session===agent.selected&&epoch===agent.identityEpoch){agent.detail=data;renderModel(data.model);}}catch(e){if(session===agent.selected&&epoch===agent.identityEpoch){renderModel(agent.detail.model);notice(String(e));}}};}
+      const current=agent.detail.executionBudget?.[field]||(field==='maxToolCalls'?32:180);select.replaceChildren();for(const n of [...new Set([...choices,current])].sort((a,b)=>a-b)){const option=document.createElement('option');option.value=String(n);option.textContent=n+unit;select.append(option);}select.value=String(current);select.disabled=!agent.selected||agent.detail.modelPending;
+    }
+
     let budgetSelect=$('#agent-context-budget');if(!budgetSelect){budgetSelect=document.createElement('select');budgetSelect.id='agent-context-budget';budgetSelect.className='btn';budgetSelect.setAttribute('aria-label','会话上下文工作预算');$('#agent-budget-field').insertBefore(budgetSelect,$('#agent-budget-field small'));budgetSelect.onchange=async()=>{const session=agent.selected,epoch=agent.identityEpoch;try{const detail=await invoke('agent_context_budget',{sessionId:session,workingBudget:Number(budgetSelect.value)});if(agent.selected===session&&epoch===agent.identityEpoch){agent.detail=detail;renderModel(agent.detail.model);renderConversation();}}catch(e){if(agent.selected===session&&epoch===agent.identityEpoch){renderModel(agent.detail.model);notice(String(e));}}};}
     const policy=agent.detail.contextPolicy;budgetSelect.replaceChildren();for(const size of [...new Set([16384,32768,65536,131072,policy?.workingBudget].filter(Boolean))].sort((a,b)=>a-b)){if(size>(policy?.modelLimit||32768))continue;const option=document.createElement('option');option.value=String(size);option.textContent='上下文 '+Math.round(size/1024)+'K';budgetSelect.append(option);}budgetSelect.value=String(policy?.workingBudget||32768);budgetSelect.disabled=!agent.selected||agent.detail.modelPending;budgetSelect.title='服务配置上限 '+(policy?.modelLimit||32768)+' token；工作预算包含预留输出，按启发式估算提前压缩。';
 
@@ -287,10 +297,10 @@
       const outputLabel=element('label','llm-output-budget','单次输出 '),outputSelect=element('select','btn');
       outputSelect.setAttribute('aria-label',server.name+' 单次输出预算');
       outputSelect.title='仅保存在本机当前账户，下次生成生效；实际输出最多占会话工作预算的四分之一，且不得超过上游模型支持的上限。';
-      const outputValues=[1024,2048,4096,8192,16384,32768,65536,server.maxOutputTokens || 4096];
+      const outputValues=[1024,2048,4096,8192,16384,32768,65536,server.maxOutputTokens || 16384];
       for(const value of [...new Set(outputValues)].sort((a,b)=>a-b)){if(value>=server.contextLimit)continue;const option=element('option','',value/1024+'K');option.value=String(value);outputSelect.append(option);}
-      outputSelect.value=String(server.maxOutputTokens || 4096);
-      outputSelect.onchange=async()=>{const epoch=agent.identityEpoch;outputSelect.disabled=true;try{const result=await invoke('agent_model_output_budget',{id:server.id,maxOutputTokens:Number(outputSelect.value)});if(epoch!==agent.identityEpoch)return;renderModel(result);$('#llm-list-status').textContent='输出预算已保存，下次生成生效';}catch(error){outputSelect.value=String(server.maxOutputTokens || 4096);$('#llm-list-status').textContent=String(error);}finally{outputSelect.disabled=false;}};
+      outputSelect.value=String(server.maxOutputTokens || 16384);
+      outputSelect.onchange=async()=>{const epoch=agent.identityEpoch;outputSelect.disabled=true;try{const result=await invoke('agent_model_output_budget',{id:server.id,maxOutputTokens:Number(outputSelect.value)});if(epoch!==agent.identityEpoch)return;renderModel(result);$('#llm-list-status').textContent='输出预算已保存，下次生成生效';}catch(error){outputSelect.value=String(server.maxOutputTokens || 16384);$('#llm-list-status').textContent=String(error);}finally{outputSelect.disabled=false;}};
       outputLabel.append(outputSelect);actions.append(outputLabel);
       if(server.source==='cis')actions.append(use);else actions.append(use,edit,test,remove);row.append(info,actions);list.append(row);
     }
@@ -509,6 +519,34 @@
     try{await invoke('agent_reply_version',{sessionId:session,rootId:group.rootId,messageId:group.versionIds[index]});if(agent.selected===session){await select(session);restoreReplyAnchor(anchor);}}
     catch(error){notice(String(error));}finally{agent.switchingVersion=false;}
   }
+  function renderPlanProgress(message,entry,runs){
+    const record=[...runs].reverse().find(r=>r.tool==='update_plan'&&r.status==='succeeded') || (entry.modelMetadata?.executionEvidence?.latestPlan?{output:JSON.stringify(entry.modelMetadata.executionEvidence.latestPlan)}:null);
+    if(!record)return;
+    let plan;try{plan=JSON.parse(record.output);}catch{return;}
+    if(!Array.isArray(plan.plan)||!plan.plan.length)return;
+    const labels={pending:'待执行',in_progress:'进行中',completed:'已完成',blocked:'受阻',skipped:'已跳过'};
+    const bar=element('div','agent-plan-progress');bar.setAttribute('role','group');bar.setAttribute('aria-label','本轮任务计划');
+    const active=agent.detail.modelPending&&agent.detail.streamingMessageId===entry.id;
+    plan.plan.slice(0,12).forEach((step,index)=>{
+      if(!step||typeof step.step!=='string')return;
+      const status=Object.hasOwn(labels,step.status)?step.status:'pending';
+      const item=element('div','agent-plan-segment plan-'+status+(active&&status==='in_progress'?' is-running':''));
+      const button=element('button','agent-plan-marker');button.type='button';button.setAttribute('aria-label',`步骤 ${index+1}：${step.step}，${labels[status]}（模型报告）`);button.setAttribute('aria-expanded','false');
+      const tip=element('div','agent-plan-tooltip');tip.id=`plan-step-${entry.id}-${index}`;tip.setAttribute('role','tooltip');button.setAttribute('aria-describedby',tip.id);
+      tip.append(element('strong','',`${index+1}. ${step.step}`),element('span','',labels[status]+' · 模型报告'));
+      if(step.reason)tip.append(element('span','',String(step.reason)));
+      if(plan.explanation)tip.append(element('span','agent-plan-note',String(plan.explanation)));
+      const evidence=Array.isArray(plan.acceptance)?plan.acceptance.filter(a=>a&&a.evidence):[];
+      if(evidence.length){tip.append(element('span','','本轮验收证据（模型报告，非此步骤专属）：'));for(const check of evidence.slice(0,3))tip.append(element('span','agent-plan-note',String(check.requirement||'验收项')+'：'+String(check.evidence)));}
+      tip.append(element('small','','步骤状态由模型更新，不代表此步骤已独立验证；实际结果请查看工具记录与验收详情。'));
+      const close=()=>{item.classList.remove('is-open');button.setAttribute('aria-expanded','false');};
+      button.onclick=()=>{const opening=!item.classList.contains('is-open');bar.querySelectorAll('.is-open').forEach(n=>{n.classList.remove('is-open');n.querySelector('button').setAttribute('aria-expanded','false');});if(opening){item.classList.add('is-open');button.setAttribute('aria-expanded','true');}};
+      button.onblur=close;button.onkeydown=e=>{if(e.key==='Escape'){close();button.blur();}};
+      item.append(button,tip);bar.append(item);
+    });
+    if(bar.childElementCount)message.append(bar);
+  }
+
   function renderConversation(){
   function presentationSegments(entry){
     const p=entry.modelMetadata?.presentation,content=entry.content||'';
@@ -566,15 +604,17 @@
         }
         if(entry.role==='assistant'){
           const runs=agent.detail.runs.filter(run=>run.responseId===entry.id);
+          renderPlanProgress(message,entry,runs);
           renderTaskChanges(message,runs);
-          const planned=[...runs].reverse().find(run=>run.tool==='update_plan' && run.status==='succeeded');
+          const planned=[...runs].reverse().find(run=>run.tool==='update_plan' && run.status==='succeeded') || (entry.modelMetadata?.executionEvidence?.latestPlan?{output:JSON.stringify(entry.modelMetadata.executionEvidence.latestPlan)}:null);
           if(planned){try{const plan=JSON.parse(planned.output);if(Array.isArray(plan.plan)){
             const box=element('section','agent-task-plan');box.setAttribute('aria-label','任务计划');box.append(element('strong','','任务计划'),element('small','','模型报告的进度，以实际执行结果为准'));
-            const steps=element('ol');for(const item of plan.plan){const row=element('li','plan-'+item.status);row.append(element('span','',({pending:'待处理',in_progress:'进行中',completed:'已完成',blocked:'受阻',skipped:'已跳过'})[item.status] || '未知状态'),element('span','',item.step));if(item.reason)row.append(element('div','agent-plan-reason',item.reason));steps.append(row);}box.append(steps);if(plan.explanation)box.append(element('p','',plan.explanation));message.append(box);
+            const steps=element('ol');for(const item of plan.plan){const row=element('li','plan-'+item.status);row.append(element('span','',({pending:'待处理',in_progress:'进行中',completed:'已完成',blocked:'受阻',skipped:'已跳过'})[item.status] || '未知状态'),element('span','',item.step));if(item.reason)row.append(element('div','agent-plan-reason',item.reason));steps.append(row);}box.append(steps);if(Array.isArray(plan.acceptance)&&plan.acceptance.length){box.append(element('strong','','需求验收 · 模型报告'));const checks=element('ul');for(const item of plan.acceptance){const row=element('li');row.append(element('span','',(({pending:'待验证',passed:'报告通过',failed:'失败',unverified:'未验证'})[item.status]||'未知')+' · '+item.requirement),element('div','agent-plan-reason',item.check+(item.evidence?' · '+item.evidence:'')));checks.append(row);}box.append(checks);}if(plan.explanation)box.append(element('p','',plan.explanation));message.append(box);
           }}catch{}}
           const task=agent.detail.tasks?.find(t=>t.responseId===entry.id),metadata=entry.modelMetadata || {};
           if(task){
             const labels={model:'模型生成中',tool:'执行工具中',approval:'等待确认',complete:'回复已结束',failed:'执行失败',stopped:'已停止',interrupted:'已中断'};
+            if(task.status==='complete'&&metadata.taskOutcome){labels.complete=({tests_passed:'回复结束 · 测试通过',tests_failed:'回复结束 · 测试仍失败',incomplete:'回复结束 · 验收未完成',unverified:'回复结束 · 未验证'})[metadata.taskOutcome.status]||labels.complete;}
             const budget=metadata.taskBudget || task.budget,validBudget=budget && ['maxRounds','maxToolCalls','activeSeconds'].every(key=>Number.isSafeInteger(budget[key]) && budget[key]>0);
             const rounds=validBudget?`${task.step || 0} / ${budget.maxRounds}`:String(task.step || 0),calls=validBudget?`${runs.length} / ${budget.maxToolCalls}`:String(runs.length);
             const evidence=metadata.executionEvidence;
@@ -583,7 +623,7 @@
               const evidenceLine=element('small','agent-execution-evidence',label);evidenceLine.title='来自本次回复的实际工具记录；调用成功不等于用户目标已完成。';message.append(evidenceLine);
             }
             const fileCount=new Set(runs.filter(r=>{try{return r.review?.kind==='file' && JSON.parse(r.output||'{}')?.applied===true;}catch{return false;}}).map(r=>r.review.path)).size;
-            const commandCount=runs.filter(r=>r.tool==='run_command' && !['pending_approval','approved','rejected'].includes(r.status)).length;
+            const commandCount=runs.filter(r=>['run_command','run_tests'].includes(r.tool) && !['pending_approval','approved','rejected'].includes(r.status)).length;
             const compact=[labels[task.status] || '任务记录'];if(fileCount)compact.push('修改 '+fileCount+' 个文件');if(commandCount)compact.push('执行 '+commandCount+' 条命令');
             const summary=element('details','agent-task-summary'),caption=element('summary','',compact.join(' · '));
             summary.append(element('p','agent-task-counts',`${rounds} 轮 · 工具调用 ${calls} 次`));
@@ -597,6 +637,15 @@
 
             const reasonCode=metadata.taskReasonCode || (task.status==='interrupted'?'interrupted':''),nextSteps={stream_limit:'模型流数据超过大小上限；已保留回复，请检查模型服务响应，不会自动重试。',invalid_tool_call:'模型返回了格式无效的工具批次，本轮未执行；检查模型工具调用兼容性后再尝试。',output_limit:'模型输出达到上限，回复可能不完整；检查已生成内容后缩小任务或明确要求继续。',model_filtered:'模型服务中止了回复；检查请求内容和服务提示，不会自动重试。',complete:'模型回复已结束；操作结果以工具记录为准。',user_stopped:'已保留生成内容；继续前请核实已执行操作。',rejected_repeat:'模型重复提出了已拒绝的操作。若你改变决定，请明确发送新消息。',no_progress:'检查工具结果并调整目标或参数后，再发送新消息。',round_limit:'任务达到轮次上限；检查已完成步骤，将剩余工作拆分后继续。',tool_limit:'任务达到工具调用上限；缩小范围后继续。',time_limit:'任务达到运行时限；检查实际执行状态后再继续。',interrupted:'服务中断后不会自动重放操作；请先核实实际状态。',error:'查看上述错误并核实操作是否部分完成，再决定是否重试。'};
             if(terminal && nextSteps[reasonCode])summary.append(element('p','agent-task-next-step',nextSteps[reasonCode]));
+            if(terminal && ['round_limit','tool_limit','time_limit','interrupted','user_stopped'].includes(reasonCode)){
+              if(['round_limit','tool_limit','time_limit'].includes(reasonCode))caption.firstChild.textContent=compact.join(' · ').replace(labels[task.status],'阶段暂停');
+              const resume=element('button','btn agent-continue-task','继续任务');resume.type='button';const session=agent.selected,epoch=agent.identityEpoch;
+              resume.disabled=!!(agent.detail.modelPending||agent.detail.historyPreview||agent.detail.session?.archivedAt||agent.detail.session?.deletedAt);
+              resume.onclick=()=>{if(session!==agent.selected||epoch!==agent.identityEpoch||agent.detail.modelPending||agent.sending||agent.detail.historyPreview||agent.detail.session?.archivedAt||agent.detail.session?.deletedAt)return;const input=$('#agent-input');if(input.value.trim()){notice('输入框已有草稿，请先处理草稿。');return;}
+                input.value='请继续此前任务。先核实已完成及部分完成的操作，不重放被拒绝或已成功的操作。以原始需求为准，补齐剩余工作并实际运行验收；不能完成的事项明确说明。\n上阶段：'+reason+'\n执行记录：成功 '+countsForContinuation(runs,'succeeded')+'，失败 '+countsForContinuation(runs,'failed')+'，拒绝 '+countsForContinuation(runs,'rejected')+'。请结合上阶段计划和工具记录检查文件与测试状态。';input.dispatchEvent(new Event('input',{bubbles:true}));input.focus();};
+              message.append(resume);
+            }
+
 
             const counts={succeeded:0,failed:0,rejected:0,stopped:0,interrupted:0};for(const run of runs)if(run.status in counts)counts[run.status]++;
             summary.append(element('p','',`工具结果：成功 ${counts.succeeded} · 失败 ${counts.failed} · 拒绝 ${counts.rejected} · 停止/中断 ${counts.stopped+counts.interrupted}`));
@@ -786,6 +835,7 @@
       update_plan:'m3 6 2 2 3-4M11 6h10m-18 8 2 2 3-4M11 14h10M11 20h10',
       load_skill:'M12 5C9 3 5 3 2 4v16c3-1 7-1 10 1 3-2 7-2 10-1V4c-3-1-7-1-10 1Zm0 0v16',
       read_skill_file:'M14 2H5v20h14V7ZM14 2v5h5M8 12h8M8 16h8',
+      run_tests:'M9 3h6M10 3v6l-6 10h16L14 9V3M8 15h8',
       run_command:'M3 4h18v16H3Zm4 4 4 4-4 4m7 0h4',
       ssh_execute:'M3 4h18v16H3Zm4 4 4 4-4 4m7 0h4'
     };
@@ -911,7 +961,7 @@
   async function refreshAccountSessions(){
     agent.taskSummaryOpen?.clear();agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
-    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.earth?.reset();agent.guidance?.reset();agent.profiles?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
+    ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.earth?.reset();agent.guidance?.reset();agent.profiles?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.projects=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved)){await agent.earth?.restore();return;}const session=agent.sessions[0]?.id;if(session)await select(session);}
     catch(error){if(epoch===agent.identityEpoch)notice(String(error));}
   }

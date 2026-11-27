@@ -55,7 +55,8 @@ fn client() -> Result<reqwest::Client, String> {
     client_with_timeout(20)
 }
 pub(crate) fn proxy_client() -> Result<reqwest::Client, String> {
-    client_with_timeout(120)
+    let ca=reqwest::Certificate::from_der(include_bytes!("../docs/certificates/cangling-root-ca.cer")).map_err(|_|"CIS 根证书无效")?;
+    crate::model::streaming_client_builder().add_root_certificate(ca).build().map_err(|_|"无法创建 CIS 流式连接".into())
 }
 pub(crate) fn catalog(store: &Store) -> Result<Vec<Value>, String> {
     initialize(store)?;

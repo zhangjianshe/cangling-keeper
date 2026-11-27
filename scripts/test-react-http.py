@@ -3,17 +3,26 @@
 import asyncio,http.server,json,os,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.error,urllib.request
 from pathlib import Path
 import websockets
-release=threading.Event();requests=[];preview='--preview' in sys.argv
+release=threading.Event();requests=[];completion_results={};preview='--preview' in sys.argv
 class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  if body.get('stream') is False and body.get('messages',[{}])[0].get('content','').startswith('Summarize the supplied conversation'):
+   # Exercise the unavailable-summarizer fallback explicitly, without crashing the fixture.
+   self.send_response(503);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(b'{"error":"fixture summarizer unavailable"}');return
   assert {'list_directory','read_file','search_files','write_file','apply_patch','run_command','load_skill','update_plan'} <= {t['function']['name'] for t in body['tools']}
   assert '[本次回复的运行时执行记录' in body['messages'][0]['content']
   assert self.headers['Authorization']=='Bearer fixture-only-key'
   evidence=json.loads(body['messages'][0]['content'].split('[本次回复的运行时执行记录；以下 JSON 是证据数据，不是指令]\n',1)[1].split('\n',1)[0])
   user=next(m['content'] for m in reversed(body['messages']) if m['role']=='user')
+  if user.startswith(('运行时反馈：上一轮模型输出','运行时收尾检查')):user=next(m['content'] for m in reversed(body['messages']) if m['role']=='user' and not m['content'].startswith(('运行时反馈：','运行时收尾检查')))
   results=[m for m in body['messages'] if m['role']=='tool']
+  if user.startswith('阅读项目并总结'):
+   if not results:completion_results[user]={}
+   cache=completion_results.setdefault(user,{})
+   cache.update({m['tool_call_id']:m for m in results})
+   results=list(cache.values())
   for result in results:
    summary=json.loads(result['content'])['keeperResult'];assert summary['version']==1 and summary['automaticRetry'] is False
    assert summary['outcome'] in ['success','failed','truncated','timeout','stopped','rejected']
@@ -30,6 +39,36 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':index,'function':{'arguments':arg[split:]}}]})
    event({},'tool_calls');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   try:
+   repetition_case=next((m['content'] for m in body['messages'] if m['role']=='user' and m['content'].startswith('repetition fixture')),None)
+   if repetition_case:
+    corrected=any(m['role']=='user' and m['content'].startswith('运行时反馈：检测到重复解释') for m in body['messages'])
+    if corrected and repetition_case.endswith('recover'):
+     event({'content':'缺少必要资料，无法继续，请提供资料。'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+    paragraph='这是一个反复出现且没有新增证据的分析段落。'*5
+    for _ in range(6):event({'content':paragraph+'\n\n'})
+    event({},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if user=='coding skill fixture':
+    assert 'system:coding-workflow' in body['messages'][0]['content']
+    assert '找到这个值的产生处和使用处' not in body['messages'][0]['content']
+    if not results:tools([('load_skill',{'name':'system:coding-workflow'})]);return
+    assert '找到这个值的产生处和使用处' in results[-1]['content']
+    event({'content':'已按需读取技能。'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if user=='plan retention fixture':
+    if len(results)==0:tools([('update_plan',{'plan':[{'step':'实现','status':'in_progress'}],'acceptance':[{'requirement':'功能','check':'测试','status':'completed'}]})]);return
+    if len(results)==1:tools([('update_plan',{'plan':[{'step':'实现','status':'completed'}]})]);return
+    assert evidence['latestPlan']['acceptance'][0]['status']=='unverified'
+    event({'content':'计划已记录，验收尚未验证。'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if 'inheritance fixture' in user:
+    if user=='seed inheritance fixture' and not results:
+     tools([('update_plan',{'plan':[{'step':'等待必要资料','status':'pending'}]})]);return
+    if user.startswith('继续'):
+     assert evidence['planInherited'] is True and len(evidence['remainingSteps'])==1
+    if user.startswith('new'):
+     assert evidence['latestPlan'] is None
+    event({'content':'缺少必要资料，无法继续，请提供资料。'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if user=='structured test fixture':
+    if len(results)<2:tools([('run_command',{'command':"printf 'Ran 3 tests in 0.1s\\nFAILED (failures=1)\\n'"})]);return
+    event({'content':'测试报告仍有失败，未完成验收。'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if user=='oversized event fixture':
     event({'content':'Before oversized event'})
     event({'tool_calls':[{'index':0,'id':'not-executed','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'oversized-event.txt','content':'must not write'})}}]})
@@ -44,6 +83,11 @@ class API(http.server.BaseHTTPRequestHandler):
     event({'tool_calls':[{'index':0,'id':'first','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'bad-batch.txt','content':'must not write'})}}]})
     event({'tool_calls':[{'index':1,'id':'first' if user=='duplicate batch fixture' else 'second','type':'function','function':{'name':'read_file','arguments':'{' if user=='malformed batch fixture' else '[]' if user=='array batch fixture' else '{}'}}]},'tool_calls')
     self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if user=='recover cutoff fixture':
+    if any(m.get('content','').startswith('运行时反馈：上一轮模型输出') for m in body['messages'] if isinstance(m.get('content'),str)):
+     if not results:tools([('list_directory',{})]);return
+     event({'content':'恢复成功，未执行截断写入。'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+    event({'tool_calls':[{'index':0,'id':'partial','type':'function','function':{'name':'write_file','arguments':'{"path":"cutoff.txt","content":"'}}]},'length');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if user in ['output cutoff fixture','filtered output fixture','tool cutoff fixture']:
     event({'content':'Partial answer preserved'})
     if user=='tool cutoff fixture':event({'tool_calls':[{'index':0,'id':'cutoff','type':'function','function':{'name':'write_file','arguments':json.dumps({'path':'cutoff.txt','content':'must not write'})}}]})
@@ -56,21 +100,23 @@ class API(http.server.BaseHTTPRequestHandler):
     if not results:tools([('read_files',{'files':[{'path':'README.md','lineCount':1},{'path':'missing.txt'},{'path':'context.txt'}]})]);return
     value=json.loads(results[-1]['content']);assert value['completedFiles']==3 and value['failedFiles']==1
     assert value['results'][0]['status']=='succeeded' and value['results'][1]['status']=='failed'
-    assert value['results'][2]['result']['lines'][0]['text']=='中文前文'
+    first=value['results'][0]['result'];assert first['hasMore'] is True and first['truncated'] is False and first['requestedRangeComplete'] is True
+    assert '不必' in first['readWindow'] and first['nextRead']['startLine']==2
+    assert value['results'][2]['result']['text'].splitlines()[0]=='中文前文'
     event({'content':'Batch results verified; missing file reported separately'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'context search fixture' in user:
     if not results:tools([('search_files',{'query':'needle','path':'context.txt','mode':'content','contextLines':1})]);return
     if len(results)==1:
      hit=json.loads(results[-1]['content'])['matches'][0];assert [r['line'] for r in hit['context']]==[1,2,3];assert hit['context'][0]['text']=='中文前文';assert hit['context'][1]['isMatch'] is True
      tools([('read_file',hit['contextReadArgs'])]);return
-    assert [r['text'] for r in json.loads(results[-1]['content'])['lines']]==['中文前文','needle here','after']
+    assert json.loads(results[-1]['content'])['text'].splitlines()==['中文前文','needle here','after']
     event({'content':'Search context verified'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'located search fixture' in user:
     if not results:tools([('search_files',{'query':'target-word','path':'late.txt','mode':'content'})]);return
     if len(results)==1:
      hit=json.loads(results[-1]['content'])['matches'][0];assert 'target-word' in hit['text'];assert hit['column']>1000
      tools([('read_file',hit['readArgs'])]);return
-    assert 'target-word' in json.loads(results[-1]['content'])['lines'][0]['text']
+    assert 'target-word' in json.loads(results[-1]['content'])['text']
     event({'content':'Located and read match'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'limited search fixture' in user:
     if not results:tools([('search_files',{'query':'needle','path':'limited.txt','mode':'content','maxResults':1})]);return
@@ -90,7 +136,11 @@ class API(http.server.BaseHTTPRequestHandler):
     if not results:tools([('read_file',{'path':'long.txt'})]);return
     last=json.loads(results[-1]['content'])
     if last.get('nextRead'):tools([('read_file',last['nextRead'])]);return
-    assert ''.join(line['text'] for result in results for line in json.loads(result['content'])['lines'])=='中文🙂'*250
+    # Context compaction may remove earlier calls from the current request.
+    # Verify all uniquely observed fragments, not an unbounded wire history.
+    observed={r['tool_call_id']:json.loads(r['content']) for request in requests for r in request.get('messages',[]) if r.get('role')=='tool' and json.loads(r['content']).get('path')=='long.txt'}
+    fragments=sorted(observed.values(),key=lambda r:r['startColumn'])
+    assert ''.join(r['text'] for r in fragments)=='中文🙂'*250
     event({'content':'Read all fragments'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'correct args fixture' in user:
     if not results:tools([('write_file',{'path':'must-not-exist.txt'}),('read_file',{'path':'README.md','lineCount':'10'})]);return
@@ -103,7 +153,8 @@ class API(http.server.BaseHTTPRequestHandler):
    if 'blocked steps fixture' in user:
     if not results:tools([('update_plan',{'plan':[{'step':'Read','status':'blocked','reason':'等待文件'},{'step':'Publish','status':'skipped','reason':'本轮不发布'}]})]);return
     if len(results)==1:
-     assert json.loads(results[-1]['content'])['plan'][0]['reason']=='等待文件'
+     assert json.loads(results[-1]['content'])['saved'] is True
+     assert evidence['latestPlan']['plan'][0]['reason']=='等待文件'
      tools([('update_plan',{'plan':[{'step':'Read','status':'blocked'}]})]);return
     if len(results)==2:
      assert json.loads(results[-1]['content'])['keeperResult']['outcome']=='failed'
@@ -119,13 +170,17 @@ class API(http.server.BaseHTTPRequestHandler):
     if len(results)==0:tools([('update_plan',{'plan':[{'step':'Read README','status':'in_progress'},{'step':'Summarize','status':'pending'}]})]);return
     if len(results)==1:tools([('read_file',{'path':'README.md'})]);return
     if len(results)==2:tools([('update_plan',{'plan':[{'step':'Read README','status':'completed'},{'step':'Summarize','status':'completed'}],'explanation':'Read results verified'})]);return
-    assert evidence['remainingSteps']==[] and evidence['latestPlan']['modelReported'] is True
+    assert evidence['remainingSteps']==[] and 'modelReported' not in evidence['latestPlan']
     assert evidence['goalStatus']=='not_assessed'
     event({'content':'Plan complete'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
+   if 'unified test fixture' in user:
+    if not results:tools([('run_tests',{'directory':'checks','timeoutSeconds':10})]);return
+    summary=json.loads(results[-1]['content'])['testSummary'];assert summary['verdict']=='passed' and summary['total']==1
+    event({'content':'测试结果已记录。'},'stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush();return
    if 'broken' in user:tools([('read_file',{'path':'README.md'})],True);return
    if 'escape' in user and not results:
     tools([('read_file',{'path':'../secret.txt'}),('not_registered',{'command':'touch unsafe'}),('search_files',{'query':''})]);return
-   if 'budget' in user:tools([('list_directory',{'path':'./'*len(results)+'.'})]);return
+   if 'budget' in user:tools([('list_directory',{'path':'./'*evidence['callCount']+'.'})]);return
    if 'alternating cycle' in user:tools([('read_file',{'path':'README.md' if len(results)%2==0 else 'src/main.rs'})]);return
    if 'loop' in user:tools([('list_directory',{})]);return
    if not results:tools([('list_directory',{'path':'.'})]);return
@@ -135,7 +190,7 @@ class API(http.server.BaseHTTPRequestHandler):
    if 'escape' in user:
     assert all('error' in json.loads(m['content']) for m in results)
    else:
-    assert json.loads(results[1]['content'])['lines'][0]['text']=='# Fixture project'
+    assert json.loads(results[1]['content'])['text'].splitlines()[0]=='# Fixture project'
     assert len(json.loads(results[2]['content'])['matches'])>=2
    event({'content':'已读取项目资料，正在整理总结。'})
    if 'escape' not in user:release.wait(300 if preview else 30)
@@ -179,12 +234,30 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
   start();process.terminate();process.wait(timeout=10);root=Path(folder)/'project';root.mkdir();
   with sqlite3.connect(Path(folder)/'data.sql') as db:db.execute("UPDATE agent_projects SET directory=? WHERE id='general'",(str(root),))
   start();(root/'src').mkdir();(root/'README.md').write_text('# Fixture project\nproject needle\n');(root/'src/main.rs').write_text('fn main() { /* needle */ }\n');(root.parent/'secret.txt').write_text('never-expose-outside-project')
-  call('agent_model_save',{'enabled':True,'baseUrl':f'http://127.0.0.1:{api.server_port}','model':'fixture','apiKey':'fixture-only-key'})
+  call('agent_model_save',{'enabled':True,'baseUrl':f'http://127.0.0.1:{api.server_port}','model':'fixture','apiKey':'fixture-only-key','contextLimit':131072})
   threading.Thread(target=lambda:asyncio.run(collect()),daemon=True).start();assert ready.wait(5)
   threading.Thread(target=lambda:asyncio.run(collect(False)),daemon=True).start();assert untrusted_ready.wait(5)
+  for mode in ['recover','repeat']:
+   repetition=session('repetition fixture '+mode);rd=wait_for(repetition,lambda d:not d['modelPending'])
+   rm=next(m['modelMetadata'] for m in reversed(rd['messages']) if m['role']=='assistant')
+   assert rm['repetitionInterrupted'] is True and rm['usageIncomplete'] is True
+   assert not rd['runs'], 'interrupted prose must never execute tools'
+   assert rd['tasks'][-1]['step']==2, rd['tasks']
+   if mode=='repeat':assert rm['taskReasonCode']=='no_progress',rm
+  sk=session('coding skill fixture');sd=wait_for(sk,lambda d:not d['modelPending']);assert len(sd['runs'])==1 and sd['runs'][0]['status']=='succeeded',sd
+  inherited_session=session('seed inheritance fixture');seed=wait_for(inherited_session,lambda d:not d['modelPending'])
+  for prompt in ['继续 inheritance fixture 1','继续 inheritance fixture 2']:
+   call('agent_send_message',{'sessionId':inherited_session,'content':prompt});continued=wait_for(inherited_session,lambda d:not d['modelPending'])
+   meta=continued['messages'][-1]['modelMetadata'];assert meta['executionEvidence']['planInherited'] is True, {'prompt':prompt,'metadata':meta,'seed':seed['messages'][-1]}
+   assert meta['taskOutcome']['remainingSteps']==1 and meta['taskOutcome']['status']=='incomplete'
+   assert meta['taskGoal']=='seed inheritance fixture'
+  source=continued['messages'][-1]['id']
+  call('agent_send_message',{'sessionId':inherited_session,'content':'new inheritance fixture'});new=wait_for(inherited_session,lambda d:not d['modelPending']);assert new['messages'][-1]['modelMetadata']['executionEvidence']['latestPlan'] is None;assert new['messages'][-1]['modelMetadata']['taskGoal']=='new inheritance fixture'
+  call('agent_regenerate',{'sessionId':inherited_session,'messageId':source});regenerated=wait_for(inherited_session,lambda d:not d['modelPending']);assert regenerated['messages'][-1]['modelMetadata']['taskOutcome']['remainingSteps']==1;assert regenerated['messages'][-1]['modelMetadata']['taskGoal']=='seed inheritance fixture'
   normal=session('阅读项目并总结 normal')
   detail=wait_for(normal,lambda d:len(d['runs'])==3 and all(r['status']=='succeeded' for r in d['runs']) and '正在整理' in d['messages'][-1]['content'])
   call('agent_execution_budget',{'sessionId':normal,'maxRounds':24},expected=400)
+  call('agent_execution_budget',{'sessionId':normal,'maxToolCalls':64,'activeSeconds':600},expected=400)
   assert detail['modelPending'] and detail['tasks'][-1]['status']=='model'
   assert detail['messages'][-1]['modelMetadata']['taskBudget']=={'maxRounds':16,'maxToolCalls':32,'activeSeconds':180}
   assert len({r['toolCallId'] for r in detail['runs']})==3
@@ -257,7 +330,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    assert call('agent_session',{'sessionId':planned})['runs']==plan_detail['runs']
    complete=session('阅读项目并总结 complete');complete_detail=wait_for(complete,lambda d:not d['modelPending']);assert complete_detail['tasks'][-1]['status']=='complete';assert len(complete_detail['runs'])==3
    # A regenerated answer owns a separate tool history and selects the new version.
-   evidence=complete_detail['messages'][-1]['modelMetadata']['executionEvidence'];assert evidence['callCount']==3 and evidence['counts']['succeeded']==3 and evidence['goalStatus']=='not_assessed'
+   evidence=complete_detail['messages'][-1]['modelMetadata']['executionEvidence'];assert evidence['callCount']==3 and evidence['counts']['succeeded']==3 and evidence['goalStatus']=='not_assessed', evidence
    source=complete_detail['messages'][-1]['id'];call('agent_regenerate',{'sessionId':complete,'messageId':source});regen=wait_for(complete,lambda d:not d['modelPending']);assert len(regen['runs'])==6;assert len({r['responseId'] for r in regen['runs']})==2
    escaped=session('escape');escaped=wait_for(escaped,lambda d:not d['modelPending']);assert len(escaped['runs'])==3 and all(r['status']=='failed' for r in escaped['runs']);assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')=='escape' for m in r['messages'])])==2;assert not (root/'unsafe').exists();assert 'never-expose' not in json.dumps(escaped)
    multiline=session('multiline event fixture');multi=wait_for(multiline,lambda d:not d['modelPending']);assert multi['tasks'][-1]['status']=='complete';assert multi['messages'][-1]['content']=='多行事件正常';assert multi['messages'][-1]['modelMetadata']['executionEvidence']['callCount']==0
@@ -276,7 +349,27 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
     assert not cutoff_detail['runs'] and not (root/'cutoff.txt').exists()
     answer=next(m for m in reversed(cutoff_detail['messages']) if m['role']=='assistant');assert 'Partial answer preserved' in answer['content'];assert answer['modelMetadata']['taskReasonCode']==reason
     assert next(m for m in reversed(call('agent_session',{'sessionId':cutoff})['messages']) if m['role']=='assistant')['modelMetadata']['taskReasonCode']==reason
-    assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')==prompt for m in r['messages'])])==1
+    assert len([r for r in requests if any(m.get('role')=='user' and m.get('content')==prompt for m in r['messages'])])==(3 if prompt=='tool cutoff fixture' else 1)
+   (root/'checks').mkdir();(root/'checks/test_ok.py').write_text('import unittest\nclass T(unittest.TestCase):\n def test_ok(self): self.assertEqual(2+2,4)\n')
+   retained=session('plan retention fixture');rd=wait_for(retained,lambda d:not d['modelPending']);assert len(rd['runs'])==2 and all(r['status']=='succeeded' for r in rd['runs']);assert json.loads(rd['runs'][-1]['output'])['acceptance'][0]['status']=='unverified'
+   unified=session('unified test fixture');ud=wait_for(unified,lambda d:any(r['status']=='pending_approval' for r in d['runs']));ur=ud['runs'][-1]
+   assert ur['tool']=='run_tests' and ur['review']['testRunner']=='unittest'
+   assert not list(root.glob('keeper-test-*.log'))
+   call('agent_review_tool',{'sessionId':unified,'runId':ur['id'],'reviewHash':ur['review']['hash'],'approved':True})
+   ud=wait_for(unified,lambda d:not d['modelPending']);assert ud['messages'][-1]['modelMetadata']['taskOutcome']['status']=='tests_passed'
+   assert len(list(root.glob('keeper-test-*.log')))==2
+   assert call('agent_session',{'sessionId':unified})['messages'][-1]['modelMetadata']['taskOutcome']==ud['messages'][-1]['modelMetadata']['taskOutcome']
+   recovered=session('recover cutoff fixture');rd=wait_for(recovered,lambda d:not d['modelPending']);assert rd['tasks'][-1]['status'] not in ['failed','stopped'],rd['tasks']
+   assert len(rd['runs'])==1 and rd['runs'][0]['status']=='succeeded' and not (root/'cutoff.txt').exists()
+   tested=session('structured test fixture')
+   for _ in range(2):
+    td=wait_for(tested,lambda d:any(r['status']=='pending_approval' for r in d['runs']))
+    run=next(r for r in td['runs'] if r['status']=='pending_approval')
+    call('agent_review_tool',{'sessionId':tested,'runId':run['id'],'reviewHash':run['review']['hash'],'approved':True})
+   td=wait_for(tested,lambda d:not d['modelPending'])
+   parsed=[json.loads(r['output']) for r in td['runs']]
+   assert all(v['testSummary']['verdict']=='failed' and v['exitCode']==0 for v in parsed)
+   assert parsed[-1]['repeatTestHint']['previousFailures']==1
    alternating=session('alternating cycle');alternated=wait_for(alternating,lambda d:not d['modelPending']);assert alternated['tasks'][-1]['status']=='failed' and len(alternated['runs'])==6
    assert all(r['status']=='succeeded' for r in alternated['runs'])
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='no_progress' for m in alternated['messages'])
@@ -290,9 +383,19 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    for invalid in [0,33,1.5,'16']:
     call('agent_execution_budget',{'sessionId':custom,'maxRounds':invalid},expected=400)
    assert call('agent_execution_budget',{'sessionId':custom,'maxRounds':2})['executionBudget']['maxRounds']==2
+   budget=call('agent_execution_budget',{'sessionId':custom,'maxToolCalls':64,'activeSeconds':600})['executionBudget']
+   assert budget=={'maxRounds':2,'maxToolCalls':64,'activeSeconds':600}
+   call('agent_execution_budget',{'sessionId':custom,'maxRounds':8,'activeSeconds':1801},expected=400)
+   assert call('agent_session',{'sessionId':custom})['executionBudget']==budget
    call('agent_send_message',{'sessionId':custom,'content':'budget custom'})
    limited=wait_for(custom,lambda d:not d['modelPending']);assert len(limited['runs'])==2
-   assert next(m for m in limited['messages'] if m['role']=='assistant')['modelMetadata']['taskBudget']['maxRounds']==2
+   assert next(m for m in limited['messages'] if m['role']=='assistant')['modelMetadata']['taskBudget']==budget
+   tool_limited=call('agent_new_session')['id']
+   call('agent_execution_budget',{'sessionId':tool_limited,'maxRounds':16,'maxToolCalls':8,'activeSeconds':600})
+   call('agent_send_message',{'sessionId':tool_limited,'content':'budget tool cap'})
+   capped=wait_for(tool_limited,lambda d:not d['modelPending'])
+   assert len(capped['runs'])==8
+   assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='tool_limit' for m in capped['messages'])
    bounded=session('budget');bounded=wait_for(bounded,lambda d:not d['modelPending']);assert len(bounded['runs'])==16 and '16 轮' in json.dumps(bounded,ensure_ascii=False)
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='round_limit' for m in bounded['messages'])
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='complete' for m in complete_detail['messages'])
@@ -301,7 +404,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-react-http-') as folder:
    interrupted=session('阅读项目并总结 restart');persisted=wait_for(interrupted,lambda d:len(d['runs'])==3 and '正在整理' in d['messages'][-1]['content']);count=len(requests)
    process.terminate();process.wait(timeout=10);start();restored=call('agent_session',{'sessionId':interrupted});assert not restored['modelPending'] and restored['tasks'][-1]['status']=='interrupted';assert len(restored['runs'])==3;assert next(m for m in restored['messages'] if m['id']==persisted['messages'][-1]['id'])['modelMetadata']['presentation']==persisted['messages'][-1]['modelMetadata']['presentation']
    assert any(m.get('modelMetadata',{}).get('taskReasonCode')=='interrupted' for m in restored['messages'])
-   assert call('agent_session',{'sessionId':custom})['executionBudget']['maxRounds']==2
+   assert call('agent_session',{'sessionId':custom})['executionBudget']==budget
    time.sleep(.1);assert len(requests)==count,'restart must not replay tools or model calls'
    with sqlite3.connect(Path(folder)/'data.sql') as db:assert db.execute('SELECT count(*) FROM agent_events WHERE response_id=?',(persisted['streamingMessageId'],)).fetchone()[0]>5
    print('ReAct checks passed: fragmented native tool calls, multi-round results, realtime events, reload snapshots, stop, regeneration isolation, denied paths/tools, round limit and restart without replay.')

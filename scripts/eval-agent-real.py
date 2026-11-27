@@ -5,36 +5,69 @@ import argparse
 parser=argparse.ArgumentParser(description='Use the current localhost Keeper model for three real coding tasks (incurs model usage).')
 parser.add_argument('--output',type=pathlib.Path,required=True)
 parser.add_argument('--execute',action='store_true',help='Explicitly authorize real model requests and temporary evaluation projects')
-parser.add_argument('--budget',type=int,choices=[65536,131072])
+parser.add_argument('--budget',type=int,choices=[65536,131072],default=131072)
+parser.add_argument('--base-url',default='https://local.cangling.cn')
+parser.add_argument('--model-id',required=True,help='Exact Keeper model server ID')
+parser.add_argument('--rounds',type=int,choices=range(1,33),default=32)
+parser.add_argument('--tools',type=int,choices=range(8,129),default=64)
+parser.add_argument('--active-seconds',type=int,choices=range(60,1801),default=600)
+parser.add_argument('--wall-seconds',type=int,default=1800)
+parser.add_argument('--preflight',action='store_true',help='Read-only model/config checks; no projects or model requests')
 a=parser.parse_args()
-if not a.execute:parser.error('--execute is required: this consumes model tokens')
-repo=pathlib.Path(__file__).resolve().parents[1];out=a.output;out.mkdir(parents=True,exist_ok=False);base='http://127.0.0.1:4301'
+if not a.execute and not a.preflight:parser.error('choose --preflight or --execute')
+if a.wall_seconds<=a.active_seconds:parser.error('wall-seconds must exceed active-seconds to allow approvals')
+repo=pathlib.Path(__file__).resolve().parents[1];out=a.output;base=a.base_url.rstrip('/');op=urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def call(n,a={}):
  r=urllib.request.Request(base+'/api/invoke/'+n,data=json.dumps(a).encode(),headers={'Content-Type':'application/json','Origin':base})
- return json.load(urllib.request.urlopen(r,timeout=30))['result']
-model=call('agent_bootstrap')['model'];cases=json.loads((repo/'evals/agent-tasks/cases.json').read_text());results=[]
+ data=json.load(op.open(r,timeout=30))
+ if not data.get('ok'):raise RuntimeError(str(data.get('error','Keeper API failed')))
+ return data['result']
+servers=call('agent_model_config')['servers']
+model=next((m for m in servers if m['id']==a.model_id),None)
+if not model or not model.get('enabled'):raise SystemExit('Model missing or disabled')
+if int(model.get('contextLimit') or 32768)<a.budget:raise SystemExit('Model configured context is below requested budget')
+print(json.dumps({'model':model.get('model'),'contextLimit':model.get('contextLimit'),'budget':a.budget,'rounds':a.rounds,'tools':a.tools,'activeSeconds':a.active_seconds,'note':'configuration check only; inference endpoint capacity must be verified separately'},ensure_ascii=False))
+if a.preflight:sys.exit(0)
+out.mkdir(parents=True,exist_ok=False)
+cases=json.loads((repo/'evals/agent-tasks/cases.json').read_text());results=[]
 for c in cases:
  p=call('agent_new_project',{'name':'真实评测 '+c['id']});root=pathlib.Path(p['directory'])
  for name,text in c['files'].items():(root/name).write_text(text)
  s=call('agent_new_session',{'projectId':p['id']})['id'];call('agent_session_model',{'sessionId':s,'id':model['id']})
+ call('agent_execution_budget',{'sessionId':s,'maxRounds':a.rounds,'maxToolCalls':a.tools,'activeSeconds':a.active_seconds})
  if a.budget:call('agent_context_budget',{'sessionId':s,'workingBudget':a.budget})
- start=time.monotonic();call('agent_send_message',{'sessionId':s,'content':c['prompt']+'\n仅操作当前项目。使用 python3 -m unittest discover -v 运行测试。'});approved=set();denied=[]
+ start=time.monotonic();call('agent_send_message',{'sessionId':s,'content':c['prompt']+'\n仅操作当前项目。使用 python3 -m unittest discover -v 运行测试。'});approved=set();denied=[];manual=set()
  print('START',c['id'],s,flush=True)
  while True:
   d=call('agent_session',{'sessionId':s});(out/(c['id']+'-detail.json')).write_text(json.dumps(d,ensure_ascii=False,indent=2))
   for r in d['runs']:
    if r['status']=='pending_approval' and r['id'] not in approved:
     v=r['review'];cmd=v.get('command','');path=v.get('path','');ok=(v.get('kind')=='file' and not pathlib.Path(path).is_absolute() and '..' not in pathlib.Path(path).parts) or (v.get('kind')=='command' and re.fullmatch(r'python3? -m (unittest|py_compile)[a-zA-Z0-9_ ./\-]*',cmd) is not None and '..' not in cmd and pathlib.Path(v.get('directory','')).resolve()==root.resolve())
+    if not ok:
+     if r['id'] not in manual:print('MANUAL REVIEW REQUIRED',c['id'],r['id'],path or cmd,flush=True);manual.add(r['id'])
+     continue
     print('APPROVAL',c['id'],ok,path or cmd,flush=True);call('agent_review_tool',{'sessionId':s,'runId':r['id'],'reviewHash':v['hash'],'approved':ok});approved.add(r['id'])
     if not ok:denied.append(cmd or path)
   if not d['modelPending']:break
-  if time.monotonic()-start>600:call('agent_stop_generation',{'sessionId':s});raise RuntimeError('task timeout')
+  if time.monotonic()-start>a.wall_seconds:
+   response=d.get('streamingMessageId') or next((t['responseId'] for t in reversed(d.get('tasks',[])) if t.get('status') in ['model','tool','approval']),None)
+   if not response:raise RuntimeError('pending task has no response ID; inspect Keeper before retry')
+   call('agent_stop_generation',{'sessionId':s,'messageId':response})
+   (out/(c['id']+'-timeout.json')).write_text(json.dumps({'sessionId':s,'responseId':response,'reason':'wall clock budget','seconds':time.monotonic()-start},indent=2))
+   stop_deadline=time.monotonic()+30
+   while time.monotonic()<stop_deadline:
+    stopped=call('agent_session',{'sessionId':s})
+    if not stopped.get('modelPending'):
+     (out/(c['id']+'-detail.json')).write_text(json.dumps(stopped,ensure_ascii=False,indent=2))
+     raise RuntimeError('evaluation wall timeout; task stopped and session preserved')
+    time.sleep(1)
+   raise RuntimeError('stop not confirmed within 30 seconds; inspect Keeper before another evaluation')
   time.sleep(1)
  elapsed=time.monotonic()-start
  score=subprocess.run([sys.executable,'-c',c['checks']+'\nunittest.main()'],cwd=root,text=True,capture_output=True,timeout=30)
  preserved=all(t in (root/n).read_text() for n,t in c['preserve'].items());m=[m for m in d['messages'] if m['role']=='assistant'][-1];files=[r for r in d['runs'] if r['status']=='succeeded' and (r.get('review') or {}).get('kind')=='file' and json.loads(r.get('output') or '{}').get('applied')]
- record={'id':c['id'],'projectId':p['id'],'directory':str(root),'sessionId':s,'model':model['model'],'seconds':round(elapsed,2),'passed':score.returncode==0 and preserved,'preserved':preserved,'usage':m.get('modelMetadata',{}).get('usage'), 'taskStatus':d['tasks'][-1]['status'],'rounds':d['tasks'][-1]['step'],'taskBudget':m.get('modelMetadata',{}).get('taskBudget'),'errors':[m['content'] for m in d['messages'] if m['role']=='error'],'workingBudget':d.get('contextPolicy',{}).get('workingBudget'),'modelLimit':d.get('contextPolicy',{}).get('modelLimit'),'summaryRequests':m.get('modelMetadata',{}).get('contextSummaryRequests',0),'context':m.get('modelMetadata',{}).get('context'),'toolCalls':len(d['runs']),'fileChanges':len(files),'denied':denied,'testOutput':score.stdout+score.stderr}
+ record={'id':c['id'],'projectId':p['id'],'directory':str(root),'sessionId':s,'model':model['model'],'seconds':round(elapsed,2),'passed':score.returncode==0 and preserved,'preserved':preserved,'usage':m.get('modelMetadata',{}).get('usage'), 'taskStatus':d['tasks'][-1]['status'],'rounds':d['tasks'][-1]['step'],'taskBudget':m.get('modelMetadata',{}).get('taskBudget'),'errors':[m['content'] for m in d['messages'] if m['role']=='error'],'workingBudget':d.get('contextPolicy',{}).get('workingBudget'),'modelLimit':d.get('contextPolicy',{}).get('modelLimit'),'summaryRequests':m.get('modelMetadata',{}).get('contextSummaryRequests',0),'context':m.get('modelMetadata',{}).get('context'),'toolCalls':len(d['runs']),'fileChanges':len(files),'denied':denied,'manualReviewCount':len(manual),'testOutput':score.stdout+score.stderr}
  (out/(c['id']+'-completed.json')).write_text(json.dumps(record,ensure_ascii=False,indent=2));results.append(record);(out/'report.json').write_text(json.dumps(results,ensure_ascii=False,indent=2));print('DONE',c['id'],record['passed'],record['taskStatus'],record['seconds'],record['usage'],flush=True)
  # Verify later user changes prevent undo, then undo all tracked changes in reverse order.
  if files:

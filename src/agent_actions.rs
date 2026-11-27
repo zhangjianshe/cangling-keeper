@@ -16,12 +16,13 @@ use std::{
 pub(crate) fn definitions() -> Vec<Value> {
     [
  ("write_file","创建或覆盖项目内 UTF-8 文件。由系统安全策略决定自动批准或等待用户确认；父目录必须存在。新建文件使用 createOnly=true，同名文件存在时拒绝覆盖；不能与 expectedSha256 同时使用。修改已有文件时应将 read_file 返回的 sha256 传入 expectedSha256；不匹配则拒绝生成修改预览。",json!({"path":{"type":"string"},"content":{"type":"string"},"createOnly":{"type":"boolean"},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path","content"])),
- ("apply_patch","精确替换同一文件：使用 oldText/newText 单组参数，或 edits 数组（1–20组），不能混用。各组按顺序基于上一步结果唯一匹配，oldText 不能为空；任何一组失败均不写入，全部成功后只生成一份审批差异并写入一次。由系统安全策略决定自动批准或等待用户确认；应传入 read_file 的 sha256 作为 expectedSha256，拒绝基于旧版本修改。",json!({"path":{"type":"string"},"oldText":{"type":"string"},"newText":{"type":"string"},"edits":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"oldText":{"type":"string","minLength":1},"newText":{"type":"string"}},"required":["oldText","newText"],"additionalProperties":false}},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path"])),
- ("run_command","提出本机 shell 命令，默认在当前项目根目录运行。系统按安全模式决定自动批准或等待用户确认完整命令和执行目录。以 Keeper 用户权限执行，不是文件沙箱。timeoutSeconds 默认 60，最多 120。",json!({"command":{"type":"string"},"cwd":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!(["command"])),
+ ("apply_patch","同源错误批量替换：先检查所有匹配位置，使用oldText/newText/expectedOccurrences以及expectedSha256，一次替换全部精确匹配；匹配次数必须与expectedOccurrences一致。不确定各处语义一致时使用edits逐组替换。支持行补丁：startLine/endLine（含首尾、最多200行）、newLines（新行数组，空数组删除），必须提供expectedSha256，不可与文本替换混用。多行文本转义困难时优先使用行补丁。精确替换文件，优先使用简单参数：path、oldText、newText、expectedSha256。newText 为空字符串表示删除匹配文本。仅多处修改时使用 edits 数组（1–20组），不能与单组参数混用。各组均匹配同一原始文件，禁止重叠、嵌套或依赖前一组的新文本；邻近修改合并成一组。oldText使用最小唯一片段，不要包含大片未改内容；任何一组失败均不写入，全部成功后只生成一份审批差异并写入一次。由系统安全策略决定自动批准或等待用户确认；应传入 read_file 的 sha256 作为 expectedSha256，拒绝基于旧版本修改。",json!({"path":{"type":"string"},"startLine":{"type":"integer","minimum":1},"endLine":{"type":"integer","minimum":1},"newLines":{"type":"array","maxItems":200,"items":{"type":"string"}},"oldText":{"type":"string"},"newText":{"type":"string"},"expectedOccurrences":{"type":"integer","minimum":1,"maximum":1000},"edits":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"oldText":{"type":"string","minLength":1},"newText":{"type":"string"}},"required":["oldText","newText"],"additionalProperties":false}},"expectedSha256":{"type":"string","minLength":64,"maxLength":64}}),json!(["path"])),
+ ("run_tests","运行 Python unittest 测试，优先于手写测试 Shell。directory 默认 tests，pattern 默认 test*.py。生成完整命令供原安全策略审批；测试代码具有当前用户权限，并非沙箱。日志保存为项目根目录的 keeper-test-*.log（每流最多2 MiB），返回结构化摘要。测试结束清理所属进程组；测试通过不等于全部需求已验收。",json!({"directory":{"type":"string","maxLength":200},"pattern":{"type":"string","maxLength":100},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!([])),
+ ("run_command","提出本机 shell 命令，默认在当前项目根目录运行。Python unittest 使用 run_tests；不得以 head/tail 截断测试进程输出，查看已保存的日志不受影响。系统按安全模式决定自动批准或等待用户确认完整命令和执行目录。以 Keeper 用户权限执行，不是文件沙箱。timeoutSeconds 默认 60，最多 120。命令结束会清理所属进程组，后台服务不能跨调用保活；测试服务器与请求应在同一命令中完成，并在 finally 中关闭。不猜端口、不使用宽泛 pkill。Bash 默认 pipefail；exitCode=0 仅代表命令成功，不代表测试全部通过，须核查测试数量、失败、跳过和截断情况。",json!({"command":{"type":"string"},"cwd":{"type":"string"},"timeoutSeconds":{"type":"integer","minimum":1,"maximum":120}}),json!(["command"])),
 ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).collect()
 }
 pub(crate) fn is_action(name: &str) -> bool {
-    matches!(name, "write_file" | "apply_patch" | "run_command")
+    matches!(name, "write_file" | "apply_patch" | "run_command" | "run_tests")
 }
 pub(crate) fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -161,6 +162,7 @@ pub(crate) struct Prepared {
     action: Action,
 }
 enum Action {
+    Unchanged(Value),
     File {
         root: Arc<Dir>,
         parent: Dir,
@@ -180,7 +182,7 @@ enum Action {
 }
 pub(crate) fn command_shell()->Result<String,String>{
     #[cfg(windows)] {Ok(std::env::var("SystemRoot").map_err(|_|"无法确定 Windows shell")?+"\\System32\\cmd.exe")}
-    #[cfg(not(windows))] {Ok("/bin/sh".to_owned())}
+    #[cfg(not(windows))] {Ok(if Path::new("/bin/bash").is_file(){"/bin/bash"}else{"/bin/sh"}.to_owned())}
 }
 pub(crate) fn prepare(root:Arc<Dir>,directory:&str,name:&str,args:&Value,cancel:&AtomicBool)->Result<Prepared,String>{
     prepare_with_limit(root,directory,name,args,cancel,32768)
@@ -209,8 +211,28 @@ fn prepare_with_limit(
     }) {
         return Err("工具参数包含未定义字段".into());
     }
+    if name == "run_tests" {
+        let directory_arg=args.get("directory").and_then(Value::as_str).unwrap_or("tests");
+        let pattern=args.get("pattern").and_then(Value::as_str).unwrap_or("test*.py");
+        // Restrict syntax rather than interpolate arbitrary shell fragments.
+        if directory_arg.is_empty() || directory_arg.len()>200 || directory_arg.starts_with('-') || !directory_arg.bytes().all(|b|b.is_ascii_alphanumeric()||b"_./-".contains(&b)) {return Err("测试目录须为项目相对路径，仅使用字母数字和 _./-".into());}
+        let directory_path=path(directory_arg,true)?;no_links(&root,&directory_path,false)?;
+        root.open_dir(&directory_path).map_err(|_|"测试目录不存在，请先创建目录及测试文件")?;
+        if pattern.is_empty() || pattern.len()>100 || !pattern.bytes().all(|b|b.is_ascii_alphanumeric()||b"_.*?-".contains(&b)){return Err("测试文件模式仅允许字母数字和 _.*?-".into());}
+        let python=if cfg!(windows){"python"}else{"python3"};
+        let command=format!(r#"{python} -m unittest discover -s "{directory_arg}" -p "{pattern}" -v"#);
+        let mut request=json!({"command":command,"timeoutSeconds":args.get("timeoutSeconds").cloned().unwrap_or(json!(120))});
+        request["cwd"]=json!(".");
+        let mut prepared=prepare_with_limit(root,directory,"run_command",&request,cancel,content_limit)?;
+        prepared.review["testRunner"]=json!("unittest");
+        prepared.review["testId"]=json!(format!("unittest:{directory_arg}:{pattern}"));
+        prepared.review["testLogPrefix"]=json!(format!("keeper-test-{}",uuid::Uuid::new_v4()));
+        prepared.review["testLogLimitBytes"]=json!(2097152);
+        return Ok(prepared);
+    }
     if name == "run_command" {
         let command = text(args, "command")?;
+        if crate::agent_test_summary::truncates_test_output(command){return Err("未执行：head/tail 会截断测试汇总或提前关闭输出管道。请使用 run_tests 保存完整日志，或提交不截断的测试命令重新审批；不要原样重试。".into());}
         if command.trim().is_empty() || command.len() > 8192 || command.contains('\0') {
             return Err("命令为空、超过 8192 字节或包含空字符".into());
         }
@@ -229,7 +251,13 @@ fn prepare_with_limit(
                 .ok_or("超时须为 1–120 秒")?,
         };
         let shell=command_shell()?;
-        let review = json!({"kind":"command","command":command,"cwd":cwd,"directory":Path::new(directory).join(&cwd).components().collect::<PathBuf>().to_string_lossy(),"shell":shell,"timeoutSeconds":timeout,"scope":"Keeper 用户权限；执行目录不是文件访问沙箱"});
+        let mut review = json!({"kind":"command","command":command,"cwd":cwd,"directory":Path::new(directory).join(&cwd).components().collect::<PathBuf>().to_string_lossy(),"shell":shell,"timeoutSeconds":timeout,"pipelineFailureMode":if shell=="/bin/bash"{"pipefail"}else{"shell-default"},"processLifetime":"命令结束、超时或停止时清理所属进程组；后台服务不能跨工具调用存活","scope":"Keeper 用户权限；执行目录不是文件访问沙箱"});
+        // Preserve the exact reviewed command; attach log capture to canonical tests.
+        if cwd==Path::new(".") {if let Some(id)=crate::agent_test_summary::identity(command){
+            review["testRunner"]=json!("unittest");review["testId"]=json!(id);
+            review["testLogPrefix"]=json!(format!("keeper-test-{}",uuid::Uuid::new_v4()));
+            review["testLogLimitBytes"]=json!(2097152);
+        }}
         return Ok(Prepared {
             review,
             action: Action::Command {
@@ -259,7 +287,7 @@ fn prepare_with_limit(
     };
     if create_only && args.get("expectedSha256").is_some() {return Err("只创建文件不能同时指定已有文件版本 expectedSha256".into());}
     let old = snapshot(&parent, &filename)?;
-    if create_only && old.is_some() {return Err("只创建模式：同名文件已存在，未生成预览或覆盖；请使用其他名称，或读取后明确修改已有文件。".into());}
+    if create_only && old.is_some() {return Err("只创建模式：同名文件已存在，未生成预览或覆盖；如需修改此文件，请先read_file读取path和sha256，再用write_file(path,content,createOnly=false,expectedSha256=读取的sha256)或apply_patch；不要继续createOnly=true重试。".into());}
     let before = old.as_ref().map(|(s, _)| s.as_str()).unwrap_or("");
     if let Some(value)=args.get("expectedSha256") {
         let expected=value.as_str().filter(|s|s.len()==64 && s.bytes().all(|c|c.is_ascii_hexdigit())).ok_or("expectedSha256 须为64位十六进制校验值")?;
@@ -272,30 +300,45 @@ fn prepare_with_limit(
             return Err(format!("写入内容最多 {} KiB",content_limit/1024));
         }
         content.to_owned()
+    } else if ["startLine","endLine","newLines"].iter().any(|k|args.get(k).is_some()) {
+        if old.is_none() {return Err("补丁目标文件不存在".into());}
+        patch_lines(before,args)?
     } else {
         if old.is_none() {
             return Err("补丁目标文件不存在".into());
         }
+        let expected_occurrences=args.get("expectedOccurrences").map(|v|v.as_u64().filter(|n|*n>=1&&*n<=1000).ok_or("expectedOccurrences须为1–1000的整数")).transpose()?;
+        if expected_occurrences.is_some() && (args.get("edits").is_some() || args.get("expectedSha256").is_none()){return Err("计数替换必须提供expectedSha256，不能与edits混用".into());}
         let pairs:Vec<(&str,&str)>=if let Some(edits)=args.get("edits"){
             if args.get("oldText").is_some() || args.get("newText").is_some(){return Err("edits 不能与 oldText/newText 单组参数混用".into());}
             let edits=edits.as_array().filter(|v|!v.is_empty() && v.len()<=20).ok_or("edits 必须包含1–20组替换")?;
             edits.iter().map(|edit|{let object=edit.as_object().ok_or("每组替换须为对象")?;if object.keys().any(|k|k!="oldText" && k!="newText"){return Err("替换组包含未定义字段".into());}Ok((text(edit,"oldText")?,text(edit,"newText")?))}).collect::<Result<_,String>>()?
         }else{vec![(text(args,"oldText")?,text(args,"newText")?)]};
+        if args.get("edits").is_some(){patch_original(before,&pairs,cancel)?}else{
         let mut content=before.to_owned();
         for (index,(old_text,new_text)) in pairs.into_iter().enumerate(){
             check(cancel)?;
-            if old_text.is_empty() || content.find(old_text).is_none() || content.find(old_text)!=content.rfind(old_text){return Err(format!("第 {} 组 oldText 必须在当前内容中唯一匹配；整次补丁未写入，请重新读取并调整。",index+1));}
+            let occurrences=if old_text.is_empty(){0}else{content.match_indices(old_text).count()};
+            let overlapping=if old_text.is_empty(){0}else{content.char_indices().filter(|(offset,_)|content[*offset..].starts_with(old_text)).take(1001).count()};
+            if old_text.is_empty() || overlapping!=occurrences || occurrences != expected_occurrences.unwrap_or(1) as usize {
+                let anchor=old_text.lines().find(|s|!s.trim().is_empty()).unwrap_or("").chars().take(160).collect::<String>();
+                return Err(format!("第 {} 组 oldText 匹配次数不符（实际{}，要求{}）；整次补丁未写入。不要猜测或模糊替换，不要重复全文件定位。可读取 {}，复制实际文本作为oldText（不带行号，JSON中只转义一次）；保留expectedSha256。",index+1,occurrences,expected_occurrences.unwrap_or(1),json!({"path":raw,"anchor":anchor,"lineCount":80,"expectedSha256":hash(before.as_bytes())})));
+            }
             if new_text.len()>131072{return Err("替换内容超过128 KiB，整次补丁未写入".into());}
-            content=content.replacen(old_text,new_text,1);
+            let count=expected_occurrences.unwrap_or(1) as usize;
+            let projected=content.len().saturating_sub(old_text.len().saturating_mul(count)).saturating_add(new_text.len().saturating_mul(count));
+            if projected>131072{return Err("修改后文件最多128 KiB，整次补丁未写入".into());}
+            content=content.replacen(old_text,new_text,count);
             if content.len()>131072{return Err("修改后文件最多128 KiB，整次补丁未写入".into());}
         }
         content
+        }
     };
     if after.len() > 131072 {
         return Err("修改后文件最多 128 KiB".into());
     }
     if old.is_some() && before == after {
-        return Err("文件内容未变化，无需执行写入".into());
+        return Ok(Prepared{review:json!({"kind":"unchanged","path":raw}),action:Action::Unchanged(json!({"path":raw,"changed":false,"applied":false,"notExecuted":true,"unchanged":true,"sha256":hash(before.as_bytes()),"message":"内容已与目标一致，无需写入或审批；继续验证下一项，不要重复提交相同修改。"}))});
     }
     let text_diff = similar::TextDiff::configure()
         .timeout(Duration::from_millis(200))
@@ -329,6 +372,66 @@ fn prepare_with_limit(
         },
     })
 }
+/// Resolve every edit against the same snapshot before producing any output.
+fn patch_original(before:&str,pairs:&[(&str,&str)],cancel:&AtomicBool)->Result<String,String>{
+    let mut spans=Vec::new();let mut bytes=before.len();
+    for (index,(old,new)) in pairs.iter().enumerate(){
+        check(cancel)?;
+        let start=before.find(old).filter(|_|!old.is_empty()).ok_or_else(||format!("第{}组在原始文件中未匹配；整次补丁未写入。每组oldText必须来自同一原始文件，不能引用前一组产生的新文本。",index+1))?;
+        if before.rfind(old)!=Some(start){return Err(format!("第{}组在原始文件中不是唯一匹配，整次补丁未写入。",index+1));}
+        spans.push((start,start+old.len(),*new));
+    }
+    spans.sort_by_key(|v|v.0);
+    if spans.windows(2).any(|w|w[0].1>w[1].0){return Err("补丁范围重叠或嵌套，请合并为一组；整次补丁未写入".into());}
+    for (start,end,_) in &spans {bytes-=end-start;}
+    for (_,_,new) in &spans {bytes=bytes.saturating_add(new.len());}
+    if bytes>131072{return Err("修改后文件最多128 KiB，整次补丁未写入".into());}
+    let mut result=String::with_capacity(bytes);let mut cursor=0;
+    for (start,end,new) in spans {result.push_str(&before[cursor..start]);result.push_str(new);cursor=end;}
+    result.push_str(&before[cursor..]);Ok(result)
+}
+#[cfg(test)]mod original_patch_tests{
+ use super::*;
+ #[test]fn all_edits_use_original_snapshot_and_reject_overlap(){
+  let flag=AtomicBool::new(false);
+  assert_eq!(patch_original("first second",&[("first","second"),("second","third")],&flag).unwrap(),"second third");
+  assert!(patch_original("first",&[("first","second"),("second","third")],&flag).is_err());
+  assert!(patch_original("abc",&[("ab","x"),("bc","y")],&flag).is_err());
+  assert!(patch_original("aaa",&[("aa","x")],&flag).is_err());
+  assert_eq!(patch_original("甲乙",&[("乙","B"),("甲","A")],&flag).unwrap(),"AB");
+  assert!(patch_original("a",&[("a","b")],&AtomicBool::new(true)).is_err());
+ }
+}
+fn patch_lines(before: &str, args: &Value) -> Result<String,String> {
+    if ["oldText","newText","edits","expectedOccurrences"].iter().any(|k|args.get(k).is_some()) {return Err("行补丁不能与文本补丁混用".into());}
+    let expected=text(args,"expectedSha256")?;
+    if !hash(before.as_bytes()).eq_ignore_ascii_case(expected) {return Err("文件版本已变化，请重新读取".into());}
+    let start=args["startLine"].as_u64().ok_or("startLine 必须为正整数")?;
+    let end=args["endLine"].as_u64().ok_or("endLine 必须为正整数")?;
+    let lines:Vec<&str>=before.split_inclusive('\n').collect();
+    if start==0 || end<start || end>lines.len() as u64 || end-start>=200 {return Err("行范围无效，最多替换200行".into());}
+    let new=args["newLines"].as_array().filter(|a|a.len()<=200).ok_or("newLines 须为最多200行的数组")?;
+    let values=new.iter().map(|v|v.as_str().filter(|s|!s.contains(['\n','\r'])).ok_or("每个newLines元素只能包含一行".to_string())).collect::<Result<Vec<_>,_>>()?;
+    let sep=if lines.iter().filter(|s|s.ends_with('\n')).all(|s|s.ends_with("\r\n")) && before.contains("\r\n") {"\r\n"} else {"\n"};
+    let mut replacement=values.join(sep);
+    if !values.is_empty() && lines[end as usize-1].ends_with('\n') {replacement.push_str(sep);}
+    Ok(format!("{}{}{}",lines[..start as usize-1].concat(),replacement,lines[end as usize..].concat()))
+}
+#[cfg(test)]
+mod line_patch_tests {
+ use super::*;
+ #[test] fn preserves_endings_and_checks_version_and_range() {
+  for before in ["a\nb\nc\n","a\r\nb\r\nc\r\n","a\nb\nc"] {
+   let mut a=json!({"startLine":2,"endLine":2,"newLines":["B"],"expectedSha256":hash(before.as_bytes())});
+   assert_eq!(patch_lines(before,&a).unwrap(),before.replace('b',"B"));
+   a["newLines"]=json!([]);assert_eq!(patch_lines(before,&a).unwrap(),before.replace(if before.contains("\r\n"){"b\r\n"}else{"b\n"},""));
+   a["endLine"]=json!(100);assert!(patch_lines(before,&a).is_err());
+  }
+  let a=json!({"startLine":1,"endLine":1,"newLines":["x"],"expectedSha256":hash(b"a")});
+  assert_eq!(patch_lines("a",&a).unwrap(),"x");assert!(patch_lines("changed",&a).is_err());
+  for extra in [json!({"newLines":["x\ny"]}),json!({"oldText":"a"}),json!({"expectedSha256":null})] {let mut b=a.clone();b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());assert!(patch_lines("a",&b).is_err());}
+ }
+}
 struct TempFile<'a> {
     dir: &'a Dir,
     path: PathBuf,
@@ -339,6 +442,7 @@ impl Drop for TempFile<'_> {
     }
 }
 impl Prepared {
+    pub(crate) fn unchanged(&self)->Option<Value>{if let Action::Unchanged(value)=&self.action{Some(value.clone())}else{None}}
     pub(crate) fn execute(
         self,
         cancel: Arc<AtomicBool>,
@@ -346,6 +450,7 @@ impl Prepared {
     ) -> Result<Value, String> {
         register(&cancel)?;
         match self.action {
+            Action::Unchanged(value)=>Ok(value),
             Action::File {
                 root,
                 parent,
@@ -496,9 +601,11 @@ struct CommandOutput {
     head: Vec<u8>,
     tail: std::collections::VecDeque<u8>,
     total: usize,
+    full: Option<Vec<u8>>,
 }
 impl CommandOutput {
     fn push(&mut self, bytes: &[u8]) {
+        if let Some(full)=self.full.as_mut(){let n=bytes.len().min(2097152usize.saturating_sub(full.len()));full.extend_from_slice(&bytes[..n]);}
         self.total = self.total.saturating_add(bytes.len());
         let n = bytes.len().min(4096 - self.head.len());
         self.head.extend_from_slice(&bytes[..n]);
@@ -545,6 +652,7 @@ fn command_run(
     #[cfg(unix)]
     {
         use std::os::{fd::AsRawFd, unix::process::CommandExt};
+        if review["shell"].as_str()==Some("/bin/bash"){cmd.args(["-o","pipefail"]);}
         cmd.args(["-c", command]).process_group(0);
         let fd = cwd.as_raw_fd();
         unsafe {
@@ -620,6 +728,7 @@ fn command_run(
     let mut last_progress = (0, 0);
     let mut out = CommandOutput::default();
     let mut err = CommandOutput::default();
+    if review["testRunner"]=="unittest"{out.full=Some(Vec::new());err.full=Some(Vec::new());}
     let mut stopped = false;
     let mut timed_out = false;
     let mut exit = None;
@@ -675,7 +784,25 @@ fn command_run(
     let _ = err_thread.join();
     let (stdout, stdout_omitted) = out.render();
     let (stderr, stderr_omitted) = err.render();
-    let result = json!({"exitCode":exit,"stdout":stdout,"stderr":stderr,"stopped":stopped,"timedOut":timed_out,"outputTruncated":stdout_omitted + stderr_omitted > 0,"stdoutOmittedBytes":stdout_omitted,"stderrOmittedBytes":stderr_omitted});
+    let mut result = json!({"pipelineFailureMode":review["pipelineFailureMode"],"testVerdict":"not_assessed","testSummary":crate::agent_test_summary::summarize(&stdout,&stderr,exit,stopped||timed_out||stdout_omitted+stderr_omitted>0),"processCleanup":{"scope":"owned_process_group_or_job","attempted":owned.terminated,"guidance":"本次命令结束时已尝试清理所属进程组/Job；不支持跨调用保活服务。测试服务与请求应在同一命令中启动、使用并关闭；不要猜端口或使用宽泛 pkill。脱离所属进程组的进程不在此保证内。"},"exitCode":exit,"stdout":stdout,"stderr":stderr,"stopped":stopped,"timedOut":timed_out,"outputTruncated":stdout_omitted + stderr_omitted > 0,"stdoutOmittedBytes":stdout_omitted,"stderrOmittedBytes":stderr_omitted});
+    if result["testSummary"]["format"]=="unittest" {if let Some(id)=crate::agent_test_summary::identity(command){result["testId"]=json!(id);}}
+    if review["testRunner"]=="unittest" {
+        let full_out=out.full.as_deref().unwrap_or_default();let full_err=err.full.as_deref().unwrap_or_default();
+        let incomplete=out.total>full_out.len()||err.total>full_err.len();
+        result["testSummary"]=crate::agent_test_summary::summarize(&String::from_utf8_lossy(full_out),&String::from_utf8_lossy(full_err),exit,stopped||timed_out||incomplete);
+        result["testId"]=review["testId"].clone();
+        let prefix=review["testLogPrefix"].as_str().ok_or("缺少测试日志标识")?;
+        let mut logs=Vec::new();
+        for (suffix,bytes) in [("stdout",full_out),("stderr",full_err)] {
+            let name=format!("{prefix}-{suffix}.log");
+            let mut options=cap_std::fs::OpenOptions::new();options.write(true).create_new(true);
+            match cwd.open_with(&name,&options).and_then(|mut f|f.write_all(bytes)) {
+                Ok(())=>logs.push(json!({"path":name,"bytes":bytes.len(),"truncated":if suffix=="stdout"{out.total>bytes.len()}else{err.total>bytes.len()}})),
+                Err(_)=>{result["testLogError"]=json!("日志保存失败；未覆盖已有文件，请查看执行输出");}
+            }
+        }
+        result["testLogs"]=json!(logs);
+    }
     progress(serde_json::to_string_pretty(&result).unwrap_or_default());
     Ok(result)
 }
@@ -691,6 +818,45 @@ mod tests {
     }
     fn flag() -> Arc<AtomicBool> {
         Arc::new(AtomicBool::new(false))
+    }
+    #[test]
+    fn counted_patch_is_atomic_reviewed_and_version_guarded(){
+        let (dir,root)=fixture();let file=dir.join("a.py");let before="a = self.db.get()\nb = self.db.put()\n";std::fs::write(&file,before).unwrap();
+        let args=json!({"path":"a.py","oldText":"self.db","newText":"self.server.db","expectedOccurrences":2,"expectedSha256":hash(before.as_bytes())});
+        crate::agent_tool_args::validate("apply_patch",&args).unwrap();
+        for bad in [json!({"expectedOccurrences":3}),json!({"expectedSha256":"0".repeat(64)}),json!({"edits":[{"oldText":"a","newText":"b"}]})] {let mut a=args.clone();a.as_object_mut().unwrap().extend(bad.as_object().unwrap().clone());assert!(prepare(root.clone(),dir.to_str().unwrap(),"apply_patch",&a,&flag()).is_err());assert_eq!(std::fs::read_to_string(&file).unwrap(),before);}
+        let mut missing=args.clone();missing.as_object_mut().unwrap().remove("expectedSha256");assert!(prepare(root.clone(),dir.to_str().unwrap(),"apply_patch",&missing,&flag()).is_err());
+        let p=prepare(root.clone(),dir.to_str().unwrap(),"apply_patch",&args,&flag()).unwrap();assert_eq!(p.review["changeSummary"]["addedLines"],2);assert_eq!(std::fs::read_to_string(&file).unwrap(),before);
+        p.execute(flag(),|_|{}).unwrap();assert_eq!(std::fs::read_to_string(&file).unwrap(),before.replace("self.db","self.server.db"));
+        std::fs::write(&file,before).unwrap();let p=prepare(root.clone(),dir.to_str().unwrap(),"apply_patch",&args,&flag()).unwrap();std::fs::write(&file,"user edit").unwrap();assert!(p.execute(flag(),|_|{}).is_err());assert_eq!(std::fs::read_to_string(&file).unwrap(),"user edit");
+        drop(root);std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn line_patch_review_never_writes_and_rechecks_concurrent_changes(){
+        let (dir,root)=fixture();let file=dir.join("a.txt");std::fs::write(&file,"a\nb\n").unwrap();
+        let args=json!({"path":"a.txt","startLine":2,"endLine":2,"newLines":["B"],"expectedSha256":hash(b"a\nb\n")});
+        crate::agent_tool_args::validate("apply_patch",&args).unwrap();
+        let p=prepare(root.clone(),dir.to_str().unwrap(),"apply_patch",&args,&flag()).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(),"a\nb\n");assert!(p.review["diff"].as_str().unwrap().contains("+B"));
+        std::fs::write(&file,"user edit").unwrap();assert!(p.execute(flag(),|_|{}).is_err());assert_eq!(std::fs::read_to_string(&file).unwrap(),"user edit");
+        drop(root);std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn canonical_command_keeps_review_and_logs_while_truncation_does_not_execute(){
+        let (dir,root)=fixture();let command="python3 -m unittest discover -s sub -v";
+        let prepared=prepare(root.clone(),dir.to_str().unwrap(),"run_command",&json!({"command":command}),&flag()).unwrap();
+        assert_eq!(prepared.review["command"],command);assert_eq!(prepared.review["testRunner"],"unittest");assert!(prepared.review["testLogPrefix"].as_str().unwrap().starts_with("keeper-test-"));
+        assert!(prepare(root.clone(),dir.to_str().unwrap(),"run_command",&json!({"command":format!("{command} | head -100")}),&flag()).err().unwrap().contains("未执行"));
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(),1);drop(prepared);drop(root);std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn unified_test_runner_is_reviewed_and_rejects_injection(){
+        let (dir,root)=fixture();std::fs::create_dir(dir.join("tests")).unwrap();
+        let plan=prepare(root.clone(),dir.to_str().unwrap(),"run_tests",&json!({}),&flag()).unwrap();
+        assert_eq!(plan.review["kind"],"command");assert_eq!(plan.review["testRunner"],"unittest");assert_eq!(std::fs::read_dir(&dir).unwrap().count(),2);
+        assert!(!crate::agent_security::auto_approve("auto","run_tests"));assert!(!crate::agent_security::auto_approve("ask","run_tests"));
+        for args in [json!({"directory":"../other"}),json!({"pattern":"*.py;touch x"}),json!({"directory":"$(id)"}),json!({"timeoutSeconds":121})]{assert!(prepare(root.clone(),dir.to_str().unwrap(),"run_tests",&args,&flag()).is_err());}
+        drop(root);std::fs::remove_dir_all(dir).unwrap();
     }
     #[test]
     fn undo_restores_preexisting_content_and_guards_new_file(){
@@ -926,6 +1092,32 @@ mod tests {
         }));
         drop(root);
         std::fs::remove_dir_all(path).unwrap();
+    }
+    #[test]
+    fn unchanged_is_success_but_stale_hash_still_rejected(){
+        let (path,root)=fixture();std::fs::write(path.join("same.txt"),"same").unwrap();
+        let args=json!({"path":"same.txt","content":"same","expectedSha256":hash(b"same")});
+        let plan=prepare(root.clone(),path.to_str().unwrap(),"write_file",&args,&flag()).unwrap();
+        assert_eq!(plan.unchanged().unwrap()["changed"],false);
+        assert_eq!(plan.execute(flag(), |_|{}).unwrap()["unchanged"],true);
+        let mut stale=args;stale["expectedSha256"]=json!(hash(b"old"));
+        assert!(prepare(root.clone(),path.to_str().unwrap(),"write_file",&stale,&flag()).is_err());
+        drop(root);std::fs::remove_dir_all(path).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn pipelines_preserve_failure_and_background_children_are_owned(){
+        let (path,root)=fixture();
+        let plan=prepare(root.clone(),path.to_str().unwrap(),"run_command",&json!({"command":"false | cat","timeoutSeconds":5}),&flag()).unwrap();
+        let bash=plan.review["shell"]=="/bin/bash";
+        let result=plan.execute(flag(), |_|{}).unwrap();
+        if bash{assert_ne!(result["exitCode"],0);}
+        assert_eq!(result["testVerdict"],"not_assessed");
+        let plan=prepare(root.clone(),path.to_str().unwrap(),"run_command",&json!({"command":"(sleep 1; printf bad > orphan.txt) &","timeoutSeconds":5}),&flag()).unwrap();
+        let result=plan.execute(flag(), |_|{}).unwrap();
+        assert_eq!(result["processCleanup"]["attempted"],true);
+        std::thread::sleep(Duration::from_millis(1200));assert!(!path.join("orphan.txt").exists());
+        drop(root);std::fs::remove_dir_all(path).unwrap();
     }
     #[test]
     fn command_output_keeps_both_ends_and_bounds_escaped_json() {
