@@ -533,6 +533,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     catch(error){notice(String(error));}finally{agent.switchingVersion=false;}
   }
   function renderPlanProgress(message,entry,runs){
+    if(['hidden','pending'].includes(entry.modelMetadata?.planPolicy?.mode))return;
     const record=[...runs].reverse().find(r=>r.tool==='update_plan'&&r.status==='succeeded') || (entry.modelMetadata?.executionEvidence?.latestPlan?{output:JSON.stringify(entry.modelMetadata.executionEvidence.latestPlan)}:null);
     if(!record)return;
     let plan;try{plan=JSON.parse(record.output);}catch{return;}
@@ -608,9 +609,16 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
             const parts=[labels[c.status] || ''];
             if(Number.isFinite(c.estimatedTokens)&&Number.isFinite(c.limit)&&c.limit>0)parts.push('输入估算 '+c.estimatedTokens.toLocaleString()+' / '+c.limit.toLocaleString()+' token');
             if(u.promptTokens!==undefined)parts.push('累计实际输入 '+u.promptTokens.toLocaleString()+' · 输出 '+u.completionTokens.toLocaleString()+' token（含压缩）');
-            const percentage=Number.isFinite(c.estimatedTokens)&&c.estimatedTokens>=0&&Number.isFinite(c.limit)&&c.limit>0?'上下文 '+Math.round(c.estimatedTokens/c.limit*100)+'%':'上下文用量未知';
-            const exceptional=['compressing','fallback','stopped','interrupted'].includes(c.status)?labels[c.status]:'';
-            const info=element('div','agent-context-info',exceptional?percentage+' · '+exceptional:percentage);info.title=parts.filter(Boolean).join(' · ')+'。预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');replyHeader.append(info);
+            const contextPercent=Number.isFinite(c.estimatedTokens)&&c.estimatedTokens>=0&&Number.isFinite(c.limit)&&c.limit>0?Math.round(c.estimatedTokens/c.limit*100):null;
+            const percentage=contextPercent===null?'—':contextPercent+'%';
+            const info=element('div','agent-context-info',percentage);info.title='上下文窗口占用（估算） · '+parts.filter(Boolean).join(' · ')+'。预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');replyHeader.append(info);
+            if(contextPercent!==null){
+              const bar=element('span','agent-context-bar'+(contextPercent>=95?' is-critical':contextPercent>=85?' is-warning':''));
+              bar.setAttribute('role','progressbar');bar.setAttribute('aria-label','上下文窗口占用');bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');bar.setAttribute('aria-valuenow',String(Math.min(100,contextPercent)));bar.setAttribute('aria-valuetext',percentage+'（估算）');
+              const fill=element('span','agent-context-bar-fill');fill.style.width=Math.min(100,contextPercent)+'%';bar.append(fill);info.prepend(bar);
+            }
+            const contextIcon=document.createElementNS('http://www.w3.org/2000/svg','svg');contextIcon.setAttribute('class','agent-context-icon');contextIcon.setAttribute('viewBox','0 0 20 20');contextIcon.setAttribute('fill','none');contextIcon.setAttribute('stroke','currentColor');contextIcon.setAttribute('stroke-width','1.4');contextIcon.setAttribute('stroke-linecap','round');contextIcon.setAttribute('stroke-linejoin','round');contextIcon.setAttribute('aria-hidden','true');
+            const contextPath=document.createElementNS('http://www.w3.org/2000/svg','path');contextPath.setAttribute('d','M4 3.5h12a1.5 1.5 0 0 1 1.5 1.5v10a1.5 1.5 0 0 1-1.5 1.5H4A1.5 1.5 0 0 1 2.5 15V5A1.5 1.5 0 0 1 4 3.5ZM3 7h14M6 10.5h8M6 13.5h5');contextIcon.append(contextPath);info.prepend(contextIcon);
           }
           message.append(replyHeader);
           if(['stopped','interrupted'].includes(metadata.generationStatus))message.append(element('span','agent-generation-status',metadata.generationStatus==='stopped'?'已停止生成':'生成已中断'));

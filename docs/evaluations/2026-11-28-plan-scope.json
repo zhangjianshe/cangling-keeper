@@ -1,0 +1,188 @@
+{
+  "model": "qwen-coder-next",
+  "scope": "Routing only; no real action tools, user projects or conversations created",
+  "results": [
+    {
+      "trial": 1,
+      "request": "加载建筑物图层并定位到郑州",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "known_operation",
+      "reason": "任务明确要求加载建筑物图层并定位到郑州，属于已有操作的串联（加载图层+定位），目标清晰，无需开发或排查。",
+      "passed": true,
+      "seconds": 1.88
+    },
+    {
+      "trial": 1,
+      "request": "请找到郑州的建筑图层，加载后把地球镜头移过去并确认显示",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "known_operation",
+      "reason": "任务目标明确：定位郑州建筑图层、加载图层、移动地球镜头并确认显示，属于已有操作的串联执行，无开发、排查或修改需求。",
+      "passed": true,
+      "seconds": 1.92
+    },
+    {
+      "trial": 1,
+      "request": "load the existing building layer and fly to Zhengzhou",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "known_operation",
+      "reason": "任务明确要求加载已有建筑图层并飞至郑州，属于已有操作的串联，无开发或排查需求。",
+      "passed": true,
+      "seconds": 1.85
+    },
+    {
+      "trial": 1,
+      "request": "建筑物图层添加后没有显示，检查代码并修复，再验证定位和渲染",
+      "expected": "required",
+      "actual": "required",
+      "category": "investigation",
+      "reason": "用户要求检查建筑物图层添加后不显示的问题，需定位原因、修复代码并验证定位与渲染，属于需要排查未知原因并修复验证的场景。",
+      "passed": true,
+      "seconds": 1.12
+    },
+    {
+      "trial": 1,
+      "request": "排查建筑图层不显示的问题，找到原因后修复并验证",
+      "expected": "required",
+      "actual": "required",
+      "category": "investigation",
+      "reason": "任务要求排查建筑图层不显示的问题，需定位原因、修复并验证，属于需要系统性问题排查与修复的场景。",
+      "passed": true,
+      "seconds": 1.13
+    },
+    {
+      "trial": 1,
+      "request": "Investigate why buildings are invisible, fix the renderer and verify it",
+      "expected": "required",
+      "actual": "required",
+      "category": "investigation",
+      "reason": "任务要求调查建筑物不可见的原因、修复渲染器并验证结果，属于需要定位未知原因、修复并验证的问题排查。",
+      "passed": true,
+      "seconds": 1.07
+    },
+    {
+      "trial": 1,
+      "request": "为什么有些交互有计划栏，有些没有？",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "explanation",
+      "reason": "用户询问的是关于界面中计划栏存在与否的原因，属于功能说明或设计逻辑的解释性问题，不涉及具体操作、开发或排查。",
+      "passed": true,
+      "seconds": 1.97
+    },
+    {
+      "trial": 1,
+      "request": "把按钮上的“确人”改成“确认”，只改这一处文案",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "localized_edit",
+      "reason": "用户明确要求仅修改按钮文案中的一处错字“确人”为“确认”，属于范围已知的单文件小调整，符合localized_edit的定义。",
+      "passed": true,
+      "seconds": 1.97
+    },
+    {
+      "trial": 1,
+      "request": "实现应用内项目回收站，支持恢复和彻底删除，并验证磁盘数据处理",
+      "expected": "required",
+      "actual": "required",
+      "category": "development",
+      "reason": "用户要求实现应用内项目回收站功能，包括恢复、彻底删除及磁盘数据处理验证，属于需要实质性开发新功能的场景。",
+      "passed": true,
+      "seconds": 1.94
+    },
+    {
+      "trial": 2,
+      "request": "加载建筑物图层并定位到郑州",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "known_operation",
+      "reason": "任务目标明确，为加载已有建筑物图层并定位到郑州，属于已有操作的串联（加载图层+定位），无需开发或排查。",
+      "passed": true,
+      "seconds": 1.13
+    },
+    {
+      "trial": 2,
+      "request": "请找到郑州的建筑图层，加载后把地球镜头移过去并确认显示",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "known_operation",
+      "reason": "用户请求明确为已有操作：定位郑州建筑图层、加载图层、移动地球镜头并确认显示，属于目标明确的已有操作串联，不涉及开发、排查或修改。",
+      "passed": true,
+      "seconds": 1.14
+    },
+    {
+      "trial": 2,
+      "request": "load the existing building layer and fly to Zhengzhou",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "known_operation",
+      "reason": "任务明确要求加载已有建筑图层并飞至郑州，属于已有操作的串联（加载图层+定位），目标清晰且无需开发或排查。",
+      "passed": true,
+      "seconds": 1.12
+    },
+    {
+      "trial": 2,
+      "request": "建筑物图层添加后没有显示，检查代码并修复，再验证定位和渲染",
+      "expected": "required",
+      "actual": "required",
+      "category": "investigation",
+      "reason": "用户要求检查建筑物图层添加后不显示的问题，需定位原因、修复代码并验证定位与渲染，属于需要排查未知原因并修复验证的问题。",
+      "passed": true,
+      "seconds": 1.1
+    },
+    {
+      "trial": 2,
+      "request": "排查建筑图层不显示的问题，找到原因后修复并验证",
+      "expected": "required",
+      "actual": "required",
+      "category": "investigation",
+      "reason": "任务要求排查建筑图层不显示的问题，需定位原因、修复并验证，属于需要系统性问题排查与修复的场景。",
+      "passed": true,
+      "seconds": 1.09
+    },
+    {
+      "trial": 2,
+      "request": "Investigate why buildings are invisible, fix the renderer and verify it",
+      "expected": "required",
+      "actual": "required",
+      "category": "investigation",
+      "reason": "用户要求调查建筑物不可见的原因、修复渲染器并验证结果，属于需要定位问题根源、修复并验证的排查任务。",
+      "passed": true,
+      "seconds": 1.05
+    },
+    {
+      "trial": 2,
+      "request": "为什么有些交互有计划栏，有些没有？",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "explanation",
+      "reason": "用户询问的是关于界面中计划栏存在与否的原因，属于功能说明或设计逻辑的解释性问题，不涉及具体操作、开发或排查。",
+      "passed": true,
+      "seconds": 1.09
+    },
+    {
+      "trial": 2,
+      "request": "把按钮上的“确人”改成“确认”，只改这一处文案",
+      "expected": "hidden",
+      "actual": "hidden",
+      "category": "localized_edit",
+      "reason": "用户明确要求仅修改按钮文案中的一处错字“确人”为“确认”，属于范围已知的单文件小调整，符合localized_edit的定义。",
+      "passed": true,
+      "seconds": 1.09
+    },
+    {
+      "trial": 2,
+      "request": "实现应用内项目回收站，支持恢复和彻底删除，并验证磁盘数据处理",
+      "expected": "required",
+      "actual": "required",
+      "category": "development",
+      "reason": "用户要求实现应用内项目回收站功能，包括恢复、彻底删除及磁盘数据处理验证，属于需要实质性开发的新功能，涉及多个模块设计与实现。",
+      "passed": true,
+      "seconds": 1.06
+    }
+  ],
+  "passed": 18,
+  "total": 18
+}

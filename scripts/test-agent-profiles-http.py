@@ -2,11 +2,14 @@
 """Agent presets: real HTTP/SSE loop with local fake model; never calls paid providers."""
 import http.server,json,os,socket,sqlite3,subprocess,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
+from fixture_scope import respond_scope
 requests=[];hold=threading.Event();started=threading.Event();allowed_mcp=''
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  requests.append(body)
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   def emit(delta,reason=None):self.wfile.write(('data: '+json.dumps({'choices':[{'delta':delta,'finish_reason':reason}]})+'\n\n').encode());self.wfile.flush()
   try:

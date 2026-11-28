@@ -2,13 +2,16 @@
 """Environment detection/cache tests with isolated SQLite and a fake model; no paid API."""
 import http.server,json,os,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.request
 from pathlib import Path
+from fixture_scope import respond_scope
 if os.name!='posix':
  print('SKIP: controlled permission/PATH fixture requires POSIX');sys.exit(0)
 requests=[]
 class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  requests.append(body)
   assert body['stream']
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   self.wfile.write(('data: '+json.dumps({'choices':[{'delta':{'content':'environment checked'},'finish_reason':'stop'}]})+'\n\ndata: [DONE]\n\n').encode());self.wfile.flush()

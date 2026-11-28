@@ -2,11 +2,14 @@
 """Agent presets: real HTTP/SSE loop with local fake model; never calls paid providers."""
 import http.server,json,os,socket,sqlite3,subprocess,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
+from fixture_scope import respond_scope
 requests=[];hold=threading.Event();started=threading.Event();tool_calls=[]
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  requests.append(body)
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   def emit(delta,reason=None):self.wfile.write(('data: '+json.dumps({'choices':[{'delta':delta,'finish_reason':reason}]})+'\n\n').encode());self.wfile.flush()
   try:
@@ -80,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   assert [r['status'] for r in d['runs']]==['succeeded','succeeded','succeeded','failed','succeeded','failed'],d['runs']
   assert 'VERSION-ONE' in d['runs'][0]['output'] and 'VERSION-TWO' not in d['runs'][0]['output']
   assert 'RESOURCE-ONE' in d['runs'][1]['output'] and 'PRIVATE' in d['runs'][2]['output']
-  answer=next(m for m in d['messages'] if m['role']=='assistant');bindings=answer['modelMetadata']['skillBindings'];assert len(bindings)==3
+  answer=next(m for m in d['messages'] if m['role']=='assistant');bindings=answer['modelMetadata']['skillBindings'];assert len([binding for binding in bindings if binding['scope']!='system'])==3
   assert any(t['function']['name']=='read_skill_file' for t in requests[0]['tools'])
   assert shared['ref'] in requests[0]['messages'][0]['content'] and 'VERSION-ONE' not in requests[0]['messages'][0]['content']
   call('agent_regenerate',{'sessionId':s,'messageId':answer['id']});d=wait(s)
@@ -91,7 +94,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   call('agent_send_message',{'sessionId':other,'content':'Across projects'});d=wait(other)
   assert [r['status'] for r in d['runs']]==['succeeded','succeeded','failed','failed'],d['runs']
   assert 'VERSION-TWO' in d['runs'][0]['output']
-  meta=next(m for m in d['messages'] if m['role']=='assistant')['modelMetadata'];assert len(meta['skillBindings'])==2 and meta['projectGuidance']['warnings']
+  meta=next(m for m in d['messages'] if m['role']=='assistant')['modelMetadata'];assert len([binding for binding in meta['skillBindings'] if binding['scope']!='system'])==2 and meta['projectGuidance']['warnings']
   # IDs do not bypass account ownership, even with a valid local session.
   with sqlite3.connect(Path(tmp)/'data.sql') as db:db.execute("UPDATE agent_skill_library SET owner='foreign' WHERE id=?",(shared['id'],))
   call('agent_library_skill_read',{'sessionId':s,'id':shared['id']},400)
@@ -101,7 +104,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-profiles-') as tmp:
   general=call('agent_new_session')['id'];call('agent_session_model',{'sessionId':general,'id':model})
   tool_calls[:]=[('load_skill',{'name':shared['ref']})]
   call('agent_send_message',{'sessionId':general,'content':'General assistant snapshot'});gd=wait(general)
-  ga=next(m for m in gd['messages'] if m['role']=='assistant');assert len(ga['modelMetadata']['skillBindings'])==2
+  ga=next(m for m in gd['messages'] if m['role']=='assistant');assert len([binding for binding in ga['modelMetadata']['skillBindings'] if binding['scope']!='system'])==2
   extra=call('agent_library_skill_save',{**skill_payload(),'name':'extra','files':{'SKILL.md':'---\nname: extra\ndescription: Shared guide\n---\nNew skill'}})
   tool_calls[:]=[('load_skill',{'name':extra['ref']})]
   call('agent_regenerate',{'sessionId':general,'messageId':ga['id']});gd=wait(general)

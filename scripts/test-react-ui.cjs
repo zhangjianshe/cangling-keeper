@@ -16,7 +16,7 @@ assert.equal(compact.tagName,'DETAILS');assert.equal(compact.open,false,'manual 
 const listeners={};context.window.__KEEPER__={event:{listen:(name,fn)=>listeners[name]=fn}};
 vm.runInContext(source.slice(source.indexOf("  window.__KEEPER__.event.listen('agent-context-update'"),source.indexOf("  window.__KEEPER__.event.listen('agent-model-stream'")),context);
 listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',context:{status:'compressing',estimatedTokens:30000,limit:32768}}});
-assert.match(document.querySelector('.agent-context-info').textContent,/正在整理上下文/);
+assert.match(document.querySelector('.agent-context-info').title,/正在整理上下文/);
 assert.match(document.querySelector('.agent-stream-status').textContent,/正在整理上下文/);
 listeners['agent-context-update']({payload:{sessionId:'session',messageId:'new',context:{status:'compacted',estimatedTokens:10000,limit:32768},usage:{promptTokens:321,completionTokens:45}}});
 assert.match(document.querySelector('.agent-context-info').title,/累计实际输入 321/);
@@ -37,7 +37,7 @@ assert.match(document.querySelector('.agent-execution-evidence').textContent,/�
 const savedRuns=context.agent.detail.runs;context.agent.detail.runs=[];
 context.agent.detail.tasks[0].status='complete';context.renderConversation();
 assert.match(document.querySelector('.agent-execution-evidence').textContent,/本轮未调用工具/);
-assert.match(document.querySelector('.agent-task-summary summary').textContent,/回复已结束/);assert.equal(document.querySelector('.agent-task-summary').hidden,true,'ordinary answer hides execution statistics');assert.equal(document.querySelector('.agent-context-info').textContent,'上下文 31%');
+assert.match(document.querySelector('.agent-task-summary summary').textContent,/回复已结束/);assert.equal(document.querySelector('.agent-task-summary').hidden,true,'ordinary answer hides execution statistics');assert.equal(document.querySelector('.agent-context-info').textContent,'31%');
 context.agent.detail.runs=savedRuns;context.agent.detail.tasks[0].status='tool';context.renderConversation();
 const compactRuns=[...savedRuns,{...run('write','new'),tool:'write_file',review:{kind:'file',path:'a.txt',diff:'change'},output:JSON.stringify({applied:true})},{...run('cmd','new'),tool:'run_command',status:'failed',output:JSON.stringify({exitCode:1})}];
 context.agent.detail.runs=compactRuns;context.agent.detail.tasks[0].status='complete';context.renderConversation();

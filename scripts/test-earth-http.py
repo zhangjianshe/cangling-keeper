@@ -2,6 +2,7 @@
 """Isolated Earth storage, account, capability-path and fake-model integration checks."""
 import uuid,json,os,tempfile,subprocess,socket,sqlite3,time,urllib.request,urllib.error,threading,http.server
 from pathlib import Path
+from fixture_scope import respond_scope
 calls=[]
 action_index=0
 fixture_layer=None
@@ -21,7 +22,9 @@ class Model(http.server.BaseHTTPRequestHandler):
   self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers()
   self.wfile.write(json.dumps({'datasets':[{'id':'fixture-buildings','name':'测试建筑','version':'a'*64,'bounds':[113.7,34.7,113.8,34.8]}],'total':1,'truncated':False}).encode())
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));calls.append(body)
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  calls.append(body)
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   global action_index,fixture_layer
   for message in body["messages"]:

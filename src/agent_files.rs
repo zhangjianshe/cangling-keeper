@@ -18,6 +18,7 @@ pub(crate) fn definitions() -> Vec<Value> {
         ("search_files", "字面搜索，推荐 {query:函数名,path:已知文件,mode:content}；pattern是query兼容别名，二者只能选一，不支持正则。path可为单个文件，已知文件不要从项目根目录重复搜索。默认返回2行相邻上下文，后续使用contextReadArgs或read_files读取相关实现和测试。在项目相对文件路径和 UTF-8 内容中搜索字面字符串；mode 为 all（默认）、filename 或 content；extensions 可限制后缀，如 [rs,py]，不带点，不区分大小写。内容结果包含命中行/字符列、附近片段及可直接调用 read_file 的 readArgs。maxResults 可选1–50（默认50）；truncationReasons 说明截断原因，可缩小范围继续搜索。contextLines 可选0–5（默认2），返回前后相邻行；contextReadArgs 用于读取同一版本的完整上下文。递归搜索 path（默认 .），跳过链接、私密文件及构建缓存。", json!({"path":{"type":"string"},"query":{"type":"string","minLength":1,"maxLength":200},"pattern":{"type":"string","minLength":1,"maxLength":200},"caseSensitive":{"type":"boolean"},"contextLines":{"type":"integer","minimum":0,"maximum":5},"maxResults":{"type":"integer","minimum":1,"maximum":50},"mode":{"type":"string","enum":["all","filename","content"]},"extensions":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"string","minLength":1,"maxLength":16}}}), json!([])),
     ].into_iter().map(|(name,description,properties,required)|json!({"type":"function","function":{"name":name,"description":description,"parameters":{"type":"object","properties":properties,"required":required,"additionalProperties":false}}})).chain(crate::agent_earth::definitions()).chain(crate::agent_actions::definitions()).chain(std::iter::once(crate::agent_skills::definition())).chain(std::iter::once(crate::agent_plan::definition())).collect();
     let mut item=values.iter().find(|d|d["function"]["name"]=="read_file").unwrap()["function"]["parameters"].clone();
+    values.push(crate::agent_plan_policy::expansion_tool());
     item["properties"]["path"]["maxLength"]=json!(1024);
     values.push(json!({"type":"function","function":{"name":"read_files","description":"批量读取1–8个已知的项目UTF-8文本文件；files每项使用read_file的参数。逐文件返回status及result/error，部分失败不表示全部失败或全部成功。总输出有界；deferred为本次未返回结果的完整参数，可作为下一次files。每个result的nextRead用于继续该文件，sha256保护版本；不是跨文件原子快照。优先用于已知相关文件，勿读取无关技能。","parameters":{"type":"object","properties":{"files":{"type":"array","minItems":1,"maxItems":8,"items":item}},"required":["files"],"additionalProperties":false}}}));
     values
@@ -44,6 +45,7 @@ pub(crate) fn title(name: &str) -> &str {
         "load_skill" => "加载技能",
         "read_skill_file" => "读取技能资源",
         "update_plan" => "更新任务计划",
+        "expand_task_scope" => "调整任务范围",
         _ => "未知工具",
     }
 }

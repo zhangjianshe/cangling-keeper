@@ -27,6 +27,7 @@ mod model;
 mod agent_files;
 mod agent_runtime;
 mod agent_plan;
+mod agent_plan_policy;
 mod agent_tool_result;
 mod agent_tool_args;
 mod agent_actions;

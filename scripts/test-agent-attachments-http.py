@@ -17,6 +17,7 @@ import urllib.error
 import urllib.request
 import zlib
 from pathlib import Path
+from fixture_scope import respond_scope
 
 requests = []
 class Model(http.server.BaseHTTPRequestHandler):
@@ -24,6 +25,7 @@ class Model(http.server.BaseHTTPRequestHandler):
         pass
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if respond_scope(self,body):return
         requests.append(body)
         events = [{'choices': [{'delta': {'content': 'Attachment fixture response'}, 'finish_reason': None}]},
                   {'choices': [{'delta': {}, 'finish_reason': 'stop'}],

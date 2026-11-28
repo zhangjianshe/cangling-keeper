@@ -2,22 +2,26 @@
 """Reviewed agent actions against an isolated localhost model and project."""
 import hashlib,sqlite3,http.server,json,os,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error,sys
 from pathlib import Path
+from fixture_scope import respond_scope
 if os.name!='posix':raise SystemExit('This isolated HTTP command fixture runs on POSIX; file tools also have portable Rust unit tests.')
 requests=[];preview='--preview' in sys.argv
 class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  requests.append(body)
   assert self.headers['Authorization']=='Bearer fixture-only-key'
-  prompt=next(m['content'] for m in reversed(body['messages']) if m['role']=='user')
+  prompt=next(m['content'] for m in reversed(body['messages']) if m['role']=='user' and not m['content'].startswith(('运行时反馈：','运行时收尾检查')))
+  results=[m for m in body['messages'] if m['role']=='tool']
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
   def event(delta,reason=None):
    data=('data: '+json.dumps({'model':'review-fixture','choices':[{'delta':delta,'finish_reason':reason}]},ensure_ascii=False)+'\n\n').encode();self.wfile.write(data);self.wfile.flush()
   try:
-   if 'repeat reject' in prompt and body['messages'][-1]['role']=='tool':
+   if 'repeat reject' in prompt and bool(results):
     event({'tool_calls':[{'index':0,'id':'different-call-id','type':'function','function':{'name':'write_file','arguments':json.dumps({'content':'hello v1\n','path':'rejected.txt'})}}]},'tool_calls')
-   elif body['messages'][-1]['role']=='tool':
-    result=json.loads(body['messages'][-1]['content']);
+   elif bool(results):
+    result=json.loads(results[-1]['content']);
     if 'large output' in prompt:assert result['exitCode']==7 and result['stderr'].endswith('FINAL ERROR') and result['stdout'].endswith('END\n')
     assert result['keeperResult']['automaticRetry'] is False;assert result['keeperResult']['outcome']==('rejected' if result.get('rejected') else 'timeout' if result.get('timedOut') else 'failed' if result.get('error') or result.get('exitCode') not in (None,0) else 'truncated' if result.get('outputTruncated') or result.get('contextTruncated') else 'success');event({'content':'操作结果已保存。'+('用户拒绝，未执行。' if result.get('rejected') else '')},'stop')
    else:

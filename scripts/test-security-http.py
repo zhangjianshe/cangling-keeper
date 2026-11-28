@@ -2,14 +2,17 @@
 """Approval modes against a fake model and disposable project. No real credentials."""
 import http.server,json,os,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error,sys
 from pathlib import Path
+from fixture_scope import respond_scope
 if os.name!='posix':raise SystemExit('SKIP: POSIX command fixture')
 requests=[]
 class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
-  b=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(b)
+  b=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,b):return
+  requests.append(b)
   prompt=next(m['content'] for m in reversed(b['messages']) if m['role']=='user');self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
-  if b['messages'][-1]['role']=='tool':delta={'content':'done'};reason='stop'
+  if any(m['role']=='tool' for m in b['messages']):delta={'content':'done'};reason='stop'
   else:
    if 'command' in prompt:name,args='run_command',{'command':'printf full > ../outside.txt'}
    elif 'patch' in prompt:name,args='apply_patch',{'path':'safe.txt','oldText':'before','newText':'after'}

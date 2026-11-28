@@ -4,6 +4,7 @@ Only disposable local fixtures and a simulated model are used; no real API keys.
 """
 import base64,http.server,json,os,queue,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.request,urllib.error,uuid
 from pathlib import Path
+from fixture_scope import respond_scope
 
 BINARY='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNQaDgAAAIkAWHdFJqQAAAAAElFTkSuQmCC'
 INJECTION='TEMPLATE_ASSISTANT_DATA_NOT_SYSTEM_INSTRUCTIONS'
@@ -80,7 +81,9 @@ class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
   try:
-   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));model_requests.append(body);assert HEADER not in json.dumps(body)
+   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+   if respond_scope(self,body):return
+   model_requests.append(body);assert HEADER not in json.dumps(body)
    last=max(i for i,m in enumerate(body['messages']) if m['role']=='user');command=json.loads(body['messages'][last]['content']);results=[m for m in body['messages'][last+1:] if m['role']=='tool']
    for message in body['messages']:
     if message['role']!='tool':assert INJECTION not in json.dumps(message),'external template content must remain inside tool result'

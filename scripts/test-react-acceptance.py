@@ -8,6 +8,8 @@ root=Path(__file__).resolve().parents[1]
 logs=Path(tempfile.mkdtemp(prefix='keeper-react-acceptance-'))
 tests=[
  ['python3','scripts/test-react-http.py'],
+ ['python3','scripts/test-plan-policy-http.py'],
+ ['node','scripts/test-plan-progress-ui.cjs'],
  ['python3','scripts/test-account-sessions-http.py'],
  ['node','scripts/test-react-ui.cjs'],
  ['node','scripts/test-command-summary-ui.cjs'],

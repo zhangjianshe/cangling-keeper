@@ -4,6 +4,7 @@ Uses a mock model, temporary SQLite/projects and TMPDIR; never reads real keys.
 """
 import http.server,json,os,socket,sqlite3,subprocess,sys,tempfile,threading,time,urllib.request,urllib.error,uuid
 from pathlib import Path
+from fixture_scope import respond_scope
 
 SECRET='PRIVATE_MCP_ENV_FIXTURE_NOT_FOR_MODEL'
 SECRET2='PRIVATE_MCP_ENV_ROTATED_NOT_FOR_MODEL'
@@ -13,7 +14,9 @@ class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
   try:
-   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+   if respond_scope(self,body):return
+   requests.append(body)
    for secret in (SECRET,SECRET2,HOST_SECRET):assert secret not in json.dumps(body),'private environment leaked to model'
    last=max(i for i,m in enumerate(body['messages']) if m['role']=='user');command=json.loads(body['messages'][last]['content']);results=[m for m in body['messages'][last+1:] if m['role']=='tool']
    names=[t['function']['name'] for t in body.get('tools',[]) if t['function']['name'].startswith('mcp_')]

@@ -2,6 +2,7 @@
 """Isolated SSE and Streamable HTTP MCP fixtures; no external services."""
 import http.server,json,os,queue,socket,subprocess,tempfile,threading,time,urllib.request,urllib.error,uuid
 from pathlib import Path
+from fixture_scope import respond_scope
 sessions={};http_sessions=set();connections=[];calls=[];cancelled=[];fixture_header='fixture-secret-header';mcp_schema={'name':'echo','description':'fixture echo','inputSchema':{'type':'object','properties':{'value':{'type':'string'}}}}
 class Handler(http.server.BaseHTTPRequestHandler):
  protocol_version='HTTP/1.1'
@@ -51,7 +52,9 @@ server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);server.daemon_th
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
-  data=json.loads(self.rfile.read(int(self.headers['Content-Length'])));assert fixture_header not in json.dumps(data)
+  data=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,data):return
+  assert fixture_header not in json.dumps(data)
   tools=[x['function']['name'] for x in data['tools'] if x['function']['name'].startswith('mcp_')];assert len(tools)==1
   last_user=max(i for i,x in enumerate(data['messages']) if x['role']=='user');results=[x for x in data['messages'][last_user+1:] if x['role']=='tool'];delta={'content':'finished '+results[-1]['content']} if results else {'tool_calls':[{'index':0,'id':'remote-call','type':'function','function':{'name':tools[0],'arguments':json.dumps({'value':'slow' if any(x.get('content')=='slow test' for x in data['messages']) else 'hello'})}}]};reason='stop' if results else 'tool_calls'
   raw=('data: '+json.dumps({'choices':[{'delta':delta,'finish_reason':reason}]})+'\n\ndata: [DONE]\n\n').encode();self.send_response(200);self.send_header('Content-Type','text/event-stream');self.send_header('Content-Length',str(len(raw)));self.end_headers();self.wfile.write(raw)

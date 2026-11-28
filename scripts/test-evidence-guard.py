@@ -2,12 +2,15 @@
 """Isolated deterministic model: evidence correction, bounded failure, Q&A and real tool recovery."""
 import http.server,json,os,socket,subprocess,tempfile,threading,time,urllib.request
 from pathlib import Path
+from fixture_scope import respond_scope
 mode='';requests=0
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_POST(self):
   global requests
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests+=1
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  requests+=1
   corrected=any(m.get('role')=='system' and '运行时校验发现' in str(m.get('content')) for m in body['messages'])
   tools=any(m.get('role')=='tool' for m in body['messages'])
   if mode=='tool' and corrected and not tools:

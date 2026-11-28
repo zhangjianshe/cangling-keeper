@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from fixture_scope import respond_scope
 
 requests = []
 errors = []
@@ -30,6 +31,7 @@ class Model(http.server.BaseHTTPRequestHandler):
         global change_during_turn
         try:
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            if respond_scope(self,body):return
             requests.append(body)
             assert self.headers['Authorization'] == 'Bearer fixture-only-key'
             assert body['stream'], 'small fixtures should not require a summary call'

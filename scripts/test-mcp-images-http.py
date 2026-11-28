@@ -2,13 +2,16 @@
 """End-to-end MCP test using only temporary localhost fixtures."""
 import base64,hashlib,sqlite3,struct,zlib,http.server,json,os,socket,subprocess,sys,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
+from fixture_scope import respond_scope
 def chunk(k,b):return struct.pack('>I',len(b))+k+b+struct.pack('>I',zlib.crc32(k+b)&0xffffffff)
 png=base64.b64encode(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1,1,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\0\x20\x80\xc0'))+chunk(b'IEND',b'')).decode()
 requests=[]
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  requests.append(body)
   tools=[t['function']['name'] for t in body['tools'] if t['function']['name'].startswith('mcp_')]
   assert len(tools)==1
   result=[m for m in body['messages'] if m['role']=='tool']

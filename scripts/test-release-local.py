@@ -21,6 +21,8 @@ tests=[
  ['python3','scripts/test-project-management-http.py'],
  ['python3','scripts/test-project-purge-http.py'],
  ['python3','scripts/test-context-http.py'],
+ ['python3','scripts/test-plan-policy-http.py'],
+ ['node','scripts/test-plan-progress-ui.cjs'],
  ['python3','scripts/test-react-http.py'],
  ['node','scripts/test-project-browser-ui.cjs'],
  ['node','scripts/test-project-management-ui.cjs'],

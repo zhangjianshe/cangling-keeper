@@ -247,6 +247,12 @@ pub(crate) async fn execute(
     )?;
     let allowed={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_profiles::check_call(&store,response,&call.name,&parsed.as_ref().cloned().unwrap_or(Value::Null))};
     if let Err(error)=allowed{return finish_result(&core,session,response,&run,call,Ok(json!({"error":error,"notExecuted":true})),false,sink.as_ref());}
+    let plan_allowed={let store=core.store.lock().map_err(|e|e.to_string())?;crate::agent_plan_policy::guard(&store.conn,session,response,&call.name,&parsed.as_ref().cloned().unwrap_or(Value::Null))};
+    if let Err(error)=plan_allowed{return finish_result(&core,session,response,&run,call,Ok(json!({"error":error,"notExecuted":true})),false,sink.as_ref());}
+    if call.name=="expand_task_scope" {
+        let result={let store=core.store.lock().map_err(|e|e.to_string())?;parsed.as_ref().map_err(|_|"任务范围参数无效".to_string()).and_then(|args|crate::agent_plan_policy::expand(&store.conn,session,response,args))};
+        return finish_result(&core,session,response,&run,call,result,false,sink.as_ref());
+    }
     if call.name == "load_skill" || call.name == "read_skill_file" {
         let managed = {
             let store = core.store.lock().map_err(|e| e.to_string())?;
@@ -318,6 +324,9 @@ pub(crate) async fn execute(
         }).and_then(|mut value|{
             let store=core.store.lock().map_err(|e|e.to_string())?;
             let previous=store.conn.query_row("SELECT rowid,output FROM agent_runs WHERE session_id=?1 AND response_id=?2 AND tool='update_plan' AND status='succeeded' ORDER BY rowid DESC LIMIT 1",rusqlite::params![session,response],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?))).ok();
+            if previous.is_none() && value["plan"].as_array().is_some_and(|steps|steps.iter().all(|s|s["status"]=="completed")) && !crate::agent_plan_policy::has_plan(&store.conn,session,response)? {
+                return Err("初始计划不能把尚未执行的全部阶段标为已完成；请先建立待执行或进行中的实际阶段。".into());
+            }
             let work=if let Some((row,_))=&previous{store.conn.query_row("SELECT count(*) FROM agent_runs WHERE session_id=?1 AND response_id=?2 AND rowid>?3 AND tool!='update_plan' AND status IN ('succeeded','failed','rejected','stopped')",rusqlite::params![session,response,row],|r|r.get::<_,i64>(0)).map_err(|e|e.to_string())?>0}else{false};
             let old=previous.and_then(|(_,text)|serde_json::from_str::<Value>(&text).ok());
             crate::agent_plan::feedback(&mut value,old.as_ref(),work);Ok(value)

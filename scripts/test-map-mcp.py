@@ -4,6 +4,7 @@ Requires a running upgraded Map with published zhengzhou-cbd-osm and MAP_PUBLIC_
 """
 import http.server,json,os,socket,sqlite3,subprocess,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
+from fixture_scope import respond_scope
 map_url=os.environ.get('TEST_MAP_URL','http://127.0.0.1:4310/').rstrip('/')
 step=0;dataset=None
 class Model(http.server.BaseHTTPRequestHandler):
@@ -11,6 +12,7 @@ class Model(http.server.BaseHTTPRequestHandler):
  def do_POST(self):
   global step,dataset
   body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
   for m in body['messages']:
    if m['role']=='tool':
     try:

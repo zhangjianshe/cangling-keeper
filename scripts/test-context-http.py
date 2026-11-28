@@ -2,11 +2,14 @@
 """Isolated context compaction, persistence, budget, usage and cancellation checks. No real keys."""
 import http.server,json,os,sys,socket,sqlite3,subprocess,tempfile,threading,time,urllib.request
 from pathlib import Path
+from fixture_scope import respond_scope
 requests=[];block=threading.Event();entered=threading.Event();mode='ok'
 class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  requests.append(body)
   if not body.get('stream'):
    if mode=='block':entered.set();block.wait(20)
    if mode=='fail':self.send_response(503);self.end_headers();return

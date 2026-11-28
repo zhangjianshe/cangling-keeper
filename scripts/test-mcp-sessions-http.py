@@ -2,10 +2,13 @@
 """MCP stateful subprocess reuse, isolation, cleanup and no-replay tests."""
 import http.server,json,os,socket,subprocess,sys,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
+from fixture_scope import respond_scope
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*a):pass
  def do_POST(self):
-  data=json.loads(self.rfile.read(int(self.headers['Content-Length'])));last=max(i for i,m in enumerate(data['messages']) if m['role']=='user');prompt=data['messages'][last]['content'];results=[m for m in data['messages'][last+1:] if m['role']=='tool']
+  data=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,data):return
+  last=max(i for i,m in enumerate(data['messages']) if m['role']=='user');prompt=data['messages'][last]['content'];results=[m for m in data['messages'][last+1:] if m['role']=='tool']
   if results:delta={'content':results[-1]['content']};reason='stop'
   else:
    name=next(t['function']['name'] for t in data['tools'] if t['function']['name'].startswith('mcp_'));delta={'tool_calls':[{'index':0,'id':'stateful-call','type':'function','function':{'name':name,'arguments':json.dumps({'mode':prompt})}}]};reason='tool_calls'

@@ -2,12 +2,14 @@
 """Account-scoped local conversations using a disposable CIS/model API and SQLite."""
 import http.server,json,os,socket,sqlite3,subprocess,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
+from fixture_scope import respond_scope
 class CIS(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_GET(self):self.reply({'success':True,'code':200,'data':[]})
  def reply(self,v):self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers();self.wfile.write(json.dumps(v).encode())
  def do_POST(self):
   b=json.loads(self.rfile.read(int(self.headers.get('Content-Length',0))) or b'{}')
+  if respond_scope(self,b):return
   if self.path.endswith('/keeper/login'):
    name=b['userName'];self.reply({'success':True,'code':200,'data':{'token':'fixture-'+name,'userName':name,'nickName':name,'userId':1 if name=='alice' else 2}})
   elif self.path.endswith('/chat/completions'):

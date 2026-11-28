@@ -2,6 +2,7 @@
 """Isolated DeepSeek-compatible fixture; never calls a paid/remote API."""
 import http.server,json,os,subprocess,tempfile,threading,time,urllib.request,urllib.error,socket,stat
 from pathlib import Path
+from fixture_scope import respond_scope
 received=[];release=threading.Event();mode={'fail':False}
 class API(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
@@ -11,7 +12,9 @@ class API(http.server.BaseHTTPRequestHandler):
   assert self.path=='/models';assert self.headers['Authorization']=='Bearer '+self.server.expected_key;self.output({'data':[{'id':'deepseek-flash'}]})
  def do_POST(self):
   assert self.path=='/chat/completions';assert self.headers['Authorization']=='Bearer '+self.server.expected_key
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));received.append(body);self.server.calls+=1
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  received.append(body);self.server.calls+=1
   if self.server.expected_key=='test-key-2':assert 'thinking' not in body
   assert body['stream'] is True
   if mode['fail']:
@@ -19,8 +22,8 @@ class API(http.server.BaseHTTPRequestHandler):
   if body['messages'][-1]['content']=='等待首字测试':
    self.server.headers_waiting.set();release.wait(10)
   self.send_response(200);self.send_header('Content-Type','text/event-stream');self.end_headers()
-  def event(text):
-   packet=('data: '+json.dumps({'model':'resolved-'+body['model'],'choices':[{'delta':{'content':text}}]},ensure_ascii=False)+'\r\n\r\n').encode()
+  def event(text,reason=None):
+   packet=('data: '+json.dumps({'model':'resolved-'+body['model'],'choices':[{'delta':{'content':text},'finish_reason':reason}]},ensure_ascii=False)+'\r\n\r\n').encode()
    # Deliberately split bytes, including UTF-8 characters and event delimiters.
    for offset in range(0,len(packet),3):self.wfile.write(packet[offset:offset+3]);self.wfile.flush()
   try:
@@ -30,7 +33,7 @@ class API(http.server.BaseHTTPRequestHandler):
     try:
      if self.connection.recv(1,socket.MSG_PEEK|socket.MSG_DONTWAIT)==b'':self.server.disconnects+=1;return
     except BlockingIOError:pass
-   event('模型回复');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
+   event('模型回复','stop');self.wfile.write(b'data: [DONE]\n\n');self.wfile.flush()
   except (BrokenPipeError,ConnectionResetError):pass
 api=http.server.ThreadingHTTPServer(('127.0.0.1',0),API);api.expected_key='test-key';api.calls=0;api.disconnects=0;api.headers_waiting=threading.Event()
 api2=http.server.ThreadingHTTPServer(('127.0.0.1',0),API);api2.expected_key='test-key-2';api2.calls=0;api2.disconnects=0;api2.headers_waiting=threading.Event();threading.Thread(target=api2.serve_forever,daemon=True).start()
@@ -74,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-deepseek-http-') as folder:
   assert snapshot['streamingMessageId']==snapshot['messages'][-1]['id']
   # A fresh browser can recover the same persisted partial text before completion.
   fresh=call('agent_session',{'sessionId':session});assert fresh['messages'][-1]['content']=='模拟'
-  release.set();detail=finish(session);assert detail['messages'][-1]['content']=='模拟模型回复'
+  release.set();detail=finish(session);assert detail['messages'][-1]['content']=='模拟模型回复',detail
   original_reply=detail['messages'][-1]['id'];original_context=received[0]['messages']
   call('agent_send_message',{'sessionId':session,'content':'第二轮'});detail=finish(session)
   assert [m['role'] for m in received[-1]['messages']]==['system','user','assistant','user']
@@ -161,7 +164,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-deepseek-http-') as folder:
   release.set();new_detail=finish(session);new_reply=new_detail['messages'][-1]
   assert new_reply['modelMetadata']['regenerateOf']==original_reply and new_reply['modelMetadata']['requestedModel']=='deepseek-flash'
   assert new_reply['modelMetadata']['serverName']=='DeepSeek'
-  assert received[-1]['model']=='deepseek-flash' and received[-1]['messages']==original_context
+  assert received[-1]['model']=='deepseek-flash' and received[-1]['messages'][1:]==original_context[1:]
   assert next(m for m in new_detail['messages'] if m['id']==original_reply)==source_before
   call('agent_regenerate',{'sessionId':chosen,'messageId':original_reply},expected=400)
   # Stopped responses can regenerate, can be stopped again, and can then complete.

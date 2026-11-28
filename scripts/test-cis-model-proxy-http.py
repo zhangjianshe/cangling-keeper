@@ -2,7 +2,8 @@
 """CIS model catalog and proxy routing; all identities and keys are disposable."""
 import base64,http.server,json,os,socket,sqlite3,subprocess,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
-seen=[];admin_writes=[];models=[{'id':'shared','name':'CIS Shared','provider':'deepseek','model':'central-v1','enabled':True,'contextLimit':32768,'revision':'revision-1','supportsImages':True,'baseUrl':'http://provider.invalid','hasApiKey':True}]
+from fixture_scope import respond_scope
+seen=[];admin_writes=[];models=[{'id':'shared','name':'CIS Shared','provider':'deepseek','model':'central-v1','enabled':True,'contextLimit':131072,'revision':'revision-1','supportsImages':True,'baseUrl':'http://provider.invalid','hasApiKey':True}]
 class CIS(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def payload(self,value):
@@ -21,6 +22,7 @@ class CIS(http.server.BaseHTTPRequestHandler):
   else:self.payload([])
  def do_POST(self):
   body=json.loads(self.rfile.read(int(self.headers.get('Content-Length',0))) or b'{}')
+  if respond_scope(self,body):return
   if self.path.endswith('/keeper/models/admin/save'):
    assert self.headers.get('API-TOKEN')=='alice-token';admin_writes.append(body);models.append({'id':'added','name':body['name'],'provider':body['provider'],'model':body['model'],'enabled':body['enabled'],'contextLimit':body['contextLimit'],'revision':'revision-2','baseUrl':body['baseUrl'],'hasApiKey':True});self.payload({'id':'added'});return
   if self.path.endswith('/keeper/models/admin/added/delete'):
@@ -77,7 +79,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-cis-model-') as folder:
   png=base64.b64encode(b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',1,1,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(b'\0\x20\x80\xc0'))+chunk(b'IEND',b'')).decode()
   req=urllib.request.Request(base+'/api/attachments/upload',data=json.dumps({'sessionId':image_session,'name':'image.png','mimeType':'image/png','data':png}).encode(),headers={'Content-Type':'application/json','Origin':base})
   image=json.load(urllib.request.urlopen(req))['result']
-  call('agent_send_message',{'sessionId':image_session,'content':'describe','attachmentIds':[image['id']]});assert done(image_session)['messages'][-1]['content']=='CIS reply'
+  call('agent_send_message',{'sessionId':image_session,'content':'describe','attachmentIds':[image['id']]});assert (image_detail:=done(image_session))['messages'][-1]['content']=='CIS reply',image_detail
   assert any(part.get('type')=='image_url' for part in seen[-1]['body']['messages'][-1]['content'])
   original=d['messages'][-1]['id'];before_regenerate=len(seen)
   call('agent_regenerate',{'sessionId':s,'messageId':original});regenerated=done(s)
@@ -88,6 +90,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-cis-model-') as folder:
   call('agent_cis_models_refresh');assert next(x for x in call('agent_model_config')['servers'] if x.get('source')=='cis')['revision']=='revision-changed'
   call('agent_regenerate',{'sessionId':s,'messageId':original},expected=400);assert len(seen)==before
   long=call('agent_new_session')['id'];call('agent_session_model',{'sessionId':long,'id':remote['id']})
+  call('agent_context_budget',{'sessionId':long,'workingBudget':32768})
   with sqlite3.connect(str(Path(folder)/'data.sql')) as db:
    for i in range(50):db.execute('INSERT INTO agent_messages(id,session_id,role,content,created_at) VALUES (?,?,?,?,?)',(long+str(i),long,'user' if i%2==0 else 'assistant','old '+('x'*900),i))
   call('agent_send_message',{'sessionId':long,'content':'compact history'});compacted=done(long);assert compacted['messages'][-1]['modelMetadata']['context']['status']=='compacted',compacted['messages'][-1]
@@ -96,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix='keeper-cis-model-') as folder:
   call('agent_model_output_budget',{'id':remote['id'],'maxOutputTokens':8192});call('agent_model_output_budget',{'id':local,'maxOutputTokens':8192})
   assert next(x for x in call('agent_cis_models_refresh')['servers'] if x['id']==remote['id'])['maxOutputTokens']==8192
   login('bob');call('agent_cis_models_admin',expected=400);call('agent_cis_usage',{'all':True},expected=400);cfg=call('agent_cis_models_refresh');bob=next(x for x in cfg['servers'] if x.get('source')=='cis');assert bob['id']!=remote['id'];assert not any(x['id']==remote['id'] for x in cfg['servers']);call('agent_model_save',{'id':bob['id'],'name':'overwrite','apiKey':'local-private-fixture'},400)
-  assert bob['maxOutputTokens']==4096 and next(x for x in cfg['servers'] if x['id']==local)['maxOutputTokens']==4096
+  assert bob['maxOutputTokens']==16384 and next(x for x in cfg['servers'] if x['id']==local)['maxOutputTokens']==16384
   call('agent_model_output_budget',{'id':remote['id'],'maxOutputTokens':8192},expected=400)
   call('logout');assert all(x.get('source')!='cis' for x in call('agent_model_config')['servers'])
   print('PASS: CIS catalog, session selection, proxy authentication/stream, local secret isolation, account switch and logout')

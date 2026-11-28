@@ -108,7 +108,7 @@ pub(crate) fn prompt(evidence: &Value) -> String {
 /// Plan/skill calls and unsuccessful calls cannot substantiate external execution.
 pub(crate) fn unsupported_claim(text: &str, evidence: &Value) -> bool {
     let supported = evidence["calls"].as_array().is_some_and(|calls| calls.iter().any(|c|
-        c["status"] == "succeeded" && !matches!(c["tool"].as_str(), Some("load_skill" | "update_plan"))));
+        c["status"] == "succeeded" && !matches!(c["tool"].as_str(), Some("load_skill" | "update_plan" | "expand_task_scope"))));
     if supported { return false; }
     let mut fenced = false;
     for line in text.lines() {

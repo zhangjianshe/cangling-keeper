@@ -2,11 +2,14 @@
 """End-to-end MCP test using only temporary localhost fixtures."""
 import http.server,json,os,socket,subprocess,sys,tempfile,threading,time,urllib.request,urllib.error
 from pathlib import Path
+from fixture_scope import respond_scope
 requests=[]
 class Model(http.server.BaseHTTPRequestHandler):
  def log_message(self,*args):pass
  def do_POST(self):
-  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])));requests.append(body)
+  body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+  if respond_scope(self,body):return
+  requests.append(body)
   tools=[t['function']['name'] for t in body['tools'] if t['function']['name'].startswith('mcp_')]
   assert len(tools)==1
   result=[m for m in body['messages'] if m['role']=='tool']
