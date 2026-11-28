@@ -13,7 +13,7 @@ function state(value){if(walking&&!value)release();walking=value;if(!walking)blo
 function change(args){try{const value=call('navigation_mode',args);state(value.walking);remember();}catch(e){indicator.title=String(e);indicator.setAttribute('aria-label',String(e));}}
 render();
 window.addEventListener('cangling-earth-ready',()=>{ready=true;});
-window.addEventListener('cangling-earth-frame',()=>{if(!ready||performance.now()-lastCheck<300)return;lastCheck=performance.now();try{const value=call('navigation_mode');if(value.walking!==walking)state(value.walking);const next=walking?(value.blocked||null):null;if(next!==blocked){blocked=next;render();}}catch{}});
+window.addEventListener('cangling-earth-frame',()=>{if(!ready||performance.now()-lastCheck<300)return;lastCheck=performance.now();setTimeout(()=>{if(!ready)return;try{const value=call('navigation_mode');if(value.walking!==walking)state(value.walking);const next=walking?(value.blocked||null):null;if(next!==blocked){blocked=next;render();}}catch{}},0);});
 const movement=new Set(['KeyW','KeyA','KeyS','KeyD','ShiftLeft','ShiftRight']);
 window.addEventListener('keydown',e=>{
  if(!ready||e.ctrlKey||e.metaKey||e.altKey||e.target.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])'))return;

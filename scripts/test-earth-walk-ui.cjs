@@ -1,10 +1,12 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
+(async()=>{
 const dom=new JSDOM('<canvas tabindex="0"></canvas><input>',{url:'http://localhost/earth/index.html',runScripts:'outside-only'}),w=dom.window;
-let walking=false,releases=0,blocked=null,clock=1000;
+let walking=false,releases=0,blocked=null,clock=1000,nativeFrame=false;
 Object.defineProperty(w.performance,'now',{value:()=>clock});const calls=[];
 w.document.exitPointerLock=()=>{releases++;};
-w.keeper_command=(method,raw)=>{const a=JSON.parse(raw);calls.push([method,a]);if(method==='navigation_mode'){if(typeof a.walking==='boolean')walking=a.walking;return JSON.stringify({walking,blocked});}return 'true';};
+w.keeper_command=(method,raw)=>{assert(!nativeFrame,'frame callbacks must defer native renderer reads');const a=JSON.parse(raw);calls.push([method,a]);if(method==='navigation_mode'){if(typeof a.walking==='boolean')walking=a.walking;return JSON.stringify({walking,blocked});}return 'true';};
 w.eval(fs.readFileSync('ui/earth/navigation-mode.js','utf8').replace("import {keeper_command} from './pkg/cangling_desktop.js';",'const keeper_command=window.keeper_command;'));
+const frame=async()=>{nativeFrame=true;w.dispatchEvent(new w.Event('cangling-earth-frame'));nativeFrame=false;await new Promise(r=>setTimeout(r,5));};
 const key=(code,extra={},target=w)=>target.dispatchEvent(new w.KeyboardEvent('keydown',{code,bubbles:true,cancelable:true,...extra}));
 const indicator=w.document.querySelector('.earth-navigation-mode');
 assert.equal(w.document.querySelectorAll('button,select').length,0);
@@ -12,10 +14,10 @@ key('KeyM');assert(!walking);w.dispatchEvent(new w.Event('cangling-earth-ready')
 key('KeyM',{},w.document.querySelector('input'));assert(!walking);
 key('KeyM');assert(walking);assert.equal(indicator.dataset.mode,'first');
 key('KeyM',{repeat:true});assert(walking);
-blocked='terrain_pending';w.dispatchEvent(new w.Event('cangling-earth-frame'));assert.equal(indicator.dataset.blocked,'true');assert(indicator.title.includes('地形加载中'));
-clock+=400;blocked='steep';w.dispatchEvent(new w.Event('cangling-earth-frame'));assert(indicator.title.includes('坡度或台阶过高'));
-clock+=400;blocked='building';w.dispatchEvent(new w.Event('cangling-earth-frame'));assert(indicator.title.includes('建筑或模型阻挡'));
-clock+=400;blocked=null;w.dispatchEvent(new w.Event('cangling-earth-frame'));assert.equal(indicator.dataset.blocked,'false');
+blocked='terrain_pending';await frame();assert.equal(indicator.dataset.blocked,'true');assert(indicator.title.includes('地形加载中'));
+clock+=400;blocked='steep';await frame();assert(indicator.title.includes('坡度或台阶过高'));
+clock+=400;blocked='building';await frame();assert(indicator.title.includes('建筑或模型阻挡'));
+clock+=400;blocked=null;await frame();assert.equal(indicator.dataset.blocked,'false');
 key('Space');assert.equal(calls.at(-1)[0],'walk_jump');const jumps=calls.length;
 key('Space',{repeat:true});assert.equal(calls.length,jumps);
 key('Space',{},w.document.querySelector('input'));assert.equal(calls.length,jumps);
@@ -29,3 +31,5 @@ let help=false;w.addEventListener('keydown',e=>{if(e.code==='F1')help=true;});ke
 key('KeyM');assert(!walking);assert.equal(indicator.dataset.mode,'orbit');
 const before=calls.length;key('KeyP');key('KeyW');key('Space');assert.equal(calls.length,before);
 dom.window.close();console.log('PASS readiness, editable isolation, M/P, repeats, speed, movement, right-click release, F1 and orbit isolation');
+
+})().catch(e=>{console.error(e);process.exitCode=1;});
