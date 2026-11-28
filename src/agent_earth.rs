@@ -46,6 +46,18 @@ pub(crate) fn get(s: &Store, project: &str) -> Result<Value, String> {
     scene["renderedCameraCommandRevision"]=Value::Null;
     scene["renderedAt"]=Value::Null;
     scene["tilesetStatus"]=Value::Null;
+    // Resolve immutable asset identity from the current account/project rather
+    // than trusting a fingerprint supplied in saved/imported scene JSON.
+    for (kind,table) in [("images","agent_earth_images"),("models","agent_earth_models")] {
+        let exists:bool=s.conn.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",[table],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if let Some(layers)=scene[kind].as_array_mut(){for layer in layers {
+            if let Some(object)=layer.as_object_mut(){object.remove("resourceSha256");}
+            if !exists {continue;}
+            use rusqlite::OptionalExtension;
+            let sha:Option<String>=s.conn.query_row(&format!("SELECT sha FROM {table} WHERE id=?1 AND owner=?2 AND project=?3"),rusqlite::params![layer["id"].as_str(),crate::agent_account::owner(s)?,project],|r|r.get(0)).optional().map_err(|e|e.to_string())?;
+            if let Some(sha)=sha {layer["resourceSha256"]=json!(sha);}
+        }}
+    }
     scene["windows"]=crate::agent_earth_receipts::views(s,project,&scene)?;
     Ok(scene)
 }
@@ -60,6 +72,21 @@ fn migrate_reference_layers(scene: &mut Value) -> bool {
 #[cfg(test)]
 mod reference_layer_tests {
     use super::*;
+    #[test]
+    fn asset_fingerprints_are_resolved_with_owner_and_project_scope() {
+        let path=std::env::temp_dir().join(format!("keeper-earth-fingerprint-{}.sql",uuid::Uuid::new_v4()));
+        let store=Store::load(path.clone()).unwrap();
+        store.conn.execute_batch("CREATE TABLE agent_projects(id TEXT PRIMARY KEY);INSERT INTO agent_projects VALUES ('a'),('b');CREATE TABLE agent_earth_images(id TEXT PRIMARY KEY,owner TEXT,project TEXT,sha TEXT);").unwrap();
+        let owner=crate::agent_account::owner(&store).unwrap();
+        store.conn.execute("INSERT INTO agent_earth_images VALUES ('same',?1,'a','verified')",[owner]).unwrap();
+        for project in ["a","b"] {
+            let mut scene=get(&store,project).unwrap();scene["images"]=json!([{"id":"same","resourceSha256":"forged"}]);
+            store.set_setting(&key(&store,project).unwrap(),&scene.to_string()).unwrap();
+        }
+        assert_eq!(get(&store,"a").unwrap()["images"][0]["resourceSha256"],"verified");
+        assert!(get(&store,"b").unwrap()["images"][0].get("resourceSha256").is_none());
+        drop(store);let _=std::fs::remove_file(path);
+    }
     #[test]
     fn migrates_old_defaults_once_and_preserves_explicit_choices() {
         let mut scene = json!({"layers":{"boundaries":true,"graticule":true,"source":1},"images":[{"id":"keep"}]});

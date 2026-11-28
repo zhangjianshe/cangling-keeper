@@ -1,10 +1,13 @@
 const fs=require('fs'),assert=require('assert/strict'),{JSDOM}=require('jsdom');
 const dom=new JSDOM('<canvas></canvas><button>other</button>',{url:'http://localhost/earth/',runScripts:'outside-only'}),w=dom.window;
-const sent=[];w.postMessage=v=>sent.push(v);w.keeper_command=(method,args)=>{if(method==='vector_pick')return JSON.stringify({layer:'demo.geojson',feature:0,properties:{name:'test'}});assert.equal(method,'pick');const point=JSON.parse(args);assert(point.x>=0&&point.x<=1);return JSON.stringify({longitude:116.4,latitude:39.9,height:100});};
-w.createKeeperImageOverlay=()=>({draw(){},prepare:async()=>{}});
-w.eval(fs.readFileSync('ui/earth/keeper-bridge.js','utf8').replace("import './image-overlay.js';",'').replace("import {keeper_command,keeper_image} from './pkg/cangling_desktop.js';",'const keeper_command=window.keeper_command,keeper_image=()=>{};'));
+const sent=[];w.postMessage=v=>sent.push(v);w.keeper_command=(method,args)=>{if(method==='layers')return 'true';if(method==='vector_pick')return JSON.stringify({layer:'demo.geojson',feature:0,properties:{name:'test'}});assert.equal(method,'pick');const point=JSON.parse(args);assert(point.x>=0&&point.x<=1);return JSON.stringify({longitude:116.4,latitude:39.9,height:100});};
+w.keeper_image=w.keeper_model=w.keeper_tile=()=>{};
+w.createKeeperImageOverlay=w.createKeeperModelOverlay=()=>({prepare:async()=>{}});w.createKeeperTilesOverlay=()=>({prepare(){},pause(){},dispose(){}});
+w.eval(fs.readFileSync('ui/earth/layer-reconciler.js','utf8'));w.eval(fs.readFileSync('ui/earth/keeper-bridge.js','utf8').replace(/^import .*;$/gm,''));
 const click=target=>target.dispatchEvent(new w.MouseEvent('dblclick',{bubbles:true,clientX:20,clientY:20}));
-click(w.document.querySelector('canvas'));assert.equal(sent.length,0);
-w.dispatchEvent(new w.Event('cangling-earth-ready'));click(w.document.querySelector('button'));assert.equal(sent.filter(v=>v.event==='selection').length,0);
-click(w.document.querySelector('canvas'));const selection=sent.find(v=>v.event==='selection').value;assert.equal(selection.longitude,116.4);assert.equal(selection.type,'location');assert(selection.selectedAt>0);
-w.document.querySelector('canvas').dispatchEvent(new w.MouseEvent('click',{bubbles:true,clientX:20,clientY:20}));assert.equal(sent.at(-1).value.layer,'demo.geojson');assert.equal(w.document.querySelectorAll('svg').length,0);w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'l',bubbles:true}));assert.equal(sent.at(-1).event,'layers_toggle');dom.window.close();console.log('PASS terrain double-click selection, readiness and target filtering');
+(async()=>{
+ click(w.document.querySelector('canvas'));assert.equal(sent.length,0);
+ w.dispatchEvent(new w.Event('cangling-earth-ready'));await new Promise(r=>setTimeout(r,20));click(w.document.querySelector('button'));assert.equal(sent.filter(v=>v.event==='selection').length,0);
+ click(w.document.querySelector('canvas'));const selection=sent.find(v=>v.event==='selection').value;assert.equal(selection.longitude,116.4);assert.equal(selection.type,'location');assert(selection.selectedAt>0);
+ w.document.querySelector('canvas').dispatchEvent(new w.MouseEvent('click',{bubbles:true,clientX:20,clientY:20}));assert.equal(sent.at(-1).value.layer,'demo.geojson');assert.equal(w.document.querySelectorAll('svg').length,0);w.dispatchEvent(new w.KeyboardEvent('keydown',{key:'l',bubbles:true}));assert.equal(sent.at(-1).event,'layers_toggle');dom.window.close();console.log('PASS terrain double-click selection, readiness and target filtering');
+})().catch(e=>{console.error(e);dom.window.close();process.exitCode=1});

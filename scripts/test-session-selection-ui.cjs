@@ -22,5 +22,8 @@ const tick=()=>new Promise(r=>setTimeout(r,0));
  d.querySelector('#agent-projects .history-load-more').click();assert.equal(d.querySelectorAll('.agent-project-group').length,21);assert.equal(scroller.scrollTop,350);c.renderSessions();assert.equal(scroller.scrollTop,350);
  d.querySelector('#agent-projects .history-load-more').click();assert.equal(d.querySelectorAll('.agent-project-group').length,27);[...d.querySelectorAll('#agent-projects button')].find(b=>b.textContent==='收起项目').click();assert.equal(d.querySelectorAll('.agent-project-group').length,11);
  d.querySelector('#agent-projects .history-load-more').click();agent.ownerKey='bob';c.renderProjects();assert.equal(d.querySelectorAll('.agent-project-group').length,11);assert.equal(d.querySelector('#agent-projects').dataset.limit,'10');
+ agent.drafts=null;agent.projects.push({id:'p',name:'Project'});const followed=[];agent.earth={followProject:async p=>followed.push(p.id)};
+ const cross=c.select('two');pending.shift()();await cross;assert.equal(agent.project,'p');assert.deepEqual(followed,['p'],'session selection also synchronizes the Earth project');
+ agent.drafts={load:async()=>false};await c.select('one');assert.deepEqual(followed,['p'],'cancelled drafts do not switch Earth');
  dom.window.close();console.log('PASS: project/recent/pinned selection stays synchronized; stale responses and blocked draft switches preserve selection');
 })().catch(e=>{console.error(e);dom.window.close();process.exitCode=1});

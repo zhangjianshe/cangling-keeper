@@ -8,6 +8,7 @@ plan={requests:entries,active:entries.map(r=>r.key),layers:[]};
 overlay.prepare([{id:'a',url:'http://localhost/data/tileset.json'}],1);
 assert.equal(requests.length,4,'concurrency bounded to four');
 assert(requests.every(r=>r.options.credentials==='omit'&&r.options.redirect==='error'));
+overlay.prepare([{id:'a',url:'http://localhost/data/tileset.json'}],2,{preserveExisting:true});assert.equal(requests.length,4);assert(requests.every(r=>!r.options.signal.aborted),'in-flight shared tiles survive a project transition');
 overlay.pause(true);assert(requests.every(r=>r.options.signal.aborted));assert.equal(uploads.length,0);assert.equal(calls.filter(c=>c[0]==='tiles_cancel').length,4);
 plan={requests:[{key:'b|root',layerId:'b',uri:'http://evil.invalid/a.glb',json:false}],active:['b|root'],layers:[]};
 overlay.prepare([{id:'b',url:'http://localhost/data/tileset.json'}],2);overlay.pause(false);
@@ -21,6 +22,9 @@ assert.equal(requests.at(-1).options.cache,'no-store');
 const before=calls.length;
 versioned.prepare([{id:'v',url:'http://localhost/data/tileset.json'}],11);
 assert(calls.slice(before).some(([m,a])=>m==='tiles_scene'&&Array.isArray(a)&&a.length===0));
+const sharedBefore=calls.length;
+versioned.prepare([{id:'v',url:'http://localhost/data/tileset.json'}],12,{preserveExisting:true});
+assert(!calls.slice(sharedBefore).some(([m,a])=>m==='tiles_scene'&&Array.isArray(a)&&a.length===0),'cross-project shared resource must not be cleared');
 versioned.dispose();
 
 (async()=>{

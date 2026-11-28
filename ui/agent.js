@@ -27,7 +27,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     const button=element('button','agent-session'+(session.id===agent.selected?' active':''),session.title);button.type='button';
     button.title=(agent.projects.find(p=>p.id===session.projectId)?.name || '')+' · '+session.title;
     button.setAttribute('aria-current',String(session.id===agent.selected));
-    button.onclick=()=>{agent.project=session.projectId;renderProjects();showConversation();select(session.id,true);};
+    button.onclick=async()=>{if(await select(session.id,true))showConversation(true);};
     row.append(button);agent.history?.decorateRow(row,session);return row;
   }
   function renderSessions(){
@@ -177,7 +177,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
       if(agent.detail.sessionId===session){
         for(const key of ['runs','tasks']){const id=key==='runs'?'id':'responseId';for(const current of agent.detail[key] || []){const index=(data[key] || []).findIndex(v=>v[id]===current[id]);if(index<0)(data[key] ||= []).push(current);else if((current.updatedAt || 0)>(data[key][index].updatedAt || 0))data[key][index]=current;}}
       }
-      agent.detail=data;agent.history?.remember(data.session);renderModel(data.model);localStorage.setItem(sessionStorageKey(),session);renderProjects();renderSessions();renderConversation();poll();notice();if(focusInput)$('#agent-input').focus();return true;
+      agent.detail=data;if(data.session?.projectId){agent.project=data.session.projectId;const project=agent.projects.find(p=>p.id===agent.project);if(project)agent.earth?.followProject?.(project)?.catch(error=>notice(String(error)));}agent.history?.remember(data.session);renderModel(data.model);localStorage.setItem(sessionStorageKey(),session);renderProjects();renderSessions();renderConversation();poll();notice();if(focusInput)$('#agent-input').focus();return true;
     }catch(error){if(generation===agent.generation){if(String(error).includes('不属于当前账号'))clearSelected();notice(String(error));}return false;}
   }
   function poll(){
@@ -561,6 +561,19 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     if(bar.childElementCount)message.append(bar);
   }
 
+  function collapseExecutionProcess(message,entry){
+    if(agent.detail.modelPending && agent.detail.streamingMessageId===entry.id)return;
+    const flow=message.querySelector('.agent-response-flow'),legacy=message.querySelector(':scope > .agent-tool-steps');
+    const parent=flow || legacy;if(!parent)return;
+    const final=flow?(flow.querySelector(':scope > .agent-final') || [...flow.querySelectorAll(':scope > .agent-message-body')].at(-1)):null;
+    const nodes=[...parent.children].filter(node=>node!==final);if(!nodes.length)return;
+    const count=agent.detail.runs.filter(run=>run.responseId===entry.id&&!isSkillPreparation(run)).length;
+    const history=element('details','agent-execution-history'),caption=element('summary','',count?'执行过程 · '+count+' 次工具调用':'执行过程');history.append(caption);
+    for(const node of nodes)history.append(node);parent.prepend(history);
+    history.open=!!agent.executionHistoryOpen?.has(entry.id);
+    history.ontoggle=()=>{if(!history.isConnected)return;agent.executionHistoryOpen ||= new Set();if(history.open)agent.executionHistoryOpen.add(entry.id);else agent.executionHistoryOpen.delete(entry.id);};
+  }
+
   function renderConversation(){
   function presentationSegments(entry){
     const p=entry.modelMetadata?.presentation,content=entry.content||'';
@@ -585,7 +598,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     const follow=timeline.scrollHeight-timeline.scrollTop-timeline.clientHeight<90;
     const draft=container.querySelector('.agent-run-form');
     const toolOpen=new Map([...container.querySelectorAll('.agent-compact-run')].map(node=>[node.dataset.runId,node.open]));
-    const signature=JSON.stringify([agent.selected,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata?{...m.modelMetadata,presentation:m.modelMetadata.presentation?{...m.modelMetadata.presentation,sequence:0}:undefined}:null,m.attachments]),agent.detail.replyGroups,agent.detail.runs,agent.detail.tasks,agent.editing?.session===agent.selected?agent.editing.id:null]);
+    const signature=JSON.stringify([agent.selected,agent.detail.modelPending,agent.detail.streamingMessageId,agent.detail.messages.map(m=>[m.id,m.role,m.modelMetadata?{...m.modelMetadata,presentation:m.modelMetadata.presentation?{...m.modelMetadata.presentation,sequence:0}:undefined}:null,m.attachments]),agent.detail.replyGroups,agent.detail.runs,agent.detail.tasks,agent.editing?.session===agent.selected?agent.editing.id:null]);
     if(!draft && container.dataset.signature===signature){
       for(const entry of agent.detail.messages){const message=container.querySelector('[data-message-id="'+entry.id+'"]');if(message)refreshMessageBodies(message,entry);}
       renderPending(container);if(follow)timeline.scrollTop=timeline.scrollHeight;window.keeperThreadNav?.update({messages:visibleMessages(),detail:agent.detail});return;
@@ -600,10 +613,12 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
         if(entry.role!=='user'){
           if(entry.role==='assistant'){const number=element('span','agent-reply-number',String(++replyNumber));number.setAttribute('aria-label','回复 '+replyNumber);message.append(number);}
           const metadata=entry.modelMetadata || {};
-          const label=(metadata.agentProfile?.name?metadata.agentProfile.name+' · ':'')+(entry.role==='error'?'模型调用失败':metadata.source==='local'?'苍灵智能 · 本地工具':metadata.model?(metadata.serverName?metadata.serverName+' · ':'')+metadata.model:'苍灵智能 · 模型未记录');
-          const heading=element('span','agent-message-label agent-reply-model',label);if(metadata.agentProfile&&window.createKeeperProfileIcon)heading.prepend(window.createKeeperProfileIcon(metadata.agentProfile.icon,'profile-avatar-reply'));
+          const label=entry.role==='error'?'模型调用失败':metadata.source==='local'?'本地工具':(metadata.agentProfile?.name?metadata.agentProfile.name+' · ':'')+(metadata.model || '模型未记录');
+          const heading=element('span','agent-message-label agent-reply-model',label);
+          if(entry.role==='assistant' && metadata.agentProfile?.icon && window.createKeeperProfileIcon)heading.prepend(window.createKeeperProfileIcon(metadata.agentProfile.icon,'profile-avatar-reply'));
           if(metadata.requestedModel && metadata.requestedModel!==metadata.model)heading.title='请求模型：'+metadata.requestedModel+'；服务端返回模型：'+metadata.model;
-          const replyHeader=element('div','agent-reply-header');replyHeader.append(heading);
+          const replyHeader=element('div','agent-reply-header'),identity=element('span','agent-reply-identity'),indicators=element('div','agent-reply-indicators');
+          if(entry.role==='assistant')identity.append(message.querySelector(':scope > .agent-reply-number'));identity.append(heading);replyHeader.append(identity,indicators);
           if(metadata.context || metadata.usage){
             const c=metadata.context || {},u=metadata.usage || {},labels={compressing:'正在整理上下文…',compacted:'上下文已压缩',fallback:'摘要不可用，已裁剪旧上下文',stopped:'上下文压缩已停止',interrupted:'请求已中断',ready:'上下文就绪'};
             const parts=[labels[c.status] || ''];
@@ -611,7 +626,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
             if(u.promptTokens!==undefined)parts.push('累计实际输入 '+u.promptTokens.toLocaleString()+' · 输出 '+u.completionTokens.toLocaleString()+' token（含压缩）');
             const contextPercent=Number.isFinite(c.estimatedTokens)&&c.estimatedTokens>=0&&Number.isFinite(c.limit)&&c.limit>0?Math.round(c.estimatedTokens/c.limit*100):null;
             const percentage=contextPercent===null?'—':contextPercent+'%';
-            const info=element('div','agent-context-info',percentage);info.title='上下文窗口占用（估算） · '+parts.filter(Boolean).join(' · ')+'。预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');replyHeader.append(info);
+            const info=element('div','agent-context-info',percentage);info.title='上下文窗口占用（估算） · '+parts.filter(Boolean).join(' · ')+'。预算使用保守估算；实际用量来自服务端 usage 累计，包含摘要调用。中断且未返回 usage 的调用可能尚未计入。';info.setAttribute('role','status');indicators.append(info);
             if(contextPercent!==null){
               const bar=element('span','agent-context-bar'+(contextPercent>=95?' is-critical':contextPercent>=85?' is-warning':''));
               bar.setAttribute('role','progressbar');bar.setAttribute('aria-label','上下文窗口占用');bar.setAttribute('aria-valuemin','0');bar.setAttribute('aria-valuemax','100');bar.setAttribute('aria-valuenow',String(Math.min(100,contextPercent)));bar.setAttribute('aria-valuetext',percentage+'（估算）');
@@ -647,12 +662,13 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
             const commandCount=runs.filter(r=>['run_command','run_tests'].includes(r.tool) && !['pending_approval','approved','rejected'].includes(r.status)).length;
             const compact=[labels[task.status] || '任务记录'];if(fileCount)compact.push('修改 '+fileCount+' 个文件');if(commandCount)compact.push('执行 '+commandCount+' 条命令');
             const summary=element('details','agent-task-summary'),caption=element('summary','',compact.join(' · '));
-            summary.append(element('p','agent-task-counts',`${rounds} 轮 · 工具调用 ${calls} 次`));
+            const metrics=element('div','agent-task-metrics');
+            for(const [label,value] of [['轮次',rounds],['工具调用',calls],...(validBudget?[['运行时限',budget.activeSeconds+' 秒']]:[])]){const metric=element('div');metric.append(element('small','',label),element('strong','',value));metrics.append(metric);}summary.append(metrics);
             const terminal=['complete','failed','stopped','interrupted'].includes(task.status);
             const reason=metadata.taskReason || (task.status==='interrupted'?'服务中断，执行记录已保留；不会自动重放操作。':terminal?'历史任务未记录具体结束原因。':'任务进行中，可随时停止生成。');
-            summary.prepend(caption);summary.append(element('p','',reason));
+            summary.prepend(caption);if(metadata.taskReasonCode!=='complete')summary.append(element('p','agent-task-reason',reason));
             if(validBudget){
-              summary.append(element('p','agent-task-budget',`本轮上限：${budget.maxRounds} 轮、${budget.maxToolCalls} 次工具调用、${budget.activeSeconds} 秒运行预算（等待审批暂停计时）。调用数为已记录的工具调用；超限整批请求可能在执行前被拒绝。`));
+              summary.append(element('p','agent-task-budget','等待确认期间暂停运行计时；轮次和工具调用数按本轮记录统计。'));
               if(!terminal && ((task.step || 0)>=budget.maxRounds-1 || runs.length>=budget.maxToolCalls-4)){const warning=element('p','agent-budget-warning','执行预算即将用尽；可检查已完成内容，必要时停止并拆分剩余任务。');warning.setAttribute('role','status');summary.append(warning);caption.append(element('span','agent-budget-warning',' · 接近上限'));}
             }
 
@@ -669,20 +685,34 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
 
 
             const counts={succeeded:0,failed:0,rejected:0,stopped:0,interrupted:0};for(const run of runs)if(run.status in counts)counts[run.status]++;
-            summary.append(element('p','',`工具结果：成功 ${counts.succeeded} · 失败 ${counts.failed} · 拒绝 ${counts.rejected} · 停止/中断 ${counts.stopped+counts.interrupted}`));
+            if(!(evidence?.version===1 && evidence.responseId===entry.id))summary.append(element('p','agent-task-results',`工具结果：成功 ${counts.succeeded} · 失败 ${counts.failed} · 拒绝 ${counts.rejected} · 停止/中断 ${counts.stopped+counts.interrupted}`));
             const exceptions=[];if(counts.failed)exceptions.push(counts.failed+' 项失败');if(counts.rejected)exceptions.push(counts.rejected+' 项拒绝');if(counts.stopped+counts.interrupted)exceptions.push((counts.stopped+counts.interrupted)+' 项停止/中断');
             if(exceptions.length)caption.append(element('span','agent-task-exception',' · '+exceptions.join(' · ')));
             for(const child of [...message.querySelectorAll(':scope > .agent-task-changes,:scope > .agent-task-plan,:scope > .agent-execution-evidence')]){
               if(child.classList.contains('agent-task-changes')){const content=element('div','agent-task-change-details');for(const item of [...child.children])if(item.tagName!=='SUMMARY')content.append(item);child.remove();summary.append(content);}else summary.append(child);
             }
             summary.hidden=task.status==='complete' && runs.length===0;
-            summary.open=!!agent.taskSummaryOpen?.has(entry.id);summary.ontoggle=()=>{agent.taskSummaryOpen ||= new Set();if(summary.open)agent.taskSummaryOpen.add(entry.id);else agent.taskSummaryOpen.delete(entry.id);};message.append(summary);
+            summary.open=!!agent.taskSummaryOpen?.has(entry.id);summary.ontoggle=()=>{if(!summary.isConnected)return;agent.taskSummaryOpen ||= new Set();if(summary.open)agent.taskSummaryOpen.add(entry.id);else agent.taskSummaryOpen.delete(entry.id);};const panel=element('div','agent-task-summary-panel');
+            const panelHeading=element('div','agent-task-summary-heading');panelHeading.append(element('strong','','回复总结'),element('span','',caption.textContent));panel.append(panelHeading);
+            for(const child of [...summary.children])if(child!==caption)panel.append(child);summary.append(panel);
+            const rememberSummaryToggle=summary.ontoggle;summary.ontoggle=()=>{rememberSummaryToggle();if(summary.open){
+              const rect=caption.getBoundingClientRect(),margin=12,width=Math.min(420,window.innerWidth-margin*2),below=window.innerHeight-rect.bottom-margin,above=rect.top-margin,down=below>=Math.min(260,above);
+              panel.style.width=width+'px';panel.style.left=Math.max(margin,Math.min(rect.right-width,window.innerWidth-width-margin))+'px';panel.style.maxHeight=Math.max(80,Math.min(520,(down?below:above)-8))+'px';panel.style.top=down?(rect.bottom+8)+'px':'auto';panel.style.bottom=down?'auto':(window.innerHeight-rect.top+8)+'px';
+            }};
+            const captionLabel=element('span','agent-task-summary-label');while(caption.firstChild)captionLabel.append(caption.firstChild);caption.append(captionLabel);
+            const summaryIcon=document.createElementNS('http://www.w3.org/2000/svg','svg');summaryIcon.setAttribute('viewBox','0 0 20 20');summaryIcon.setAttribute('fill','none');summaryIcon.setAttribute('stroke','currentColor');summaryIcon.setAttribute('stroke-width','1.4');summaryIcon.setAttribute('stroke-linecap','round');summaryIcon.setAttribute('stroke-linejoin','round');summaryIcon.setAttribute('aria-hidden','true');
+            const summaryPath=document.createElementNS('http://www.w3.org/2000/svg','path');summaryPath.setAttribute('d','M3 3h14v14H3ZM6 13V9M10 13V6M14 13v-3');summaryIcon.append(summaryPath);caption.prepend(summaryIcon);
+            caption.setAttribute('aria-label','回复总结：'+captionLabel.textContent);caption.title='回复总结 · '+captionLabel.textContent;
+            if(exceptions.length)summary.classList.add('has-exceptions');
+            summary.onkeydown=event=>{if(event.key==='Escape'){summary.open=false;caption.focus();event.stopPropagation();}};
+            caption.onclick=()=>{for(const other of document.querySelectorAll('.agent-task-summary[open]'))if(other!==summary)other.open=false;};
+            message.querySelector('.agent-reply-indicators').append(summary);
           }
           const visibleRuns=runs.filter(run=>!isSkillPreparation(run));
           const preparationRuns=runs.filter(isSkillPreparation);
           if(visibleRuns.length && !presentationSegments(entry)){const steps=element('div','agent-tool-steps');steps.setAttribute('aria-label','工具执行过程');for(const run of visibleRuns)steps.append(runCard(run,toolOpen));message.append(steps);}
           // Keep preparation records available in the existing collapsed task summary.
-          if(preparationRuns.length){const summary=message.querySelector('.agent-task-summary');if(summary){const records=element('details','agent-skill-preparation');records.append(element('summary','',`技能准备记录 · ${preparationRuns.length} 次`));for(const run of preparationRuns)records.append(runCard(run,toolOpen));summary.append(records);}}
+          if(preparationRuns.length){const summary=message.querySelector('.agent-task-summary');if(summary){const records=element('details','agent-skill-preparation');records.append(element('summary','',`技能准备记录 · ${preparationRuns.length} 次`));for(const run of preparationRuns)records.append(runCard(run,toolOpen));(summary.querySelector('.agent-task-summary-panel')||summary).append(records);}}
 
         }
         let body;const segments=entry.role==='assistant'?presentationSegments(entry):null;
@@ -727,6 +757,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
             }catch{}
           }
         }
+        if(entry.role==='assistant')collapseExecutionProcess(message,entry);
         agent.attachments?.decorate(message,entry);
         if(entry.role==='user' && agent.editing?.session===agent.selected && agent.editing.id===entry.id){
           body.hidden=true;message.classList.add('is-editing');const form=element('form','agent-message-edit'),input=element('textarea');input.value=agent.editing.content;input.setAttribute('aria-label','编辑消息');input.rows=Math.max(3,Math.min(10,input.value.split('\n').length));const resizeEdit=()=>{input.style.height='auto';input.style.height=input.scrollHeight+'px';};input.oninput=()=>{agent.editing.content=input.value;resizeEdit();};Promise.resolve().then(()=>{if(input.isConnected)resizeEdit();});
@@ -763,6 +794,9 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     if(follow)timeline.scrollTop=timeline.scrollHeight;
     window.keeperThreadNav?.update({messages:visibleMessages(),detail:agent.detail});
   }
+  document.addEventListener('click',event=>{for(const summary of document.querySelectorAll('.agent-task-summary[open]'))if(!summary.contains(event.target))summary.open=false;});
+  document.addEventListener('scroll',event=>{for(const summary of document.querySelectorAll('.agent-task-summary[open]'))if(!summary.contains(event.target))summary.open=false;},true);
+  window.addEventListener('resize',()=>{for(const summary of document.querySelectorAll('.agent-task-summary[open]'))summary.open=false;});
   window.__KEEPER__.event.listen('agent-context-update',event=>{
     const update=event.payload;if(update.sessionId!==agent.selected || !agent.detail)return;
     const entry=agent.detail.messages.find(m=>m.id===update.messageId);if(!entry)return;
@@ -980,7 +1014,7 @@ function countsForContinuation(runs,status){return runs.filter(r=>r.status===sta
     $('#agent-menu-logout').title=login.loggedIn?'退出当前账号':'当前未登录';
   }
   async function refreshAccountSessions(){
-    agent.taskSummaryOpen?.clear();agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
+    agent.taskSummaryOpen?.clear();agent.executionHistoryOpen?.clear();agent.projectBrowser?.reset();fullAccessFinish?.(false);if(llmRemote && !$('#llm-server-modal').classList.contains('hidden'))closeLlm();$('#cis-model-admin').hidden=true;$('#cis-model-admin-list').replaceChildren();$('#cis-model-usage').hidden=true;$('#cis-model-usage-content').replaceChildren();
     const epoch=agent.identityEpoch=(agent.identityEpoch || 0)+1;clearTimeout(agent.timer);++agent.generation;
     ++mcpLoadSequence;$('#mcp-list').replaceChildren();$('#mcp-status').textContent='';closeMcp();loadMcp();agent.earth?.reset();agent.guidance?.reset();agent.profiles?.reset();agent.history?.reset();agent.attachments?.reset();agent.drafts?.reset();agent.runExperience?.reset();agent.titleEditor?.cancel(false);agent.editing=null;agent.selected=null;agent.sessions=[];agent.projects=[];agent.detail={messages:[],runs:[],tasks:[],modelPending:false};$('#agent-input').value='';renderSessions();renderProjects();renderConversation();closeSecurityMenu();
     try{await bootstrap();if(epoch!==agent.identityEpoch)return;const saved=localStorage.getItem(sessionStorageKey());if(saved && await select(saved)){await agent.earth?.restore();return;}const session=agent.sessions[0]?.id;if(session)await select(session);}

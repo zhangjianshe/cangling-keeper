@@ -1,15 +1,17 @@
+import './layer-reconciler.js';
 import './image-overlay.js';
 import './model-overlay.js';
 import './tiles-overlay.js';
 import {keeper_command,keeper_image,keeper_model,keeper_tile} from './pkg/cangling_desktop.js';
 const bridgeOrigin=new URL(document.baseURI).origin;
 let lastLayersReport=0,tileReport=[],assetErrors={},assetsReady=false;
-let ready=false,applied=null,measuring=false,points=[],applying=0,lastView="",lastCheck=0,applyQueue=Promise.resolve();
+let ready=false,applied=null,measuring=false,points=[],applying=0,lastView="",lastCheck=0,applyQueue=Promise.resolve(),incomingContext=null;
 const call=(method,args={})=>JSON.parse(keeper_command(method,JSON.stringify(args)));
-const send=(event,value)=>parent.postMessage({earth:true,event,value},bridgeOrigin);
+const send=(event,value)=>parent.postMessage({earth:true,event,value,sceneToken:applied?.sceneToken},bridgeOrigin);
+const reconcile=window.createKeeperLayerReconciler();
 const images=window.createKeeperImageOverlay({upload:keeper_image,scene:layers=>call('image_scene',layers)});
 const models=window.createKeeperModelOverlay({upload:keeper_model,scene:layers=>call('model_scene',layers)});
-const tiles=window.createKeeperTilesOverlay({call,upload:keeper_tile,report:value=>{tileReport=value.layers||[];send('tiles_status',value);}});
+const tiles=window.createKeeperTilesOverlay({call,upload:keeper_tile,report:value=>{tileReport=(value.layers||[]).map(layer=>({...layer,id:reconcile.logical('tilesets',layer.id)})).filter(layer=>layer.id);send('tiles_status',{...value,layers:tileReport});}});
 function report(value){send('selection',value);}
 function nextFrame(callback){return new Promise((resolve,reject)=>{const timeout=setTimeout(()=>{window.removeEventListener('cangling-earth-frame',run);reject(Error('等待GPU画面超时'));},5000);function run(){clearTimeout(timeout);window.removeEventListener('cangling-earth-frame',run);try{resolve(callback?.());}catch(e){reject(e);}}window.addEventListener('cangling-earth-frame',run);});}
 async function screenshot(){const output=document.createElement('canvas');output.width=innerWidth;output.height=innerHeight;const ctx=output.getContext('2d');await nextFrame(()=>ctx.drawImage(document.querySelector('canvas'),0,0,output.width,output.height));return output.toDataURL('image/png');}
@@ -18,7 +20,21 @@ window.addEventListener('message',async e=>{
  if(e.origin!==bridgeOrigin||e.source!==parent||!e.data?.earth||typeof e.data.id!=='string')return;
  const {id,method,args}=e.data;try{
   if(!ready)throw Error('地球尚未就绪');let result;
-  if(method==='apply'){const task=async()=>{applying++;try{if(!args.preserveCamera)call('set_view',args.camera);call('layers',args.layers);call('vector_scene',args.overlays||[]);applied=args;assetsReady=false;assetErrors={};tileReport=[];send('scene_applied',{revision:args.revision,cameraCommandRevision:args.cameraCommandRevision||0});for(const [kind,loader] of [['images',images],['models',models]]){try{await loader.prepare(args[kind]||[]);}catch(error){assetErrors[kind]=String(error);}}tiles.prepare(args.tilesets||[],args.revision);assetsReady=true;lastLayersReport=0;await nextFrame();const view=call('get_view');lastView=JSON.stringify(view);return view;}finally{applying--;}};const next=applyQueue.then(task);applyQueue=next.catch(()=>{});result=await next;}
+  if(method==='apply'){
+   if(incomingContext!==args.sceneToken){incomingContext=args.sceneToken;images.cancel?.();models.cancel?.();}
+   const task=async()=>{if(args.sceneToken!==incomingContext)return {superseded:true};applying++;try{
+    const changedProject=!!applied&&applied.projectId!==args.projectId;
+    if(!args.preserveCamera)call('set_view',args.camera);call('layers',args.layers);call('vector_scene',args.overlays||[]);
+    applied=args;assetsReady=false;assetErrors={};tileReport=[];
+    const nextTiles=reconcile.prepare('tilesets',args.tilesets||[]),nextImages=reconcile.prepare('images',args.images||[]),nextModels=reconcile.prepare('models',args.models||[]);
+    tiles.prepare(nextTiles,args.revision,{preserveExisting:changedProject});
+    // Prune all old-only layers immediately, before waiting for new asset bytes.
+    const preparations=[['images',images,nextImages],['models',models,nextModels]].map(async([kind,loader,layers])=>{try{await loader.prepare(layers);}catch(error){if(args.sceneToken===incomingContext)assetErrors[kind]=String(error);}});
+    send('scene_applied',{revision:args.revision,cameraCommandRevision:args.cameraCommandRevision||0});await Promise.all(preparations);
+    if(args.sceneToken!==incomingContext)return {superseded:true};assetsReady=true;lastLayersReport=0;await nextFrame();if(args.sceneToken!==incomingContext)return {superseded:true};const view=call('get_view');lastView=JSON.stringify(view);return view;
+   }finally{applying--;}};
+   const next=applyQueue.then(task);applyQueue=next.catch(()=>{});result=await next;
+  }
   else if(['get_view','pick','pause'].includes(method)){if(method==='pause')tiles.pause(args);result=call(method,args);}
   else if(method==='measure'){measuring=!!args;points=[];result=true;}
   else if(method==='screenshot')result=await screenshot();
@@ -48,7 +64,7 @@ window.addEventListener('cangling-earth-frame',()=>{
  setTimeout(()=>{if(applying||applied!==current)return;try{
  const drawn=call('render_status'),layers=[];
  for(const kind of ['images','models','overlays','tilesets'])for(const layer of current[kind]||[]){
- const layerId=kind==='overlays'?layer.path:layer.id;const ids=drawn[kind]||[],drawing=ids.filter(id=>kind==='tilesets'?id.startsWith(layerId+'|'):id===layerId).length;
+ const layerId=kind==='overlays'?layer.path:layer.id,nativeId=kind==='overlays'?layerId:reconcile.native(kind,layerId);const ids=drawn[kind]||[],drawing=ids.filter(id=>kind==='tilesets'?id.startsWith(nativeId+'|'):id===nativeId).length;
  const tile=tileReport.find(x=>x.id===layer.id),error=assetErrors[kind]||((Array.isArray(tile?.errors)?tile.errors.length:Number(tile?.errors))?'瓦片加载存在错误':'');
  layers.push({kind,id:layerId,state:layer.visible===false?'hidden':error?'error':drawing?'draw_submitted':kind==='tilesets'?'loading':assetsReady?'loaded':'loading',drawing,pending:tile?.pending||0,error});
  }

@@ -47,10 +47,14 @@ window.createKeeperTilesOverlay=({call,upload,report})=>{
   timer=setTimeout(tick,250);
  }
  return {
-  prepare(next,rev){stop();
+  prepare(next,rev,options={}){
+   if(options.preserveExisting){
+    clearTimeout(timer);const shared=new Set(next.filter(layer=>layers.some(old=>old.id===layer.id&&old.url===layer.url)).map(layer=>layer.id));
+    for(const key of [...jobs.keys()])if(!shared.has(key.split('|')[0]))cancel(key);queue=queue.filter(request=>shared.has(request.layerId));
+   }else stop();
    // Stable entry URLs may publish new content. A new scene revision must discard
-   // the native tree, otherwise scene() retains the previous tree for the same URL.
-   if(layers.length&&rev!==revision)call('tiles_scene',[]);
+   // the native tree within one project; a project transition explicitly retains shared resources.
+   if(layers.length&&rev!==revision&&!options.preserveExisting)call('tiles_scene',[]);
    layers=next;revision=rev;lastStatus='';lastReport=0;call('tiles_scene',layers);if(!layers.length)call('tiles_tick');tick();},
   pause(value){paused=!!value;if(paused)stop();else tick();},
   dispose(){stop();disposed=true;call('tiles_scene',[]);call('tiles_tick');}
